@@ -3,8 +3,7 @@
 final class DiffusionRepositoryEditBasicController
   extends DiffusionRepositoryEditController {
 
-  public function processRequest() {
-    $request = $this->getRequest();
+  protected function processDiffusionRequest(AphrontRequest $request) {
     $user = $request->getUser();
     $drequest = $this->diffusionRequest;
     $repository = $drequest->getRepository();
@@ -93,7 +92,6 @@ final class DiffusionRepositoryEditBasicController
     $crumbs->addTextCrumb(pht('Edit Basics'));
 
     $title = pht('Edit %s', $repository->getName());
-    $project_handles = $this->loadViewerHandles($repository->getProjectPHIDs());
 
     $form = id(new AphrontFormView())
       ->setUser($user)
@@ -120,15 +118,16 @@ final class DiffusionRepositoryEditBasicController
     $form
       ->appendChild(
         id(new PhabricatorRemarkupControl())
+          ->setUser($user)
           ->setName('description')
           ->setLabel(pht('Description'))
           ->setValue($v_desc))
-      ->appendChild(
+      ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setDatasource(new PhabricatorProjectDatasource())
           ->setName('projectPHIDs')
           ->setLabel(pht('Projects'))
-          ->setValue($project_handles))
+          ->setValue($repository->getProjectPHIDs()))
       ->appendChild(
         id(new AphrontFormSubmitControl())
           ->setValue(pht('Save'))

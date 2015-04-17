@@ -52,6 +52,7 @@ final class PhabricatorRepositoryPullEngine
         break;
       default:
         $this->abortPull(pht('Unknown VCS "%s"!', $vcs));
+        break;
     }
 
     $callsign = $repository->getCallsign();
@@ -88,6 +89,7 @@ final class PhabricatorRepositoryPullEngine
               "Updating the working copy for repository '%s'.",
               $callsign));
           if ($is_git) {
+            $this->verifyGitOrigin($repository);
             $this->executeGitUpdate();
           } else if ($is_hg) {
             $this->executeMercurialUpdate();
@@ -159,7 +161,7 @@ final class PhabricatorRepositoryPullEngine
     $this->log('%s', pht('Installing commit hook to "%s"...', $path));
 
     $repository = $this->getRepository();
-    $callsign = $repository->getCallsign();
+    $identifier = $this->getHookContextIdentifier($repository);
 
     $root = dirname(phutil_get_library_root('phabricator'));
     $bin = $root.'/bin/commit-hook';
@@ -169,7 +171,7 @@ final class PhabricatorRepositoryPullEngine
       'exec %s -f %s -- %s "$@"',
       $full_php_path,
       $bin,
-      $callsign);
+      $identifier);
 
     $hook = "#!/bin/sh\nexport TERM=dumb\n{$cmd}\n";
 
@@ -186,6 +188,17 @@ final class PhabricatorRepositoryPullEngine
 
     Filesystem::createDirectory($path, 0755);
     Filesystem::writeFile($path.'/README', $readme);
+  }
+
+  private function getHookContextIdentifier(PhabricatorRepository $repository) {
+    $identifier = $repository->getCallsign();
+
+    $instance = PhabricatorEnv::getEnvConfig('cluster.instance');
+    if (strlen($instance)) {
+      $identifier = "{$identifier}:{$instance}";
+    }
+
+    return $identifier;
   }
 
 
@@ -354,10 +367,44 @@ final class PhabricatorRepositoryPullEngine
         'init -- %s',
         $path);
     } else {
-      $repository->execxRemoteCommand(
-        'clone --noupdate -- %P %s',
-        $repository->getRemoteURIEnvelope(),
-        $path);
+      $remote = $repository->getRemoteURIEnvelope();
+
+      // NOTE: Mercurial prior to 3.2.4 has an severe command injection
+      // vulnerability. See: <http://bit.ly/19B58E9>
+
+      // On vulnerable versions of Mercurial, we refuse to clone remotes which
+      // contain characters which may be interpreted by the shell.
+      $hg_version = PhabricatorRepositoryVersion::getMercurialVersion();
+      $is_vulnerable = version_compare($hg_version, '3.2.4', '<');
+      if ($is_vulnerable) {
+        $cleartext = $remote->openEnvelope();
+        // The use of "%R" here is an attempt to limit collateral damage
+        // for normal URIs because it isn't clear how long this vulnerability
+        // has been around for.
+
+        $escaped = csprintf('%R', $cleartext);
+        if ((string)$escaped !== (string)$cleartext) {
+          throw new Exception(
+            pht(
+              'You have an old version of Mercurial (%s) which has a severe '.
+              'command injection security vulnerability. The remote URI for '.
+              'this repository (%s) is potentially unsafe. Upgrade Mercurial '.
+              'to at least 3.2.4 to clone it.',
+              $hg_version,
+              $repository->getMonogram()));
+        }
+      }
+
+      try {
+        $repository->execxRemoteCommand(
+          'clone --noupdate -- %P %s',
+          $remote,
+          $path);
+      } catch (Exception $ex) {
+        $message = $ex->getMessage();
+        $message = $this->censorMercurialErrorMessage($message);
+        throw new Exception($message);
+      }
     }
   }
 
@@ -397,9 +444,35 @@ final class PhabricatorRepositoryPullEngine
       if ($err == 1 && preg_match('/no changes found/', $stdout)) {
         return;
       } else {
-        throw $ex;
+        $message = $ex->getMessage();
+        $message = $this->censorMercurialErrorMessage($message);
+        throw new Exception($message);
       }
     }
+  }
+
+
+  /**
+   * Censor response bodies from Mercurial error messages.
+   *
+   * When Mercurial attempts to clone an HTTP repository but does not
+   * receive a response it expects, it emits the response body in the
+   * command output.
+   *
+   * This represents a potential SSRF issue, because an attacker with
+   * permission to create repositories can create one which points at the
+   * remote URI for some local service, then read the response from the
+   * error message. To prevent this, censor response bodies out of error
+   * messages.
+   *
+   * @param string Uncensored Mercurial command output.
+   * @return string Censored Mercurial command output.
+   */
+  private function censorMercurialErrorMessage($message) {
+    return preg_replace(
+      '/^---%<---.*/sm',
+      pht('<Response body omitted from Mercurial error message.>')."\n",
+      $message);
   }
 
 
@@ -410,6 +483,8 @@ final class PhabricatorRepositoryPullEngine
     $repository = $this->getRepository();
     $path = $repository->getLocalPath().'/.hg/hgrc';
 
+    $identifier = $this->getHookContextIdentifier($repository);
+
     $root = dirname(phutil_get_library_root('phabricator'));
     $bin = $root.'/bin/commit-hook';
 
@@ -418,16 +493,16 @@ final class PhabricatorRepositoryPullEngine
 
     // This hook handles normal pushes.
     $data[] = csprintf(
-      'pretxnchangegroup.phabricator = %s %s %s',
+      'pretxnchangegroup.phabricator = TERM=dumb %s %s %s',
       $bin,
-      $repository->getCallsign(),
+      $identifier,
       'pretxnchangegroup');
 
     // This one handles creating bookmarks.
     $data[] = csprintf(
-      'prepushkey.phabricator = %s %s %s',
+      'prepushkey.phabricator = TERM=dumb %s %s %s',
       $bin,
-      $repository->getCallsign(),
+      $identifier,
       'prepushkey');
 
     $data[] = null;

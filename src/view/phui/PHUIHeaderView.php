@@ -17,6 +17,7 @@ final class PHUIHeaderView extends AphrontView {
   private $actionLinks = array();
   private $buttonBar = null;
   private $policyObject;
+  private $epoch;
 
   public function setHeader($header) {
     $this->header = $header;
@@ -107,6 +108,21 @@ final class PHUIHeaderView extends AphrontView {
     return $this->addProperty(self::PROPERTY_STATUS, $tag);
   }
 
+  public function setEpoch($epoch) {
+    $age = time() - $epoch;
+    $age = floor($age / (60 * 60 * 24));
+    if ($age < 1) {
+      $when = pht('Today');
+    } else if ($age == 1) {
+      $when = pht('Yesterday');
+    } else {
+      $when = pht('%d Days Ago', $age);
+    }
+
+    $this->setStatus('fa-clock-o bluegrey', null, pht('Updated %s', $when));
+    return $this;
+  }
+
   public function render() {
     require_celerity_resource('phui-header-view-css');
 
@@ -144,6 +160,31 @@ final class PHUIHeaderView extends AphrontView {
     }
 
     $header = array();
+
+    if ($this->actionLinks) {
+      $actions = array();
+      foreach ($this->actionLinks as $button) {
+        $button->setColor(PHUIButtonView::SIMPLE);
+        $button->addClass(PHUI::MARGIN_SMALL_LEFT);
+        $button->addClass('phui-header-action-link');
+        $actions[] = $button;
+      }
+      $header[] = phutil_tag(
+        'div',
+        array(
+          'class' => 'phui-header-action-links',
+        ),
+        $actions);
+    }
+
+    if ($this->buttonBar) {
+      $header[] = phutil_tag(
+        'div',
+        array(
+          'class' => 'phui-header-action-links',
+        ),
+        $this->buttonBar);
+    }
     $header[] = $this->header;
 
     if ($this->objectName) {
@@ -202,31 +243,6 @@ final class PHUIHeaderView extends AphrontView {
         $property_list);
     }
 
-    if ($this->actionLinks) {
-      $actions = array();
-      foreach ($this->actionLinks as $button) {
-        $button->setColor(PHUIButtonView::SIMPLE);
-        $button->addClass(PHUI::MARGIN_SMALL_LEFT);
-        $button->addClass('phui-header-action-link');
-        $actions[] = $button;
-      }
-      $header[] = phutil_tag(
-        'div',
-        array(
-          'class' => 'phui-header-action-links',
-        ),
-        $actions);
-    }
-
-    if ($this->buttonBar) {
-      $header[] = phutil_tag(
-        'div',
-        array(
-          'class' => 'phui-header-action-links',
-        ),
-        $this->buttonBar);
-    }
-
     return phutil_tag(
       'div',
       array(
@@ -237,7 +253,7 @@ final class PHUIHeaderView extends AphrontView {
         phutil_tag(
           'h1',
           array(
-            'class' => 'phui-header-view',
+            'class' => 'phui-header-view grouped',
           ),
           $header),
       ));

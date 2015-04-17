@@ -12,7 +12,7 @@ final class PhabricatorMetaMTAReceivedMail extends PhabricatorMetaMTADAO {
   protected $message;
   protected $messageIDHash = '';
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_SERIALIZATION => array(
         'headers'     => self::SERIALIZATION_JSON,
@@ -120,6 +120,19 @@ final class PhabricatorMetaMTAReceivedMail extends PhabricatorMetaMTADAO {
       $receiver->validateSender($this, $sender);
 
       $this->setAuthorPHID($sender->getPHID());
+
+      // Now that we've identified the sender, mark them as the author of
+      // any attached files.
+      $attachments = $this->getAttachments();
+      if ($attachments) {
+        $files = id(new PhabricatorFileQuery())
+          ->setViewer(PhabricatorUser::getOmnipotentUser())
+          ->withPHIDs($attachments)
+          ->execute();
+        foreach ($files as $file) {
+          $file->setAuthorPHID($sender->getPHID())->save();
+        }
+      }
 
       $receiver->receiveMail($this, $sender);
     } catch (PhabricatorMetaMTAReceivedMailProcessingException $ex) {

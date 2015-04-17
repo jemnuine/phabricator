@@ -1,11 +1,6 @@
 <?php
 
-/**
- * TODO: Remove maniphest.find, then make this final.
- *
- * @concrete-extensible
- */
-class ManiphestQueryConduitAPIMethod extends ManiphestConduitAPIMethod {
+final class ManiphestQueryConduitAPIMethod extends ManiphestConduitAPIMethod {
 
   public function getAPIMethodName() {
     return 'maniphest.query';
@@ -15,7 +10,7 @@ class ManiphestQueryConduitAPIMethod extends ManiphestConduitAPIMethod {
     return 'Execute complex searches for Maniphest tasks.';
   }
 
-  public function defineParamTypes() {
+  protected function defineParamTypes() {
     $statuses = array(
       ManiphestTaskQuery::STATUS_ANY,
       ManiphestTaskQuery::STATUS_OPEN,
@@ -52,18 +47,15 @@ class ManiphestQueryConduitAPIMethod extends ManiphestConduitAPIMethod {
     );
   }
 
-  public function defineReturnType() {
+  protected function defineReturnType() {
     return 'list';
   }
 
-  public function defineErrorTypes() {
-    return array();
-  }
-
   protected function execute(ConduitAPIRequest $request) {
-    $query = new ManiphestTaskQuery();
-
-    $query->setViewer($request->getUser());
+    $query = id(new ManiphestTaskQuery())
+      ->setViewer($request->getUser())
+      ->needProjectPHIDs(true)
+      ->needSubscriberPHIDs(true);
 
     $task_ids = $request->getValue('ids');
     if ($task_ids) {

@@ -20,6 +20,7 @@ final class FundInitiative extends FundDAO
   protected $editPolicy;
   protected $status;
   protected $totalAsCurrency;
+  protected $mailKey;
 
   private $projectPHIDs = self::ATTACHABLE;
 
@@ -49,7 +50,7 @@ final class FundInitiative extends FundDAO
       ->setTotalAsCurrency(PhortuneCurrency::newEmptyCurrency());
   }
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_COLUMN_SCHEMA => array(
@@ -59,6 +60,7 @@ final class FundInitiative extends FundDAO
         'status' => 'text32',
         'merchantPHID' => 'phid?',
         'totalAsCurrency' => 'text64',
+        'mailKey' => 'bytes20',
       ),
       self::CONFIG_APPLICATION_SERIALIZERS => array(
         'totalAsCurrency' => new PhortuneCurrencySerializer(),
@@ -95,6 +97,13 @@ final class FundInitiative extends FundDAO
     return ($this->getStatus() == self::STATUS_CLOSED);
   }
 
+  public function save() {
+    if (!$this->mailKey) {
+      $this->mailKey = Filesystem::readRandomCharacters(20);
+    }
+    return parent::save();
+  }
+
 
 /* -(  PhabricatorPolicyInterface  )----------------------------------------- */
 
@@ -116,7 +125,21 @@ final class FundInitiative extends FundDAO
   }
 
   public function hasAutomaticCapability($capability, PhabricatorUser $viewer) {
-    return ($viewer->getPHID() == $this->getOwnerPHID());
+    if ($viewer->getPHID() == $this->getOwnerPHID()) {
+      return true;
+    }
+
+    if ($capability == PhabricatorPolicyCapability::CAN_VIEW) {
+      foreach ($viewer->getAuthorities() as $authority) {
+        if ($authority instanceof PhortuneMerchant) {
+          if ($authority->getPHID() == $this->getMerchantPHID()) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
   }
 
   public function describeAutomaticCapability($capability) {
@@ -138,6 +161,13 @@ final class FundInitiative extends FundDAO
 
   public function getApplicationTransactionTemplate() {
     return new FundInitiativeTransaction();
+  }
+
+  public function willRenderTimeline(
+    PhabricatorApplicationTransactionView $timeline,
+    AphrontRequest $request) {
+
+    return $timeline;
   }
 
 

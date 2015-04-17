@@ -43,6 +43,8 @@
 }
 
 .device-phone .aphront-form-input,
+.device .aphront-form-input select,
+.device .aphront-form-input pre,
 .phui-form-full-width .aphront-form-input {
   margin-left: 0%;
   margin-right: 0%;
@@ -71,6 +73,10 @@
   padding-top: 5px;
 }
 
+.aphront-form-label .aphront-form-error {
+  display: none;
+}
+
 .aphront-dialog-body .phui-form-full-width {
   margin-top: -10px;
 }
@@ -81,8 +87,15 @@
 
 .device-phone .aphront-form-error,
 .phui-form-full-width .aphront-form-error {
-  float: none;
-  width: 100%;
+  display: none;
+}
+
+.device-phone .aphront-form-label .aphront-form-error,
+.phui-form-full-width .aphront-form-label .aphront-form-error {
+  display: block;
+  float: right;
+  padding: 0;
+  width: auto;
 }
 
 .device-phone .aphront-form-drag-and-drop-upload {
@@ -98,6 +111,10 @@
 
 .aphront-form-input input {
   width: 100%;
+}
+
+.aphront-form-cvc-input input {
+  width: 64px;
 }
 
 .aphront-form-input textarea {
@@ -144,8 +161,7 @@
 .phui-form-view .aphront-form-caption {
   font-size: 12px;
   color: {$bluetext};
-  padding: 8px 4px;
-  text-align: right;
+  padding: 8px 0;
   margin-right: 20%;
   margin-left: 20%;
   -webkit-font-smoothing: antialiased;
@@ -154,12 +170,7 @@
 
 .device-phone .phui-form-view .aphront-form-caption,
 .phui-form-full-width .phui-form-view .aphront-form-caption {
-  margin-right: 0%;
-}
-
-/* override for when inside an aphront-panel-view */
-.aphront-panel-view .phui-form-view h1 {
-  padding: 0em 0em .8em 0em;
+  margin: 0;
 }
 
 .aphront-form-instructions {
@@ -251,17 +262,21 @@ table.aphront-form-control-checkbox-layout th {
   position: relative;
 }
 
-.aphront-form-inset {
-  margin: 0 0 8px;
+.phui-form-inset {
+  margin: 4px 0 8px;
   padding: 8px;
-  background: #fff;
-  border: 1px solid #d4dae0;
+  background: #f7f9fd;
+  border: 1px solid {$lightblueborder};
+  border-bottom: 1px solid {$blueborder};
+  border-radius: 3px;
 }
 
-.aphront-form-inset h1 {
-  color: {$greytext};
-  font-weight: normal;
+.phui-form-inset h1 {
+  color: {$bluetext};
   padding-bottom: 8px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  border-bottom: 1px solid {$thinblueborder};
 }
 
 .aphront-form-drag-and-drop-file-list {
@@ -427,7 +442,7 @@ table.aphront-form-control-checkbox-layout th {
   background-color: white;
   border: 1px solid {$lightblueborder};
   border-bottom: 1px solid {$blueborder};
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35);
+  box-shadow: {$dropshadow};
   border-radius: 3px;
 }
 
@@ -438,7 +453,7 @@ table.aphront-form-control-checkbox-layout th {
 .phui-form-divider hr {
   height: 1px;
   border: 0;
-  background: #c0c0c0;
+  background: {$thinblueborder};
   width: 85%;
   margin: 15px auto;
 }
@@ -472,7 +487,6 @@ table.aphront-form-control-checkbox-layout th {
 .device-desktop .text-with-submit-control-submit {
   width: 180px;
 }
-
 
 .aphront-form-choose-table td {
   vertical-align: middle;

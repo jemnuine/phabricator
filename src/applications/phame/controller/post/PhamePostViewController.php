@@ -23,16 +23,10 @@ final class PhamePostViewController extends PhameController {
 
     $nav = $this->renderSideNavFilterView();
 
-    $this->loadHandles(
-      array(
-        $post->getBlogPHID(),
-        $post->getBloggerPHID(),
-      ));
     $actions = $this->renderActions($post, $user);
     $properties = $this->renderProperties($post, $user, $actions);
 
     $crumbs = $this->buildApplicationCrumbs();
-    $crumbs->setActionList($actions);
     $crumbs->addTextCrumb(
       $post->getTitle(),
       $this->getApplicationURI('post/view/'.$post->getID().'/'));
@@ -50,8 +44,8 @@ final class PhamePostViewController extends PhameController {
 
     if ($post->isDraft()) {
       $object_box->appendChild(
-        id(new AphrontErrorView())
-          ->setSeverity(AphrontErrorView::SEVERITY_NOTICE)
+        id(new PHUIInfoView())
+          ->setSeverity(PHUIInfoView::SEVERITY_NOTICE)
           ->setTitle(pht('Draft Post'))
           ->appendChild(
             pht('Only you can see this draft until you publish it. '.
@@ -60,8 +54,8 @@ final class PhamePostViewController extends PhameController {
 
     if (!$post->getBlog()) {
       $object_box->appendChild(
-        id(new AphrontErrorView())
-          ->setSeverity(AphrontErrorView::SEVERITY_WARNING)
+        id(new PHUIInfoView())
+          ->setSeverity(PHUIInfoView::SEVERITY_WARNING)
           ->setTitle(pht('Not On A Blog'))
           ->appendChild(
             pht('This post is not associated with a blog (the blog may have '.
@@ -169,13 +163,11 @@ final class PhamePostViewController extends PhameController {
 
     $properties->addProperty(
       pht('Blog'),
-      $post->getBlogPHID()
-        ? $this->getHandle($post->getBlogPHID())->renderLink()
-        : null);
+      $user->renderHandle($post->getBlogPHID()));
 
     $properties->addProperty(
       pht('Blogger'),
-      $this->getHandle($post->getBloggerPHID())->renderLink());
+      $user->renderHandle($post->getBloggerPHID()));
 
     $properties->addProperty(
       pht('Published'),

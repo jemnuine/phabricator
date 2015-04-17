@@ -146,6 +146,10 @@ final class AphrontDialogView extends AphrontView {
         $paragraph));
   }
 
+  public function appendForm(AphrontFormView $form) {
+    return $this->appendChild($form->buildLayoutView());
+  }
+
   public function setDisableWorkflowOnSubmit($disable_workflow_on_submit) {
     $this->disableWorkflowOnSubmit = $disable_workflow_on_submit;
     return $this;
@@ -288,7 +292,7 @@ final class AphrontDialogView extends AphrontView {
 
     if ($errors) {
       $children = array(
-        id(new AphrontErrorView())->setErrors($errors),
+        id(new PHUIInfoView())->setErrors($errors),
         $children,
       );
     }
@@ -307,6 +311,19 @@ final class AphrontDialogView extends AphrontView {
         $this->footers);
     }
 
+    $tail = null;
+    if ($buttons || $footer) {
+      $tail = phutil_tag(
+        'div',
+        array(
+          'class' => 'aphront-dialog-tail grouped',
+        ),
+        array(
+          $buttons,
+          $footer,
+        ));
+    }
+
     $content = array(
       phutil_tag(
         'div',
@@ -319,15 +336,7 @@ final class AphrontDialogView extends AphrontView {
           'class' => 'aphront-dialog-body grouped',
         ),
         $children),
-      phutil_tag(
-        'div',
-        array(
-          'class' => 'aphront-dialog-tail grouped',
-        ),
-        array(
-          $buttons,
-          $footer,
-        )),
+      $tail,
     );
 
     if ($this->renderAsForm) {

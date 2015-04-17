@@ -52,15 +52,10 @@ final class PhortuneMerchantViewController
       ->setHeader($header)
       ->appendChild($properties);
 
-    $xactions = id(new PhortuneMerchantTransactionQuery())
-      ->setViewer($viewer)
-      ->withObjectPHIDs(array($merchant->getPHID()))
-      ->execute();
-
-    $timeline = id(new PhabricatorApplicationTransactionView())
-      ->setUser($viewer)
-      ->setObjectPHID($merchant->getPHID())
-      ->setTransactions($xactions);
+    $timeline = $this->buildTransactionTimeline(
+      $merchant,
+      new PhortuneMerchantTransactionQuery());
+    $timeline->setShouldTerminate(true);
 
     return $this->buildApplicationPage(
       array(
@@ -140,6 +135,10 @@ final class PhortuneMerchantViewController
 
     $view->addProperty(pht('Status'), $status_view);
 
+    $view->addProperty(
+      pht('Members'),
+      $viewer->renderHandleList($merchant->getMemberPHIDs()));
+
     $view->invokeWillRenderEvent();
 
     $description = $merchant->getDescription();
@@ -185,6 +184,14 @@ final class PhortuneMerchantViewController
         ->setDisabled(!$can_edit)
         ->setWorkflow(!$can_edit));
 
+    $view->addAction(
+      id(new PhabricatorActionView())
+        ->setName(pht('View Subscriptions'))
+        ->setIcon('fa-moon-o')
+        ->setHref($this->getApplicationURI("merchant/{$id}/subscription/"))
+        ->setDisabled(!$can_edit)
+        ->setWorkflow(!$can_edit));
+
     return $view;
   }
 
@@ -201,6 +208,7 @@ final class PhortuneMerchantViewController
       PhabricatorPolicyCapability::CAN_EDIT);
 
     $provider_list = id(new PHUIObjectItemListView())
+      ->setFlush(true)
       ->setNoDataString(pht('This merchant has no payment providers.'));
 
     foreach ($providers as $provider_config) {

@@ -42,6 +42,7 @@ final class PhortuneCartCheckoutController
       case PhortuneCart::STATUS_CHARGED:
       case PhortuneCart::STATUS_PURCHASING:
       case PhortuneCart::STATUS_HOLD:
+      case PhortuneCart::STATUS_REVIEW:
       case PhortuneCart::STATUS_PURCHASED:
         // For these states, kick the user to the order page to give them
         // information and options.
@@ -102,7 +103,7 @@ final class PhortuneCartCheckoutController
 
         $cart->didApplyCharge($charge);
 
-        $done_uri = $cart->getDoneURI();
+        $done_uri = $cart->getCheckoutURI();
         return id(new AphrontRedirectResponse())->setURI($done_uri);
       }
     }
@@ -114,7 +115,7 @@ final class PhortuneCartCheckoutController
       ->setHeaderText(pht('Cart Contents'))
       ->appendChild($cart_table);
 
-    $title = pht('Buy Stuff');
+    $title = $cart->getName();
 
     if (!$methods) {
       $method_control = id(new AphrontFormStaticControl())
@@ -158,7 +159,6 @@ final class PhortuneCartCheckoutController
         array(
           'class' => 'button grey',
           'href'  => $payment_method_uri,
-          'sigil' => 'workflow',
         ),
         pht('Add New Payment Method'));
       $form->appendChild(
@@ -210,6 +210,7 @@ final class PhortuneCartCheckoutController
       ->appendChild($provider_form);
 
     $crumbs = $this->buildApplicationCrumbs();
+    $crumbs->addTextCrumb(pht('Checkout'));
     $crumbs->addTextCrumb($title);
 
     return $this->buildApplicationPage(

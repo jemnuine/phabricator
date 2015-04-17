@@ -12,11 +12,23 @@ final class DifferentialTransactionComment
   protected $hasReplies = 0;
   protected $replyToCommentPHID;
 
+  private $replyToComment = self::ATTACHABLE;
+
   public function getApplicationTransactionObject() {
     return new DifferentialTransaction();
   }
 
-  public function getConfiguration() {
+  public function attachReplyToComment(
+    DifferentialTransactionComment $comment = null) {
+    $this->replyToComment = $comment;
+    return $this;
+  }
+
+  public function getReplyToComment() {
+    return $this->assertAttached($this->replyToComment);
+  }
+
+  protected function getConfiguration() {
     $config = parent::getConfiguration();
     $config[self::CONFIG_COLUMN_SCHEMA] = array(
       'revisionPHID' => 'phid?',

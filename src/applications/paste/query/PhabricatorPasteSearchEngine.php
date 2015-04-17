@@ -7,6 +7,10 @@ final class PhabricatorPasteSearchEngine
     return pht('Pastes');
   }
 
+  public function getApplicationClassName() {
+    return 'PhabricatorPasteApplication';
+  }
+
   public function buildSavedQueryFromRequest(AphrontRequest $request) {
     $saved = new PhabricatorSavedQuery();
     $saved->setParameter(
@@ -48,11 +52,7 @@ final class PhabricatorPasteSearchEngine
   public function buildSearchForm(
     AphrontFormView $form,
     PhabricatorSavedQuery $saved_query) {
-    $phids = $saved_query->getParameter('authorPHIDs', array());
-    $author_handles = id(new PhabricatorHandleQuery())
-      ->setViewer($this->requireViewer())
-      ->withPHIDs($phids)
-      ->execute();
+    $author_phids = $saved_query->getParameter('authorPHIDs', array());
 
     $languages = $saved_query->getParameter('languages', array());
     $no_language = false;
@@ -65,12 +65,12 @@ final class PhabricatorPasteSearchEngine
     }
 
     $form
-      ->appendChild(
+      ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setDatasource(new PhabricatorPeopleDatasource())
           ->setName('authors')
           ->setLabel(pht('Authors'))
-          ->setValue($author_handles))
+          ->setValue($author_phids))
       ->appendChild(
         id(new AphrontFormTextControl())
           ->setName('languages')
@@ -98,7 +98,7 @@ final class PhabricatorPasteSearchEngine
     return '/paste/'.$path;
   }
 
-  public function getBuiltinQueryNames() {
+  protected function getBuiltinQueryNames() {
     $names = array(
       'all' => pht('All Pastes'),
     );

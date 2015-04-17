@@ -28,9 +28,11 @@ final class PhabricatorUserPreferences extends PhabricatorUserDAO {
   const PREFERENCE_APP_TILES            = 'app-tiles';
   const PREFERENCE_APP_PINNED           = 'app-pinned';
 
+  const PREFERENCE_DIFF_UNIFIED         = 'diff-unified';
   const PREFERENCE_DIFF_FILETREE        = 'diff-filetree';
 
-  const PREFERENCE_CONPH_NOTIFICATIONS  = 'conph-notifications';
+  const PREFERENCE_CONPH_NOTIFICATIONS = 'conph-notifications';
+  const PREFERENCE_CONPHERENCE_COLUMN = 'conpherence-column';
 
   // These are in an unusual order for historic reasons.
   const MAILTAG_PREFERENCE_NOTIFY       = 0;
@@ -40,7 +42,7 @@ final class PhabricatorUserPreferences extends PhabricatorUserDAO {
   protected $userPHID;
   protected $preferences = array();
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_SERIALIZATION => array(
         'preferences' => self::SERIALIZATION_JSON,

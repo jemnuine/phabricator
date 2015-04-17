@@ -27,6 +27,7 @@ final class PhabricatorRepositorySearchEngine
 
   public function buildQueryFromSavedQuery(PhabricatorSavedQuery $saved) {
     $query = id(new PhabricatorRepositoryQuery())
+      ->setDefaultBuiltinOrder()
       ->needProjectPHIDs(true)
       ->needCommitCounts(true)
       ->needMostRecentCommits(true);
@@ -43,11 +44,8 @@ final class PhabricatorRepositorySearchEngine
     }
 
     $order = $saved->getParameter('order');
-    $order = idx($this->getOrderValues(), $order);
     if ($order) {
       $query->setOrder($order);
-    } else {
-      $query->setOrder(head($this->getOrderValues()));
     }
 
     $hosted = $saved->getParameter('hosted');
@@ -84,15 +82,6 @@ final class PhabricatorRepositorySearchEngine
     $name = $saved_query->getParameter('name');
     $any_project_phids = $saved_query->getParameter('anyProjectPHIDs', array());
 
-    if ($any_project_phids) {
-      $any_project_handles = id(new PhabricatorHandleQuery())
-        ->setViewer($this->requireViewer())
-        ->withPHIDs($any_project_phids)
-        ->execute();
-    } else {
-      $any_project_handles = array();
-    }
-
     $form
       ->appendChild(
         id(new AphrontFormTextControl())
@@ -104,12 +93,12 @@ final class PhabricatorRepositorySearchEngine
           ->setName('name')
           ->setLabel(pht('Name Contains'))
           ->setValue($name))
-      ->appendChild(
+      ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setDatasource(new PhabricatorProjectDatasource())
           ->setName('anyProjects')
           ->setLabel(pht('In Any Project'))
-          ->setValue($any_project_handles))
+          ->setValue($any_project_phids))
       ->appendChild(
         id(new AphrontFormSelectControl())
           ->setName('status')
@@ -134,22 +123,19 @@ final class PhabricatorRepositorySearchEngine
         $name,
         isset($types[$key]));
     }
+    $form->appendChild($type_control);
 
-    $form
-      ->appendChild($type_control)
-      ->appendChild(
-        id(new AphrontFormSelectControl())
-          ->setName('order')
-          ->setLabel(pht('Order'))
-          ->setValue($saved_query->getParameter('order'))
-          ->setOptions($this->getOrderOptions()));
+    $this->appendOrderFieldsToForm(
+      $form,
+      $saved_query,
+      new PhabricatorRepositoryQuery());
   }
 
   protected function getURI($path) {
     return '/diffusion/'.$path;
   }
 
-  public function getBuiltinQueryNames() {
+  protected function getBuiltinQueryNames() {
     $names = array(
       'active' => pht('Active Repositories'),
       'all' => pht('All Repositories'),
@@ -186,24 +172,6 @@ final class PhabricatorRepositorySearchEngine
       '' => PhabricatorRepositoryQuery::STATUS_ALL,
       'open' => PhabricatorRepositoryQuery::STATUS_OPEN,
       'closed' => PhabricatorRepositoryQuery::STATUS_CLOSED,
-    );
-  }
-
-  private function getOrderOptions() {
-    return array(
-      'committed' => pht('Most Recent Commit'),
-      'name' => pht('Name'),
-      'callsign' => pht('Callsign'),
-      'created' => pht('Date Created'),
-    );
-  }
-
-  private function getOrderValues() {
-    return array(
-      'committed' => PhabricatorRepositoryQuery::ORDER_COMMITTED,
-      'name' => PhabricatorRepositoryQuery::ORDER_NAME,
-      'callsign' => PhabricatorRepositoryQuery::ORDER_CALLSIGN,
-      'created' => PhabricatorRepositoryQuery::ORDER_CREATED,
     );
   }
 

@@ -4,16 +4,13 @@ final class DiffusionSymbolController extends DiffusionController {
 
   private $name;
 
-  public function willProcessRequest(array $data) {
-    $this->name = $data['name'];
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
+  protected function processDiffusionRequest(AphrontRequest $request) {
     $user = $request->getUser();
+    $this->name = $request->getURIData('name');
 
-    $query = new DiffusionSymbolQuery();
-    $query->setName($this->name);
+    $query = id(new DiffusionSymbolQuery())
+      ->setViewer($user)
+      ->setName($this->name);
 
     if ($request->getStr('context') !== null) {
       $query->setContext($request->getStr('context'));
@@ -140,14 +137,12 @@ final class DiffusionSymbolController extends DiffusionController {
     $table->setNoDataString(
       pht('No matching symbol could be found in any indexed project.'));
 
-    $panel = new AphrontPanelView();
-    $panel->setHeader(pht('Similar Symbols'));
+    $panel = new PHUIObjectBoxView();
+    $panel->setHeaderText(pht('Similar Symbols'));
     $panel->appendChild($table);
 
     return $this->buildApplicationPage(
-      array(
-        $panel,
-      ),
+      $panel,
       array(
         'title' => pht('Find Symbol'),
       ));

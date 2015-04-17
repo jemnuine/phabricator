@@ -3,9 +3,10 @@
 final class DifferentialTransactionEditor
   extends PhabricatorApplicationTransactionEditor {
 
-  private $heraldEmailPHIDs;
   private $changedPriorToCommitURI;
   private $isCloseByCommit;
+  private $repositoryPHIDOverride = false;
+  private $didExpandInlineState = false;
 
   public function getEditorApplicationClass() {
     return 'PhabricatorDifferentialApplication';
@@ -45,11 +46,15 @@ final class DifferentialTransactionEditor
     return $this->changedPriorToCommitURI;
   }
 
+  public function setRepositoryPHIDOverride($phid_or_null) {
+    $this->repositoryPHIDOverride = $phid_or_null;
+    return $this;
+  }
+
   public function getTransactionTypes() {
     $types = parent::getTransactionTypes();
 
     $types[] = PhabricatorTransactions::TYPE_COMMENT;
-    $types[] = PhabricatorTransactions::TYPE_EDGE;
     $types[] = PhabricatorTransactions::TYPE_VIEW_POLICY;
     $types[] = PhabricatorTransactions::TYPE_EDIT_POLICY;
 
@@ -181,6 +186,7 @@ final class DifferentialTransactionEditor
     $status_review = ArcanistDifferentialRevisionStatus::NEEDS_REVIEW;
     $status_revision = ArcanistDifferentialRevisionStatus::NEEDS_REVISION;
     $status_plan = ArcanistDifferentialRevisionStatus::CHANGES_PLANNED;
+    $status_abandoned = ArcanistDifferentialRevisionStatus::ABANDONED;
 
     switch ($xaction->getTransactionType()) {
       case PhabricatorTransactions::TYPE_VIEW_POLICY:
@@ -196,16 +202,24 @@ final class DifferentialTransactionEditor
       case PhabricatorTransactions::TYPE_EDGE:
         return;
       case DifferentialTransaction::TYPE_UPDATE:
-        if (!$this->getIsCloseByCommit() &&
-            (($object->getStatus() == $status_revision) ||
-             ($object->getStatus() == $status_plan))) {
-          $object->setStatus($status_review);
+        if (!$this->getIsCloseByCommit()) {
+          switch ($object->getStatus()) {
+            case $status_revision:
+            case $status_plan:
+            case $status_abandoned:
+              $object->setStatus($status_review);
+              break;
+          }
         }
 
         $diff = $this->requireDiff($xaction->getNewValue());
 
         $object->setLineCount($diff->getLineCount());
-        $object->setRepositoryPHID($diff->getRepositoryPHID());
+        if ($this->repositoryPHIDOverride !== false) {
+          $object->setRepositoryPHID($this->repositoryPHIDOverride);
+        } else {
+          $object->setRepositoryPHID($diff->getRepositoryPHID());
+        }
         $object->setArcanistProjectPHID($diff->getArcanistProjectPHID());
         $object->attachActiveDiff($diff);
 
@@ -240,6 +254,11 @@ final class DifferentialTransactionEditor
           case DifferentialAction::ACTION_CLAIM:
             $object->setAuthorPHID($this->getActingAsPHID());
             return;
+          default:
+            throw new Exception(
+              pht(
+                'Differential action "%s" is not a valid action!',
+                $xaction->getNewValue()));
         }
         break;
     }
@@ -259,7 +278,7 @@ final class DifferentialTransactionEditor
 
     $status_plan = ArcanistDifferentialRevisionStatus::CHANGES_PLANNED;
 
-    $edge_reviewer = PhabricatorEdgeConfig::TYPE_DREV_HAS_REVIEWER;
+    $edge_reviewer = DifferentialRevisionHasReviewerEdgeType::EDGECONST;
     $edge_ref_task = DifferentialRevisionHasTaskEdgeType::EDGECONST;
 
     $is_sticky_accept = PhabricatorEnv::getEnvConfig(
@@ -510,6 +529,47 @@ final class DifferentialTransactionEditor
       break;
     }
 
+    if (!$this->didExpandInlineState) {
+      switch ($xaction->getTransactionType()) {
+        case PhabricatorTransactions::TYPE_COMMENT:
+        case DifferentialTransaction::TYPE_ACTION:
+        case DifferentialTransaction::TYPE_UPDATE:
+        case DifferentialTransaction::TYPE_INLINE:
+          $this->didExpandInlineState = true;
+
+          $actor_phid = $this->getActingAsPHID();
+          $actor_is_author = ($object->getAuthorPHID() == $actor_phid);
+          if (!$actor_is_author) {
+            break;
+          }
+
+          $state_map = PhabricatorTransactions::getInlineStateMap();
+
+          $inlines = id(new DifferentialDiffInlineCommentQuery())
+            ->setViewer($this->getActor())
+            ->withRevisionPHIDs(array($object->getPHID()))
+            ->withFixedStates(array_keys($state_map))
+            ->execute();
+
+          if (!$inlines) {
+            break;
+          }
+
+          $old_value = mpull($inlines, 'getFixedState', 'getPHID');
+          $new_value = array();
+          foreach ($old_value as $key => $state) {
+            $new_value[$key] = $state_map[$state];
+          }
+
+          $results[] = id(new DifferentialTransaction())
+            ->setTransactionType(PhabricatorTransactions::TYPE_INLINESTATE)
+            ->setIgnoreOnNoEffect(true)
+            ->setOldValue($old_value)
+            ->setNewValue($new_value);
+          break;
+      }
+    }
+
     return $results;
   }
 
@@ -525,7 +585,12 @@ final class DifferentialTransactionEditor
       case PhabricatorTransactions::TYPE_EDGE:
       case PhabricatorTransactions::TYPE_COMMENT:
       case DifferentialTransaction::TYPE_ACTION:
+        return;
       case DifferentialTransaction::TYPE_INLINE:
+        $reply = $xaction->getComment()->getReplyToComment();
+        if ($reply && !$reply->getHasReplies()) {
+          $reply->setHasReplies(1)->save();
+        }
         return;
       case DifferentialTransaction::TYPE_UPDATE:
         // Now that we're inside the transaction, do a final check.
@@ -551,11 +616,33 @@ final class DifferentialTransactionEditor
     return parent::applyCustomExternalTransaction($object, $xaction);
   }
 
+  protected function applyBuiltinExternalTransaction(
+    PhabricatorLiskDAO $object,
+    PhabricatorApplicationTransaction $xaction) {
+
+    switch ($xaction->getTransactionType()) {
+      case PhabricatorTransactions::TYPE_INLINESTATE:
+        $table = new DifferentialTransactionComment();
+        $conn_w = $table->establishConnection('w');
+        foreach ($xaction->getNewValue() as $phid => $state) {
+          queryfx(
+            $conn_w,
+            'UPDATE %T SET fixedState = %s WHERE phid = %s',
+            $table->getTableName(),
+            $state,
+            $phid);
+        }
+        return;
+    }
+
+    return parent::applyBuiltinExternalTransaction($object, $xaction);
+  }
+
   protected function mergeEdgeData($type, array $u, array $v) {
     $result = parent::mergeEdgeData($type, $u, $v);
 
     switch ($type) {
-      case PhabricatorEdgeConfig::TYPE_DREV_HAS_REVIEWER:
+      case DifferentialRevisionHasReviewerEdgeType::EDGECONST:
         // When the same reviewer has their status updated by multiple
         // transactions, we want the strongest status to win. An example of
         // this is when a user adds a comment and also accepts a revision which
@@ -711,7 +798,7 @@ final class DifferentialTransactionEditor
       switch ($type) {
         case PhabricatorTransactions::TYPE_EDGE:
           switch ($xaction->getMetadataValue('edge:type')) {
-            case PhabricatorEdgeConfig::TYPE_DREV_HAS_REVIEWER:
+            case DifferentialRevisionHasReviewerEdgeType::EDGECONST:
 
               // Prevent the author from becoming a reviewer.
 
@@ -1066,18 +1153,6 @@ final class DifferentialTransactionEditor
     return $phids;
   }
 
-  protected function getMailCC(PhabricatorLiskDAO $object) {
-    $phids = parent::getMailCC($object);
-
-    if ($this->heraldEmailPHIDs) {
-      foreach ($this->heraldEmailPHIDs as $phid) {
-        $phids[] = $phid;
-      }
-    }
-
-    return $phids;
-  }
-
   protected function getMailAction(
     PhabricatorLiskDAO $object,
     array $xactions) {
@@ -1127,7 +1202,10 @@ final class DifferentialTransactionEditor
     PhabricatorLiskDAO $object,
     array $xactions) {
 
-    $body = parent::buildMailBody($object, $xactions);
+    $body = new PhabricatorMetaMTAMailBody();
+    $body->setViewer($this->requireActor());
+
+    $this->addHeadersAndCommentsToMailBody($body, $xactions);
 
     $type_inline = DifferentialTransaction::TYPE_INLINE;
 
@@ -1138,20 +1216,22 @@ final class DifferentialTransactionEditor
       }
     }
 
-    $changed_uri = $this->getChangedPriorToCommitURI();
-    if ($changed_uri) {
-      $body->addTextSection(
-        pht('CHANGED PRIOR TO COMMIT'),
-        $changed_uri);
-    }
-
     if ($inlines) {
       $body->addTextSection(
         pht('INLINE COMMENTS'),
         $this->renderInlineCommentsForMail($object, $inlines));
     }
 
-    $body->addTextSection(
+    $changed_uri = $this->getChangedPriorToCommitURI();
+    if ($changed_uri) {
+      $body->addLinkSection(
+        pht('CHANGED PRIOR TO COMMIT'),
+        $changed_uri);
+    }
+
+    $this->addCustomFieldsToMailBody($body, $object, $xactions);
+
+    $body->addLinkSection(
       pht('REVISION DETAIL'),
       PhabricatorEnv::getProductionURI('/D'.$object->getID()));
 
@@ -1262,6 +1342,8 @@ final class DifferentialTransactionEditor
     }
 
     $edges = array();
+    $task_phids = array();
+    $rev_phids = array();
 
     if ($task_map) {
       $tasks = id(new ManiphestTaskQuery())
@@ -1270,10 +1352,9 @@ final class DifferentialTransactionEditor
         ->execute();
 
       if ($tasks) {
-        $phid_map = mpull($tasks, 'getPHID', 'getPHID');
+        $task_phids = mpull($tasks, 'getPHID', 'getPHID');
         $edge_related = DifferentialRevisionHasTaskEdgeType::EDGECONST;
-        $edges[$edge_related] = $phid_map;
-        $this->setUnmentionablePHIDMap($phid_map);
+        $edges[$edge_related] = $task_phids;
       }
     }
 
@@ -1289,10 +1370,12 @@ final class DifferentialTransactionEditor
       unset($rev_phids[$object->getPHID()]);
 
       if ($revs) {
-        $edge_depends = PhabricatorEdgeConfig::TYPE_DREV_DEPENDS_ON_DREV;
-        $edges[$edge_depends] = $rev_phids;
+        $depends = DifferentialRevisionDependsOnRevisionEdgeType::EDGECONST;
+        $edges[$depends] = $rev_phids;
       }
     }
+
+    $this->setUnmentionablePHIDMap(array_merge($task_phids, $rev_phids));
 
     $result = array();
     foreach ($edges as $type => $specs) {
@@ -1321,8 +1404,9 @@ final class DifferentialTransactionEditor
     $previous_comments = $comments_by_line_number[$comment->getChangesetID()]
                                                  [$comment->getLineNumber()];
     foreach ($previous_comments as $previous_comment) {
-      if ($previous_comment->getID() >= $comment->getID())
+      if ($previous_comment->getID() >= $comment->getID()) {
         break;
+      }
       $nested = $this->indentForMail(
         array_merge(
           $nested,
@@ -1495,7 +1579,7 @@ final class DifferentialTransactionEditor
 
     $unsubscribed_phids = PhabricatorEdgeQuery::loadDestinationPHIDs(
       $object->getPHID(),
-      PhabricatorEdgeConfig::TYPE_OBJECT_HAS_UNSUBSCRIBER);
+      PhabricatorObjectHasUnsubscriberEdgeType::EDGECONST);
 
     $subscribed_phids = PhabricatorSubscribersQuery::loadSubscribersForPHID(
       $object->getPHID());
@@ -1522,8 +1606,6 @@ final class DifferentialTransactionEditor
     $adapter->setExplicitCCs($subscribed_phids);
     $adapter->setExplicitReviewers($reviewer_phids);
     $adapter->setForbiddenCCs($unsubscribed_phids);
-
-    $adapter->setIsNewObject($this->getIsNewObject());
 
     return $adapter;
   }
@@ -1599,7 +1681,7 @@ final class DifferentialTransactionEditor
     }
 
     if ($value) {
-      $edge_reviewer = PhabricatorEdgeConfig::TYPE_DREV_HAS_REVIEWER;
+      $edge_reviewer = DifferentialRevisionHasReviewerEdgeType::EDGECONST;
 
       $xactions[] = id(new DifferentialTransaction())
         ->setTransactionType(PhabricatorTransactions::TYPE_EDGE)
@@ -1624,7 +1706,7 @@ final class DifferentialTransactionEditor
 
       // If we still have something to trigger, add the edges.
       if ($legal_phids) {
-        $edge_legal = PhabricatorEdgeConfig::TYPE_OBJECT_NEEDS_SIGNATURE;
+        $edge_legal = LegalpadObjectNeedsSignatureEdgeType::EDGECONST;
         $xactions[] = id(new DifferentialTransaction())
           ->setTransactionType(PhabricatorTransactions::TYPE_EDGE)
           ->setMetadataValue('edge:type', $edge_legal)
@@ -1634,10 +1716,6 @@ final class DifferentialTransactionEditor
             ));
       }
     }
-
-    // Save extra email PHIDs for later.
-    $email_phids = $adapter->getEmailPHIDsAddedByHerald();
-    $this->heraldEmailPHIDs = array_keys($email_phids);
 
     // Apply build plans.
     HarbormasterBuildable::applyBuildPlans(

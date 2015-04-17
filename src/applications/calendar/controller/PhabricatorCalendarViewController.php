@@ -7,16 +7,16 @@ final class PhabricatorCalendarViewController
     return true;
   }
 
-  public function processRequest() {
-    $user = $this->getRequest()->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $this->getViewer();
 
     $now     = time();
     $request = $this->getRequest();
-    $year_d  = phabricator_format_local_time($now, $user, 'Y');
+    $year_d  = phabricator_format_local_time($now, $viewer, 'Y');
     $year    = $request->getInt('year', $year_d);
-    $month_d = phabricator_format_local_time($now, $user, 'm');
+    $month_d = phabricator_format_local_time($now, $viewer, 'm');
     $month   = $request->getInt('month', $month_d);
-    $day   = phabricator_format_local_time($now, $user, 'j');
+    $day   = phabricator_format_local_time($now, $viewer, 'j');
 
 
     $holidays = id(new PhabricatorCalendarHoliday())->loadAllWhere(
@@ -25,8 +25,8 @@ final class PhabricatorCalendarViewController
       "{$year}-{$month}-31");
 
     $statuses = id(new PhabricatorCalendarEventQuery())
-      ->setViewer($user)
-      ->withInvitedPHIDs(array($user->getPHID()))
+      ->setViewer($viewer)
+      ->withInvitedPHIDs(array($viewer->getPHID()))
       ->withDateRange(
         strtotime("{$year}-{$month}-01"),
         strtotime("{$year}-{$month}-01 next month"))
@@ -39,8 +39,11 @@ final class PhabricatorCalendarViewController
     }
 
     $month_view->setBrowseURI($request->getRequestURI());
-    $month_view->setUser($user);
+    $month_view->setUser($viewer);
     $month_view->setHolidays($holidays);
+    if ($this->getNoticeView()) {
+      $month_view->setInfoView($this->getNoticeView());
+    }
 
     $phids = mpull($statuses, 'getUserPHID');
     $handles = $this->loadViewerHandles($phids);
@@ -65,7 +68,6 @@ final class PhabricatorCalendarViewController
     $nav->appendChild(
       array(
         $crumbs,
-        $this->getNoticeView(),
         $month_view,
       ));
 
@@ -81,23 +83,23 @@ final class PhabricatorCalendarViewController
     $view    = null;
 
     if ($request->getExists('created')) {
-      $view = id(new AphrontErrorView())
-        ->setSeverity(AphrontErrorView::SEVERITY_NOTICE)
-        ->setTitle(pht('Successfully created your status.'));
+      $view = id(new PHUIInfoView())
+        ->setSeverity(PHUIInfoView::SEVERITY_NOTICE)
+        ->appendChild(pht('Successfully created your status.'));
     } else if ($request->getExists('updated')) {
-      $view = id(new AphrontErrorView())
-        ->setSeverity(AphrontErrorView::SEVERITY_NOTICE)
-        ->setTitle(pht('Successfully updated your status.'));
+      $view = id(new PHUIInfoView())
+        ->setSeverity(PHUIInfoView::SEVERITY_NOTICE)
+        ->appendChild(pht('Successfully updated your status.'));
     } else if ($request->getExists('deleted')) {
-      $view = id(new AphrontErrorView())
-        ->setSeverity(AphrontErrorView::SEVERITY_NOTICE)
-        ->setTitle(pht('Successfully deleted your status.'));
+      $view = id(new PHUIInfoView())
+        ->setSeverity(PHUIInfoView::SEVERITY_NOTICE)
+        ->appendChild(pht('Successfully deleted your status.'));
     } else if (!$request->getUser()->isLoggedIn()) {
       $login_uri = id(new PhutilURI('/auth/start/'))
         ->setQueryParam('next', '/calendar/');
-      $view = id(new AphrontErrorView())
-        ->setSeverity(AphrontErrorView::SEVERITY_NOTICE)
-        ->setTitle(
+      $view = id(new PHUIInfoView())
+        ->setSeverity(PHUIInfoView::SEVERITY_NOTICE)
+        ->appendChild(
           pht(
             'You are not logged in. %s to see your calendar events.',
             phutil_tag(

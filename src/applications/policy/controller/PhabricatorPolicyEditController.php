@@ -138,7 +138,7 @@ final class PhabricatorPolicyEditController
       ));
 
     if ($errors) {
-      $errors = id(new AphrontErrorView())
+      $errors = id(new PHUIInfoView())
         ->setErrors($errors);
     }
 
@@ -153,7 +153,7 @@ final class PhabricatorPolicyEditController
             'sigil' => 'rules',
           )))
       ->appendChild(
-        id(new AphrontFormInsetView())
+        id(new PHUIFormInsetView())
           ->setTitle(pht('Rules'))
           ->setRightButton(
             javelin_tag(

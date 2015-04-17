@@ -5,6 +5,10 @@ final class FundInitiativeViewController
 
   private $id;
 
+  public function shouldAllowPublic() {
+    return true;
+  }
+
   public function willProcessRequest(array $data) {
     $this->id = $data['id'];
   }
@@ -55,15 +59,12 @@ final class FundInitiativeViewController
       ->setHeader($header)
       ->appendChild($properties);
 
-    $xactions = id(new FundInitiativeTransactionQuery())
-      ->setViewer($viewer)
-      ->withObjectPHIDs(array($initiative->getPHID()))
-      ->execute();
 
-    $timeline = id(new PhabricatorApplicationTransactionView())
-      ->setUser($viewer)
-      ->setObjectPHID($initiative->getPHID())
-      ->setTransactions($xactions);
+    $timeline = $this->buildTransactionTimeline(
+      $initiative,
+      new FundInitiativeTransactionQuery());
+    $timeline
+      ->setShouldTerminate(true);
 
     return $this->buildApplicationPage(
       array(
@@ -73,6 +74,7 @@ final class FundInitiativeViewController
       ),
       array(
         'title' => $title,
+        'pageObjects' => array($initiative->getPHID()),
       ));
   }
 
@@ -85,19 +87,14 @@ final class FundInitiativeViewController
 
     $owner_phid = $initiative->getOwnerPHID();
     $merchant_phid = $initiative->getMerchantPHID();
-    $this->loadHandles(
-      array(
-        $owner_phid,
-        $merchant_phid,
-      ));
 
     $view->addProperty(
       pht('Owner'),
-      $this->getHandle($owner_phid)->renderLink());
+      $viewer->renderHandle($owner_phid));
 
     $view->addProperty(
       pht('Payable to Merchant'),
-      $this->getHandle($merchant_phid)->renderLink());
+      $viewer->renderHandle($merchant_phid));
 
     $view->addProperty(
       pht('Total Funding'),

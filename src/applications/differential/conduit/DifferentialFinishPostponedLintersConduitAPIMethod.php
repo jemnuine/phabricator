@@ -12,18 +12,18 @@ final class DifferentialFinishPostponedLintersConduitAPIMethod
            'linters as finished.';
   }
 
-  public function defineParamTypes() {
+  protected function defineParamTypes() {
     return array(
       'diffID'   => 'required diffID',
       'linters'  => 'required dict',
     );
   }
 
-  public function defineReturnType() {
+  protected function defineReturnType() {
     return 'void';
   }
 
-  public function defineErrorTypes() {
+  protected function defineErrorTypes() {
     return array(
       'ERR-BAD-DIFF'   => 'Bad diff ID.',
       'ERR-BAD-LINTER' => 'No postponed linter by the given name',
@@ -103,7 +103,6 @@ final class DifferentialFinishPostponedLintersConduitAPIMethod
         'name' => 'arc:lint',
         'data' => json_encode($messages),
       ));
-    $call->setForceLocal(true);
     $call->setUser($request->getUser());
     $call->execute();
     $call = new ConduitCall(
@@ -113,10 +112,7 @@ final class DifferentialFinishPostponedLintersConduitAPIMethod
         'name' => 'arc:lint-postponed',
         'data' => json_encode($postponed_linters),
       ));
-    $call->setForceLocal(true);
     $call->setUser($request->getUser());
     $call->execute();
-
   }
-
 }

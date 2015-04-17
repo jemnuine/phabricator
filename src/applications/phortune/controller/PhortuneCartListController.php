@@ -3,26 +3,23 @@
 final class PhortuneCartListController
   extends PhortuneController {
 
-  private $merchantID;
-  private $queryKey;
-
   private $merchant;
+  private $account;
+  private $subscription;
 
-  public function willProcessRequest(array $data) {
-    $this->merchantID = idx($data, 'merchantID');
-    $this->queryKey = idx($data, 'queryKey');
-  }
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $this->getViewer();
 
-  public function processRequest() {
-    $request = $this->getRequest();
-    $viewer = $request->getUser();
+    $merchant_id = $request->getURIData('merchantID');
+    $account_id = $request->getURIData('accountID');
+    $subscription_id = $request->getURIData('subscriptionID');
 
     $engine = new PhortuneCartSearchEngine();
 
-    if ($this->merchantID) {
+    if ($merchant_id) {
       $merchant = id(new PhortuneMerchantQuery())
         ->setViewer($viewer)
-        ->withIDs(array($this->merchantID))
+        ->withIDs(array($merchant_id))
         ->requireCapabilities(
           array(
             PhabricatorPolicyCapability::CAN_VIEW,
@@ -33,11 +30,43 @@ final class PhortuneCartListController
         return new Aphront404Response();
       }
       $this->merchant = $merchant;
+      $viewer->grantAuthority($merchant);
       $engine->setMerchant($merchant);
+    } else if ($account_id) {
+      $account = id(new PhortuneAccountQuery())
+        ->setViewer($viewer)
+        ->withIDs(array($account_id))
+        ->requireCapabilities(
+          array(
+            PhabricatorPolicyCapability::CAN_VIEW,
+            PhabricatorPolicyCapability::CAN_EDIT,
+          ))
+        ->executeOne();
+      if (!$account) {
+        return new Aphront404Response();
+      }
+      $this->account = $account;
+      $engine->setAccount($account);
+    } else {
+      return new Aphront404Response();
     }
 
-    $controller = id(new PhabricatorApplicationSearchController($request))
-      ->setQueryKey($this->queryKey)
+    // NOTE: We must process this after processing the merchant authority, so
+    // it becomes visible in merchant contexts.
+    if ($subscription_id) {
+      $subscription = id(new PhortuneSubscriptionQuery())
+        ->setViewer($viewer)
+        ->withIDs(array($subscription_id))
+        ->executeOne();
+      if (!$subscription) {
+        return new Aphront404Response();
+      }
+      $this->subscription = $subscription;
+      $engine->setSubscription($subscription);
+    }
+
+    $controller = id(new PhabricatorApplicationSearchController())
+      ->setQueryKey($request->getURIData('queryKey'))
       ->setSearchEngine($engine)
       ->setNavigation($this->buildSideNavView());
 
@@ -59,18 +88,42 @@ final class PhortuneCartListController
     return $nav;
   }
 
-  public function buildApplicationCrumbs() {
+  protected function buildApplicationCrumbs() {
     $crumbs = parent::buildApplicationCrumbs();
+
+    $subscription = $this->subscription;
 
     $merchant = $this->merchant;
     if ($merchant) {
       $id = $merchant->getID();
+      $this->addMerchantCrumb($crumbs, $merchant);
+      if (!$subscription) {
+        $crumbs->addTextCrumb(
+          pht('Orders'),
+          $this->getApplicationURI("merchant/orders/{$id}/"));
+      }
+    }
+
+    $account = $this->account;
+    if ($account) {
+      $id = $account->getID();
+      $this->addAccountCrumb($crumbs, $account);
+      if (!$subscription) {
+        $crumbs->addTextCrumb(
+          pht('Orders'),
+          $this->getApplicationURI("{$id}/order/"));
+      }
+    }
+
+    if ($subscription) {
+      if ($merchant) {
+        $subscription_uri = $subscription->getMerchantURI();
+      } else {
+        $subscription_uri = $subscription->getURI();
+      }
       $crumbs->addTextCrumb(
-        $merchant->getName(),
-        $this->getApplicationURI("merchant/{$id}/"));
-      $crumbs->addTextCrumb(
-        pht('Orders'),
-        $this->getApplicationURI("merchant/orders/{$id}/"));
+        $subscription->getSubscriptionName(),
+        $subscription_uri);
     }
 
     return $crumbs;

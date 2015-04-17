@@ -39,9 +39,12 @@ abstract class HeraldAdapter {
   const FIELD_AUTHOR_RAW             = 'author-raw';
   const FIELD_COMMITTER_RAW          = 'committer-raw';
   const FIELD_IS_NEW_OBJECT          = 'new-object';
+  const FIELD_APPLICATION_EMAIL      = 'applicaton-email';
   const FIELD_TASK_PRIORITY          = 'taskpriority';
+  const FIELD_TASK_STATUS            = 'taskstatus';
   const FIELD_ARCANIST_PROJECT       = 'arcanist-project';
   const FIELD_PUSHER_IS_COMMITTER    = 'pusher-is-committer';
+  const FIELD_PATH                   = 'path';
 
   const CONDITION_CONTAINS        = 'contains';
   const CONDITION_NOT_CONTAINS    = '!contains';
@@ -95,14 +98,27 @@ abstract class HeraldAdapter {
   const VALUE_USER_OR_PROJECT = 'userorproject';
   const VALUE_BUILD_PLAN      = 'buildplan';
   const VALUE_TASK_PRIORITY   = 'taskpriority';
-  const VALUE_ARCANIST_PROJECT = 'arcanistprojects';
-  const VALUE_LEGAL_DOCUMENTS = 'legaldocuments';
+  const VALUE_TASK_STATUS     = 'taskstatus';
+  const VALUE_ARCANIST_PROJECT  = 'arcanistprojects';
+  const VALUE_LEGAL_DOCUMENTS   = 'legaldocuments';
+  const VALUE_APPLICATION_EMAIL = 'applicationemail';
 
   private $contentSource;
   private $isNewObject;
+  private $applicationEmail;
   private $customFields = false;
   private $customActions = null;
   private $queuedTransactions = array();
+  private $emailPHIDs = array();
+  private $forcedEmailPHIDs = array();
+
+  public function getEmailPHIDs() {
+    return array_values($this->emailPHIDs);
+  }
+
+  public function getForcedEmailPHIDs() {
+    return array_values($this->forcedEmailPHIDs);
+  }
 
   public function getCustomActions() {
     if ($this->customActions === null) {
@@ -153,6 +169,16 @@ abstract class HeraldAdapter {
     return $this;
   }
 
+  public function setApplicationEmail(
+    PhabricatorMetaMTAApplicationEmail $email) {
+    $this->applicationEmail = $email;
+    return $this;
+  }
+
+  public function getApplicationEmail() {
+    return $this->applicationEmail;
+  }
+
   abstract public function getPHID();
   abstract public function getHeraldName();
 
@@ -166,6 +192,14 @@ abstract class HeraldAdapter {
         return true;
       case self::FIELD_IS_NEW_OBJECT:
         return $this->getIsNewObject();
+      case self::FIELD_APPLICATION_EMAIL:
+        $value = array();
+        // while there is only one match by implementation, we do set
+        // comparisons on phids, so return an array with just the phid
+        if ($this->getApplicationEmail()) {
+          $value[] = $this->getApplicationEmail()->getPHID();
+        }
+        return $value;
       default:
         if ($this->isHeraldCustomKey($field_name)) {
           return $this->getCustomFieldValue($field_name);
@@ -309,9 +343,12 @@ abstract class HeraldAdapter {
       self::FIELD_AUTHOR_RAW => pht('Raw author name'),
       self::FIELD_COMMITTER_RAW => pht('Raw committer name'),
       self::FIELD_IS_NEW_OBJECT => pht('Is newly created?'),
+      self::FIELD_APPLICATION_EMAIL => pht('Receiving email address'),
       self::FIELD_TASK_PRIORITY => pht('Task priority'),
+      self::FIELD_TASK_STATUS => pht('Task status'),
       self::FIELD_ARCANIST_PROJECT => pht('Arcanist Project'),
       self::FIELD_PUSHER_IS_COMMITTER => pht('Pusher same as committer'),
+      self::FIELD_PATH => pht('Path'),
     ) + $this->getCustomFieldNameMap();
   }
 
@@ -353,6 +390,7 @@ abstract class HeraldAdapter {
       case self::FIELD_BODY:
       case self::FIELD_COMMITTER_RAW:
       case self::FIELD_AUTHOR_RAW:
+      case self::FIELD_PATH:
         return array(
           self::CONDITION_CONTAINS,
           self::CONDITION_NOT_CONTAINS,
@@ -363,6 +401,7 @@ abstract class HeraldAdapter {
       case self::FIELD_REVIEWER:
       case self::FIELD_PUSHER:
       case self::FIELD_TASK_PRIORITY:
+      case self::FIELD_TASK_STATUS:
       case self::FIELD_ARCANIST_PROJECT:
         return array(
           self::CONDITION_IS_ANY,
@@ -389,6 +428,13 @@ abstract class HeraldAdapter {
       case self::FIELD_REPOSITORY_PROJECTS:
         return array(
           self::CONDITION_INCLUDE_ALL,
+          self::CONDITION_INCLUDE_ANY,
+          self::CONDITION_INCLUDE_NONE,
+          self::CONDITION_EXISTS,
+          self::CONDITION_NOT_EXISTS,
+        );
+      case self::FIELD_APPLICATION_EMAIL:
+        return array(
           self::CONDITION_INCLUDE_ANY,
           self::CONDITION_INCLUDE_NONE,
           self::CONDITION_EXISTS,
@@ -840,6 +886,8 @@ abstract class HeraldAdapter {
             return self::VALUE_REPOSITORY;
           case self::FIELD_TASK_PRIORITY:
             return self::VALUE_TASK_PRIORITY;
+          case self::FIELD_TASK_STATUS:
+            return self::VALUE_TASK_STATUS;
           case self::FIELD_ARCANIST_PROJECT:
             return self::VALUE_ARCANIST_PROJECT;
           default:
@@ -865,6 +913,8 @@ abstract class HeraldAdapter {
             return self::VALUE_PROJECT;
           case self::FIELD_REVIEWERS:
             return self::VALUE_USER_OR_PROJECT;
+          case self::FIELD_APPLICATION_EMAIL:
+            return self::VALUE_APPLICATION_EMAIL;
           default:
             return self::VALUE_USER;
         }
@@ -954,11 +1004,8 @@ abstract class HeraldAdapter {
   public static function applyFlagEffect(HeraldEffect $effect, $phid) {
     $color = $effect->getTarget();
 
-    // TODO: Silly that we need to load this again here.
-    $rule = id(new HeraldRule())->load($effect->getRuleID());
-    $user = id(new PhabricatorUser())->loadOneWhere(
-      'phid = %s',
-      $rule->getAuthorPHID());
+    $rule = $effect->getRule();
+    $user = $rule->getAuthor();
 
     $flag = PhabricatorFlagQuery::loadUserFlag($user, $phid);
     if ($flag) {
@@ -990,6 +1037,26 @@ abstract class HeraldAdapter {
       $effect,
       true,
       pht('Added flag.'));
+  }
+
+  protected function applyEmailEffect(HeraldEffect $effect) {
+
+    foreach ($effect->getTarget() as $phid) {
+      $this->emailPHIDs[$phid] = $phid;
+
+      // If this is a personal rule, we'll force delivery of a real email. This
+      // effect is stronger than notification preferences, so you get an actual
+      // email even if your preferences are set to "Notify" or "Ignore".
+      $rule = $effect->getRule();
+      if ($rule->isPersonalRule()) {
+        $this->forcedEmailPHIDs[$phid] = $phid;
+      }
+    }
+
+    return new HeraldApplyTranscript(
+      $effect,
+      true,
+      pht('Added mailable to mail targets.'));
   }
 
   public static function getAllAdapters() {
@@ -1034,8 +1101,9 @@ abstract class HeraldAdapter {
     return $map;
   }
 
-  public function renderRuleAsText(HeraldRule $rule, array $handles) {
-    assert_instances_of($handles, 'PhabricatorObjectHandle');
+  public function renderRuleAsText(
+    HeraldRule $rule,
+    PhabricatorHandleList $handles) {
 
     require_celerity_resource('herald-css');
 
@@ -1110,7 +1178,7 @@ abstract class HeraldAdapter {
 
   private function renderConditionAsText(
     HeraldCondition $condition,
-    array $handles) {
+    PhabricatorHandleList $handles) {
 
     $field_type = $condition->getFieldName();
 
@@ -1130,7 +1198,7 @@ abstract class HeraldAdapter {
 
   private function renderActionAsText(
     HeraldAction $action,
-    array $handles) {
+    PhabricatorHandleList $handles) {
     $rule_global = HeraldRuleTypeConfig::RULE_TYPE_GLOBAL;
 
     $action_type = $action->getAction();
@@ -1143,7 +1211,7 @@ abstract class HeraldAdapter {
 
   private function renderConditionValueAsText(
     HeraldCondition $condition,
-    array $handles) {
+    PhabricatorHandleList $handles) {
 
     $value = $condition->getValue();
     if (!is_array($value)) {
@@ -1154,6 +1222,15 @@ abstract class HeraldAdapter {
         $priority_map = ManiphestTaskPriority::getTaskPriorityMap();
         foreach ($value as $index => $val) {
           $name = idx($priority_map, $val);
+          if ($name) {
+            $value[$index] = $name;
+          }
+        }
+        break;
+      case self::FIELD_TASK_STATUS:
+        $status_map = ManiphestTaskStatus::getTaskStatusMap();
+        foreach ($value as $index => $val) {
+          $name = idx($status_map, $val);
           if ($name) {
             $value[$index] = $name;
           }
@@ -1171,7 +1248,7 @@ abstract class HeraldAdapter {
         break;
       default:
         foreach ($value as $index => $val) {
-          $handle = idx($handles, $val);
+          $handle = $handles->getHandleIfExists($val);
           if ($handle) {
             $value[$index] = $handle->renderLink();
           }
@@ -1184,7 +1261,7 @@ abstract class HeraldAdapter {
 
   private function renderActionTargetAsText(
     HeraldAction $action,
-    array $handles) {
+    PhabricatorHandleList $handles) {
 
     $target = $action->getTarget();
     if (!is_array($target)) {
@@ -1196,7 +1273,7 @@ abstract class HeraldAdapter {
           $target[$index] = PhabricatorFlagColor::getColorName($val);
           break;
         default:
-          $handle = idx($handles, $val);
+          $handle = $handles->getHandleIfExists($val);
           if ($handle) {
             $target[$index] = $handle->renderLink();
           }

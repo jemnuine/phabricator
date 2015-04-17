@@ -83,20 +83,36 @@ final class PhabricatorFeedQuery
   }
 
   private function buildGroupClause(AphrontDatabaseConnection $conn_r) {
-    return qsprintf(
-      $conn_r,
-      'GROUP BY '.($this->filterPHIDs
-        ? 'ref.chronologicalKey'
-        : 'story.chronologicalKey'));
+    if ($this->filterPHIDs) {
+      return qsprintf($conn_r, 'GROUP BY ref.chronologicalKey');
+    } else {
+      return qsprintf($conn_r, 'GROUP BY story.chronologicalKey');
+    }
   }
 
-  protected function getPagingColumn() {
-    return ($this->filterPHIDs
-      ? 'ref.chronologicalKey'
-      : 'story.chronologicalKey');
+  protected function getDefaultOrderVector() {
+    return array('key');
   }
 
-  protected function getPagingValue($item) {
+  public function getOrderableColumns() {
+    $table = ($this->filterPHIDs ? 'ref' : 'story');
+    return array(
+      'key' => array(
+        'table' => $table,
+        'column' => 'chronologicalKey',
+        'type' => 'int',
+        'unique' => true,
+      ),
+    );
+  }
+
+  protected function getPagingValueMap($cursor, array $keys) {
+    return array(
+      'key' => $cursor,
+    );
+  }
+
+  protected function getResultCursor($item) {
     if ($item instanceof PhabricatorFeedStory) {
       return $item->getChronologicalKey();
     }

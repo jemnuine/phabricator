@@ -66,22 +66,6 @@ final class PhabricatorSearchApplicationSearchEngine
     $subscriber_phids = $saved->getParameter('subscriberPHIDs', array());
     $project_phids = $saved->getParameter('projectPHIDs', array());
 
-    $all_phids = array_merge(
-      $author_phids,
-      $owner_phids,
-      $subscriber_phids,
-      $project_phids);
-
-    $all_handles = id(new PhabricatorHandleQuery())
-      ->setViewer($this->requireViewer())
-      ->withPHIDs($all_phids)
-      ->execute();
-
-    $author_handles = array_select_keys($all_handles, $author_phids);
-    $owner_handles = array_select_keys($all_handles, $owner_phids);
-    $subscriber_handles = array_select_keys($all_handles, $subscriber_phids);
-    $project_handles = array_select_keys($all_handles, $project_phids);
-
     $with_unowned = $saved->getParameter('withUnowned', array());
 
     $status_values = $saved->getParameter('statuses', array());
@@ -132,18 +116,18 @@ final class PhabricatorSearchApplicationSearchEngine
           ->setValue($saved->getParameter('query')))
       ->appendChild($status_control)
       ->appendChild($types_control)
-      ->appendChild(
+      ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setName('authorPHIDs')
           ->setLabel('Authors')
           ->setDatasource(new PhabricatorPeopleDatasource())
-          ->setValue($author_handles))
-      ->appendChild(
+          ->setValue($author_phids))
+      ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setName('ownerPHIDs')
           ->setLabel('Owners')
           ->setDatasource(new PhabricatorTypeaheadOwnerDatasource())
-          ->setValue($owner_handles))
+          ->setValue($owner_phids))
       ->appendChild(
         id(new AphrontFormCheckboxControl())
           ->addCheckbox(
@@ -151,25 +135,25 @@ final class PhabricatorSearchApplicationSearchEngine
             1,
             pht('Show only unowned documents.'),
             $with_unowned))
-      ->appendChild(
+      ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setName('subscriberPHIDs')
           ->setLabel('Subscribers')
           ->setDatasource(new PhabricatorPeopleDatasource())
-          ->setValue($subscriber_handles))
-      ->appendChild(
+          ->setValue($subscriber_phids))
+      ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setName('projectPHIDs')
           ->setLabel('In Any Project')
           ->setDatasource(new PhabricatorProjectDatasource())
-          ->setValue($project_handles));
+          ->setValue($project_phids));
   }
 
   protected function getURI($path) {
     return '/search/'.$path;
   }
 
-  public function getBuiltinQueryNames() {
+  protected function getBuiltinQueryNames() {
     return array(
       'all' => pht('All Documents'),
       'open' => pht('Open Documents'),
@@ -251,33 +235,24 @@ final class PhabricatorSearchApplicationSearchEngine
         ->withPHIDs(mpull($results, 'getPHID'))
         ->execute();
 
-      $output = array();
+      $list = new PHUIObjectItemListView();
       foreach ($results as $phid => $handle) {
         $view = id(new PhabricatorSearchResultView())
           ->setHandle($handle)
           ->setQuery($query)
-          ->setObject(idx($objects, $phid));
-        $output[] = $view->render();
+          ->setObject(idx($objects, $phid))
+          ->render();
+        $list->addItem($view);
       }
 
-      $results = phutil_tag_div(
-        'phabricator-search-result-list',
-        $output);
+      $results = $list;
     } else {
-      $results = phutil_tag_div(
-        'phabricator-search-result-list',
-        phutil_tag(
-          'p',
-          array('class' => 'phabricator-search-no-results'),
-          pht('No search results.')));
+      $results = id(new PHUIInfoView())
+        ->appendChild(pht('No results returned for that query.'))
+        ->setSeverity(PHUIInfoView::SEVERITY_NODATA);
     }
 
-    return id(new PHUIBoxView())
-      ->addMargin(PHUI::MARGIN_LARGE)
-      ->addPadding(PHUI::PADDING_LARGE)
-      ->setBorder(true)
-      ->appendChild($results)
-      ->addClass('phabricator-search-result-box');
+    return $results;
   }
 
 }

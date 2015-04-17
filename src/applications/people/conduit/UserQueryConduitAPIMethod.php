@@ -10,7 +10,7 @@ final class UserQueryConduitAPIMethod extends UserConduitAPIMethod {
     return 'Query users.';
   }
 
-  public function defineParamTypes() {
+  protected function defineParamTypes() {
     return array(
       'usernames'    => 'optional list<string>',
       'emails'       => 'optional list<string>',
@@ -22,11 +22,11 @@ final class UserQueryConduitAPIMethod extends UserConduitAPIMethod {
     );
   }
 
-  public function defineReturnType() {
+  protected function defineReturnType() {
     return 'list<dict>';
   }
 
-  public function defineErrorTypes() {
+  protected function defineErrorTypes() {
     return array(
       'ERR-INVALID-PARAMETER' => 'Missing or malformed parameter.',
     );
@@ -41,8 +41,9 @@ final class UserQueryConduitAPIMethod extends UserConduitAPIMethod {
     $offset      = $request->getValue('offset',    0);
     $limit       = $request->getValue('limit',     100);
 
-    $query = new PhabricatorPeopleQuery();
-    $query->setViewer($request->getUser());
+    $query = id(new PhabricatorPeopleQuery())
+      ->setViewer($request->getUser())
+      ->needProfileImage(true);
 
     if ($usernames) {
       $query->withUsernames($usernames);

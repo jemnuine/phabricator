@@ -48,26 +48,21 @@ final class PhabricatorConduitConsoleController
         break;
     }
 
-    $error_types = $method->defineErrorTypes();
-    if ($error_types) {
-      $error_description = array();
-      foreach ($error_types as $error => $meaning) {
-        $error_description[] = hsprintf(
-          '<li><strong>%s:</strong> %s</li>',
-          $error,
-          $meaning);
-      }
-      $error_description = phutil_tag('ul', array(), $error_description);
-    } else {
-      $error_description = pht(
-        'This method does not raise any specific errors.');
+    $error_types = $method->getErrorTypes();
+    $error_types['ERR-CONDUIT-CORE'] = pht('See error message for details.');
+    $error_description = array();
+    foreach ($error_types as $error => $meaning) {
+      $error_description[] = hsprintf(
+        '<li><strong>%s:</strong> %s</li>',
+        $error,
+        $meaning);
     }
+    $error_description = phutil_tag('ul', array(), $error_description);
 
     $form = new AphrontFormView();
     $form
       ->setUser($request->getUser())
       ->setAction('/api/'.$this->method)
-      ->addHiddenInput('allowEmptyParams', 1)
       ->appendChild(
         id(new AphrontFormStaticControl())
           ->setLabel('Description')
@@ -75,7 +70,7 @@ final class PhabricatorConduitConsoleController
       ->appendChild(
         id(new AphrontFormStaticControl())
           ->setLabel('Returns')
-          ->setValue($method->defineReturnType()))
+          ->setValue($method->getReturnType()))
       ->appendChild(
         id(new AphrontFormMarkupControl())
           ->setLabel('Errors')
@@ -85,7 +80,7 @@ final class PhabricatorConduitConsoleController
         '<strong>JSON</strong>. For instance, to enter a list, type: '.
         '<tt>["apple", "banana", "cherry"]</tt>'));
 
-    $params = $method->defineParamTypes();
+    $params = $method->getParamTypes();
     foreach ($params as $param => $desc) {
       $form->appendChild(
         id(new AphrontFormTextControl())
@@ -124,7 +119,65 @@ final class PhabricatorConduitConsoleController
     $form_box = id(new PHUIObjectBoxView())
       ->setHeader($header)
       ->setFormErrors($errors)
-      ->setForm($form);
+      ->appendChild($form);
+
+    $content = array();
+
+    $query = $method->newQueryObject();
+    if ($query) {
+      $orders = $query->getBuiltinOrders();
+
+      $rows = array();
+      foreach ($orders as $key => $order) {
+        $rows[] = array(
+          $key,
+          $order['name'],
+          implode(', ', $order['vector']),
+        );
+      }
+
+      $table = id(new AphrontTableView($rows))
+        ->setHeaders(
+          array(
+            pht('Key'),
+            pht('Description'),
+            pht('Columns'),
+          ))
+        ->setColumnClasses(
+          array(
+            'pri',
+            '',
+            'wide',
+          ));
+      $content[] = id(new PHUIObjectBoxView())
+        ->setHeaderText(pht('Builtin Orders'))
+        ->appendChild($table);
+
+      $columns = $query->getOrderableColumns();
+
+      $rows = array();
+      foreach ($columns as $key => $column) {
+        $rows[] = array(
+          $key,
+          idx($column, 'unique') ? pht('Yes') : pht('No'),
+        );
+      }
+
+      $table = id(new AphrontTableView($rows))
+        ->setHeaders(
+          array(
+            pht('Key'),
+            pht('Unique'),
+          ))
+        ->setColumnClasses(
+          array(
+            'pri',
+            'wide',
+          ));
+      $content[] = id(new PHUIObjectBoxView())
+        ->setHeaderText(pht('Column Orders'))
+        ->appendChild($table);
+    }
 
     $crumbs = $this->buildApplicationCrumbs();
     $crumbs->addTextCrumb($method->getAPIMethodName());
@@ -133,6 +186,7 @@ final class PhabricatorConduitConsoleController
       array(
         $crumbs,
         $form_box,
+        $content,
       ),
       array(
         'title' => $method->getAPIMethodName(),

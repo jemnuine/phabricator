@@ -4,6 +4,22 @@ final class PhortuneCartSearchEngine
   extends PhabricatorApplicationSearchEngine {
 
   private $merchant;
+  private $account;
+  private $subscription;
+
+  public function canUseInPanelContext() {
+    // These only make sense in an account or merchant context.
+    return false;
+  }
+
+  public function setAccount(PhortuneAccount $account) {
+    $this->account = $account;
+    return $this;
+  }
+
+  public function getAccount() {
+    return $this->account;
+  }
 
   public function setMerchant(PhortuneMerchant $merchant) {
     $this->merchant = $merchant;
@@ -14,8 +30,21 @@ final class PhortuneCartSearchEngine
     return $this->merchant;
   }
 
+  public function setSubscription(PhortuneSubscription $subscription) {
+    $this->subscription = $subscription;
+    return $this;
+  }
+
+  public function getSubscription() {
+    return $this->subscription;
+  }
+
   public function getResultTypeDescription() {
     return pht('Phortune Orders');
+  }
+
+  public function getApplicationClassName() {
+    return 'PhabricatorPhortuneApplication';
   }
 
   public function buildSavedQueryFromRequest(AphrontRequest $request) {
@@ -31,12 +60,15 @@ final class PhortuneCartSearchEngine
         array(
           PhortuneCart::STATUS_PURCHASING,
           PhortuneCart::STATUS_CHARGED,
+          PhortuneCart::STATUS_HOLD,
+          PhortuneCart::STATUS_REVIEW,
           PhortuneCart::STATUS_PURCHASED,
         ));
 
     $viewer = $this->requireViewer();
 
     $merchant = $this->getMerchant();
+    $account = $this->getAccount();
     if ($merchant) {
       $can_edit = PhabricatorPolicyFilter::hasCapability(
         $viewer,
@@ -47,15 +79,32 @@ final class PhortuneCartSearchEngine
           pht('You can not query orders for a merchant you do not control.'));
       }
       $query->withMerchantPHIDs(array($merchant->getPHID()));
+    } else if ($account) {
+      $can_edit = PhabricatorPolicyFilter::hasCapability(
+        $viewer,
+        $account,
+        PhabricatorPolicyCapability::CAN_EDIT);
+      if (!$can_edit) {
+        throw new Exception(
+          pht(
+            'You can not query orders for an account you are not '.
+            'a member of.'));
+      }
+      $query->withAccountPHIDs(array($account->getPHID()));
     } else {
       $accounts = id(new PhortuneAccountQuery())
-        ->withMemberPHIDs($viewer->getPHID())
+        ->withMemberPHIDs(array($viewer->getPHID()))
         ->execute();
       if ($accounts) {
         $query->withAccountPHIDs(mpull($accounts, 'getPHID'));
       } else {
         throw new Exception(pht('You have no accounts!'));
       }
+    }
+
+    $subscription = $this->getSubscription();
+    if ($subscription) {
+      $query->withSubscriptionPHIDs(array($subscription->getPHID()));
     }
 
     return $query;
@@ -67,14 +116,17 @@ final class PhortuneCartSearchEngine
 
   protected function getURI($path) {
     $merchant = $this->getMerchant();
+    $account = $this->getAccount();
     if ($merchant) {
       return '/phortune/merchant/'.$merchant->getID().'/order/'.$path;
+    } else if ($account) {
+      return '/phortune/'.$account->getID().'/order/';
     } else {
       return '/phortune/order/'.$path;
     }
   }
 
-  public function getBuiltinQueryNames() {
+  protected function getBuiltinQueryNames() {
     $names = array(
       'all' => pht('All Orders'),
     );
@@ -119,8 +171,21 @@ final class PhortuneCartSearchEngine
     foreach ($carts as $cart) {
       $merchant = $cart->getMerchant();
 
+      if ($this->getMerchant()) {
+        $href = $this->getApplicationURI(
+          'merchant/'.$merchant->getID().'/cart/'.$cart->getID().'/');
+      } else {
+        $href = $cart->getDetailURI();
+      }
+
       $rows[] = array(
         $cart->getID(),
+        phutil_tag(
+          'a',
+          array(
+            'href' => $href,
+          ),
+          $cart->getName()),
         $handles[$cart->getPHID()]->renderLink(),
         $handles[$merchant->getPHID()]->renderLink(),
         $handles[$cart->getAuthorPHID()]->renderLink(),

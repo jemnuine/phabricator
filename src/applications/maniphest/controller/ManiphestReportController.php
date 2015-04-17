@@ -52,6 +52,7 @@ final class ManiphestReportController extends ManiphestController {
     $nav->appendChild($core);
     $nav->setCrumbs(
       $this->buildApplicationCrumbs()
+        ->setBorder(true)
         ->addTextCrumb(pht('Reports')));
 
     return $this->buildApplicationPage(
@@ -261,15 +262,15 @@ final class ManiphestReportController extends ManiphestController {
     }
 
     if ($caption) {
-      $caption = id(new AphrontErrorView())
+      $caption = id(new PHUIInfoView())
         ->appendChild($caption)
-        ->setSeverity(AphrontErrorView::SEVERITY_NOTICE);
+        ->setSeverity(PHUIInfoView::SEVERITY_NOTICE);
     }
 
     $panel = new PHUIObjectBoxView();
     $panel->setHeaderText($header);
     if ($caption) {
-      $panel->setErrorView($caption);
+      $panel->setInfoView($caption);
     }
     $panel->appendChild($table);
 
@@ -319,13 +320,14 @@ final class ManiphestReportController extends ManiphestController {
 
     $form = id(new AphrontFormView())
       ->setUser($user)
-      ->appendChild(
+      ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setDatasource(new PhabricatorProjectDatasource())
           ->setLabel(pht('Project'))
           ->setLimit(1)
           ->setName('set_project')
-          ->setValue($tokens));
+          // TODO: This is silly, but this is Maniphest reports.
+          ->setValue(mpull($tokens, 'getPHID')));
 
     if ($has_window) {
       list($window_str, $ignored, $window_error) = $this->getWindow();
@@ -395,6 +397,12 @@ final class ManiphestReportController extends ManiphestController {
     $query = id(new ManiphestTaskQuery())
       ->setViewer($user)
       ->withStatuses(ManiphestTaskStatus::getOpenStatusConstants());
+
+    switch ($this->view) {
+      case 'project':
+        $query->needProjectPHIDs(true);
+        break;
+    }
 
     $project_phid = $request->getStr('project');
     $project_handle = null;
@@ -694,10 +702,17 @@ final class ManiphestReportController extends ManiphestController {
 
     $ids = ipull($rows, 'id');
 
-    return id(new ManiphestTaskQuery())
+    $query = id(new ManiphestTaskQuery())
       ->setViewer($this->getRequest()->getUser())
-      ->withIDs($ids)
-      ->execute();
+      ->withIDs($ids);
+
+    switch ($this->view) {
+      case 'project':
+        $query->needProjectPHIDs(true);
+        break;
+    }
+
+    return $query->execute();
   }
 
   /**

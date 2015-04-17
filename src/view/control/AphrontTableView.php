@@ -284,15 +284,21 @@ final class AphrontTableView extends AphrontView {
           coalesce($this->noDataString, pht('No data available.'))));
     }
 
-    $table_class = 'aphront-table-view';
+    $classes = array();
+    $classes[] = 'aphront-table-view';
     if ($this->className !== null) {
-      $table_class .= ' '.$this->className;
+      $classes[] = $this->className;
     }
     if ($this->deviceReadyTable) {
-      $table_class .= ' aphront-table-view-device-ready';
+      $classes[] = 'aphront-table-view-device-ready';
     }
 
-    $html = phutil_tag('table', array('class' => $table_class), $table);
+    $html = phutil_tag(
+      'table',
+      array(
+        'class' => implode(' ', $classes),
+      ),
+      $table);
     return phutil_tag_div('aphront-table-wrap', $html);
   }
 

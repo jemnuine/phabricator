@@ -15,11 +15,18 @@ final class PhortuneCartCancelController
     $request = $this->getRequest();
     $viewer = $request->getUser();
 
-    $cart = id(new PhortuneCartQuery())
+    $authority = $this->loadMerchantAuthority();
+
+    $cart_query = id(new PhortuneCartQuery())
       ->setViewer($viewer)
       ->withIDs(array($this->id))
-      ->needPurchases(true)
-      ->executeOne();
+      ->needPurchases(true);
+
+    if ($authority) {
+      $cart_query->withMerchantPHIDs(array($authority->getPHID()));
+    }
+
+    $cart = $cart_query->executeOne();
     if (!$cart) {
       return new Aphront404Response();
     }
@@ -45,7 +52,7 @@ final class PhortuneCartCancelController
         return new Aphront404Response();
     }
 
-    $cancel_uri = $cart->getDetailURI();
+    $cancel_uri = $cart->getDetailURI($authority);
     $merchant = $cart->getMerchant();
 
     try {
@@ -87,7 +94,7 @@ final class PhortuneCartCancelController
             $request->getStr('refund'));
           $refund->assertInRange('0.00 USD', $maximum->formatForDisplay());
         } catch (Exception $ex) {
-          $errors[] = $ex;
+          $errors[] = $ex->getMessage();
           $e_refund = pht('Invalid');
         }
       } else {
@@ -158,8 +165,9 @@ final class PhortuneCartCancelController
         }
 
         // TODO: If every HOLD and CHARGING transaction has been fully refunded
-        // and we're in a HOLD, PURCHASING or CHARGED cart state we probably
-        // need to kick the cart back to READY here?
+        // and we're in a HOLD, REVIEW, PURCHASING or CHARGED cart state we
+        // probably need to kick the cart back to READY here (or maybe kill
+        // it if it was in REVIEW)?
 
         return id(new AphrontRedirectResponse())->setURI($cancel_uri);
       }
@@ -170,6 +178,7 @@ final class PhortuneCartCancelController
       $body = pht(
         'Really refund this order?');
       $button = pht('Refund Order');
+      $cancel_text = pht('Cancel');
 
       $form = id(new AphrontFormView())
         ->setUser($viewer)
@@ -181,6 +190,7 @@ final class PhortuneCartCancelController
             ->setValue($v_refund));
 
       $form = $form->buildLayoutView();
+
     } else {
       $title = pht('Cancel Order?');
       $body = pht(
@@ -196,6 +206,7 @@ final class PhortuneCartCancelController
 
     return $this->newDialog()
       ->setTitle($title)
+      ->setErrors($errors)
       ->appendChild($body)
       ->appendChild($form)
       ->addSubmitButton($button)

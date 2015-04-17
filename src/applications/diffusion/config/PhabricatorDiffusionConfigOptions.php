@@ -11,6 +11,14 @@ final class PhabricatorDiffusionConfigOptions
     return pht('Configure Diffusion repository browsing.');
   }
 
+  public function getFontIcon() {
+    return 'fa-code';
+  }
+
+  public function getGroup() {
+    return 'apps';
+  }
+
   public function getOptions() {
     return array(
       $this->newOption(
@@ -18,20 +26,6 @@ final class PhabricatorDiffusionConfigOptions
         'string',
         '[Diffusion]')
         ->setDescription(pht('Subject prefix for Diffusion mail.')),
-      $this->newOption(
-        'metamta.diffusion.reply-handler-domain',
-        'string',
-        null)
-        ->setDescription(
-          pht(
-            'See {{metamta.maniphest.reply-handler}}. This does the same '.
-            'thing, but affects Diffusion.')),
-      $this->newOption(
-        'metamta.diffusion.reply-handler',
-        'class',
-        'PhabricatorAuditReplyHandler')
-        ->setBaseClass('PhabricatorMailReplyHandler')
-        ->setDescription(pht('Override mail reply handler class.')),
       $this->newOption(
         'metamta.diffusion.attach-patches',
         'bool',
@@ -103,6 +97,7 @@ final class PhabricatorDiffusionConfigOptions
             "Consider using SSH for authenticated access to repositories ".
             "instead of HTTP.")),
       $this->newOption('diffusion.ssh-user', 'string', null)
+        ->setLocked(true)
         ->setSummary(pht('Login username for SSH connections to repositories.'))
         ->setDescription(
           pht(
@@ -110,12 +105,22 @@ final class PhabricatorDiffusionConfigOptions
             'fill in this login username. If you have configured a VCS user '.
             'like `git`, you should provide it here.')),
       $this->newOption('diffusion.ssh-port', 'int', null)
+        ->setLocked(true)
         ->setSummary(pht('Port for SSH connections to repositories.'))
         ->setDescription(
           pht(
             'When constructing clone URIs to show to users, Diffusion by '.
             'default will not display a port assuming the default for your '.
             'VCS. Explicitly declare when running on a non-standard port.')),
+      $this->newOption('diffusion.ssh-host', 'string', null)
+        ->setLocked(true)
+        ->setSummary(pht('Host for SSH connections to repositories.'))
+        ->setDescription(
+          pht(
+            'If you accept Phabricator SSH traffic on a different host '.
+            'from web traffic (for example, if you use different SSH and '.
+            'web load balancers), you can set the SSH hostname here. This '.
+            'is an advanced option.')),
     );
   }
 

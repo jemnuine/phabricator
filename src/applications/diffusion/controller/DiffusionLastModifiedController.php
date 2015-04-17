@@ -6,9 +6,8 @@ final class DiffusionLastModifiedController extends DiffusionController {
     return true;
   }
 
-  public function processRequest() {
+  protected function processDiffusionRequest(AphrontRequest $request) {
     $drequest = $this->getDiffusionRequest();
-    $request = $this->getRequest();
     $viewer = $request->getUser();
 
     $paths = $request->getStr('paths');
@@ -152,6 +151,12 @@ final class DiffusionLastModifiedController extends DiffusionController {
           )),
         ),
         number_format($lint));
+    }
+
+    // The client treats these results as markup, so make sure they have been
+    // escaped correctly.
+    foreach ($return as $key => $value) {
+      $return[$key] = hsprintf('%s', $value);
     }
 
     return $return;

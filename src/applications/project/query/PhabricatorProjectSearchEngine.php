@@ -77,11 +77,7 @@ final class PhabricatorProjectSearchEngine
     AphrontFormView $form,
     PhabricatorSavedQuery $saved) {
 
-    $phids = $saved->getParameter('memberPHIDs', array());
-    $member_handles = id(new PhabricatorHandleQuery())
-      ->setViewer($this->requireViewer())
-      ->withPHIDs($phids)
-      ->execute();
+    $member_phids = $saved->getParameter('memberPHIDs', array());
 
     $status = $saved->getParameter('status');
     $name_match = $saved->getParameter('name');
@@ -123,12 +119,12 @@ final class PhabricatorProjectSearchEngine
           ->setName('name')
           ->setLabel(pht('Name'))
           ->setValue($name_match))
-      ->appendChild(
+      ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setDatasource(new PhabricatorPeopleDatasource())
           ->setName('members')
           ->setLabel(pht('Members'))
-          ->setValue($member_handles))
+          ->setValue($member_phids))
       ->appendChild(
         id(new AphrontFormSelectControl())
           ->setLabel(pht('Status'))
@@ -145,7 +141,7 @@ final class PhabricatorProjectSearchEngine
     return '/project/'.$path;
   }
 
-  public function getBuiltinQueryNames() {
+  protected function getBuiltinQueryNames() {
     $names = array();
 
     if ($this->requireViewer()->isLoggedIn()) {
@@ -212,23 +208,13 @@ final class PhabricatorProjectSearchEngine
 
     $list = new PHUIObjectItemListView();
     $list->setUser($viewer);
-    foreach ($projects as $project) {
-      $id = $project->getID();
-      $workboards_uri = $this->getApplicationURI("board/{$id}/");
-      $members_uri = $this->getApplicationURI("members/{$id}/");
-      $workboards_url = phutil_tag(
-        'a',
-        array(
-          'href' => $workboards_uri,
-        ),
-        pht('Workboards'));
+    $can_edit_projects = id(new PhabricatorPolicyFilter())
+      ->setViewer($viewer)
+      ->requireCapabilities(array(PhabricatorPolicyCapability::CAN_EDIT))
+      ->apply($projects);
 
-      $members_url = phutil_tag(
-        'a',
-        array(
-          'href' => $members_uri,
-        ),
-        pht('Members'));
+    foreach ($projects as $key => $project) {
+      $id = $project->getID();
 
       $tag_list = id(new PHUIHandleTagListView())
         ->setSlim(true)
@@ -238,9 +224,7 @@ final class PhabricatorProjectSearchEngine
         ->setHeader($project->getName())
         ->setHref($this->getApplicationURI("view/{$id}/"))
         ->setImageURI($project->getProfileImageURI())
-        ->addAttribute($tag_list)
-        ->addAttribute($workboards_url)
-        ->addAttribute($members_url);
+        ->addAttribute($tag_list);
 
       if ($project->getStatus() == PhabricatorProjectStatus::STATUS_ARCHIVED) {
         $item->addIcon('delete-grey', pht('Archived'));

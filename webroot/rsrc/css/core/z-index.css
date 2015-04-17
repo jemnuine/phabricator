@@ -2,7 +2,17 @@
  * @provides phabricator-zindex-css
  */
 
+.phabricator-nav-column-background {
+  z-index: -1;
+}
+
 .keyboard-focus-focus-reticle {
+  z-index: 1;
+}
+
+.device .phabricator-action-list-view.phabricator-action-list-toggle,
+.device-desktop .phui-document-content
+  .phabricator-action-list-view.phabricator-action-list-toggle {
   z-index: 1;
 }
 
@@ -34,11 +44,7 @@
   z-index: 3;
 }
 
-.phabricator-nav-column-background {
-  z-index: 3;
-}
-
-.phabricator-crumbs-view {
+.phui-crumbs-view {
   z-index: 3;
 }
 
@@ -75,6 +81,7 @@
   z-index: 5;
 }
 
+.conpherence-durable-column-header,
 .phabricator-main-menu {
   z-index: 6;
 }
@@ -84,7 +91,7 @@
   z-index: 6;
 }
 
-.jx-notification-container {
+.jx-scrollbar-bar {
   z-index: 7;
 }
 
@@ -99,6 +106,10 @@
 
 .jx-mask {
   z-index: 10;
+}
+
+.jx-notification-container {
+  z-index: 11;
 }
 
 .phabricator-global-upload-instructions {

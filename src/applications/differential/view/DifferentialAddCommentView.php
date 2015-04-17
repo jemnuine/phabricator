@@ -10,7 +10,7 @@ final class DifferentialAddCommentView extends AphrontView {
   private $ccs = array();
   private $errorView;
 
-  public function setErrorView(AphrontErrorView $error_view) {
+  public function setInfoView(PHUIInfoView $error_view) {
     $this->errorView = $error_view;
     return $this;
   }
@@ -80,7 +80,7 @@ final class DifferentialAddCommentView extends AphrontView {
           ->setValue($action)
           ->setID('comment-action')
           ->setOptions($this->actions))
-      ->appendChild(
+      ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setLabel($enable_reviewers ? $add_reviewers_labels[$action] :
             $add_reviewers_labels['add_reviewers'])
@@ -89,7 +89,7 @@ final class DifferentialAddCommentView extends AphrontView {
           ->setControlStyle($enable_reviewers ? null : 'display: none')
           ->setID('add-reviewers-tokenizer')
           ->setDisableBehavior(true))
-      ->appendChild(
+      ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setLabel(pht('Add Subscribers'))
           ->setName('ccs')
@@ -188,7 +188,7 @@ final class DifferentialAddCommentView extends AphrontView {
       ->appendChild($form);
 
     if ($this->errorView) {
-      $comment_box->setErrorView($this->errorView);
+      $comment_box->setInfoView($this->errorView);
     }
 
     return array($comment_box, $preview);

@@ -14,8 +14,8 @@ final class PhabricatorPholioApplication extends PhabricatorApplication {
     return pht('Review Mocks and Design');
   }
 
-  public function getIconName() {
-    return 'pholio';
+  public function getFontIcon() {
+    return 'fa-camera-retro';
   }
 
   public function getTitleGlyph() {
@@ -74,6 +74,19 @@ final class PhabricatorPholioApplication extends PhabricatorApplication {
     return array(
       PholioDefaultViewCapability::CAPABILITY => array(),
       PholioDefaultEditCapability::CAPABILITY => array(),
+    );
+  }
+
+  public function getMailCommandObjects() {
+    return array(
+      'mock' => array(
+        'name' => pht('Email Commands: Mocks'),
+        'header' => pht('Interacting with Pholio Mocks'),
+        'object' => new PholioMock(),
+        'summary' => pht(
+          'This page documents the commands you can use to interact with '.
+          'mocks in Pholio.'),
+      ),
     );
   }
 

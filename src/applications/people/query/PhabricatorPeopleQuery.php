@@ -101,7 +101,7 @@ final class PhabricatorPeopleQuery
     return $this;
   }
 
-  public function loadPage() {
+  protected function loadPage() {
     $table  = new PhabricatorUser();
     $conn_r = $table->establishConnection('r');
 
@@ -288,12 +288,8 @@ final class PhabricatorPeopleQuery
     return $this->formatWhereClause($where);
   }
 
-  protected function getPagingColumn() {
-    return 'user.id';
-  }
-
-  protected function getApplicationSearchObjectPHIDColumn() {
-    return 'user.phid';
+  protected function getPrimaryTableAlias() {
+    return 'user';
   }
 
   public function getQueryApplicationClass() {

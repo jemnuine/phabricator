@@ -16,6 +16,7 @@ JX.behavior('aphlict-dropdown', function(config, statics) {
 
   var dropdown = JX.$(config.dropdownID);
   var bubble = JX.$(config.bubbleID);
+  var icon = JX.DOM.scry(bubble, 'span', 'menu-icon')[0];
 
   var count;
   if (config.countID) {
@@ -36,7 +37,8 @@ JX.behavior('aphlict-dropdown', function(config, statics) {
         true);
     }
 
-    if (request) { //already fetching
+    if (request) {
+      // Already fetching.
       return;
     }
 
@@ -47,9 +49,9 @@ JX.behavior('aphlict-dropdown', function(config, statics) {
 
       JX.DOM.setContent(count, display);
       if (response.number === 0) {
-        JX.DOM.alterClass(bubble, 'alert-unread', false);
+        JX.DOM.alterClass(bubble, config.unreadClass, false);
       } else {
-        JX.DOM.alterClass(bubble, 'alert-unread', true);
+        JX.DOM.alterClass(bubble, config.unreadClass, true);
       }
       dirty = false;
       JX.DOM.alterClass(
@@ -62,14 +64,30 @@ JX.behavior('aphlict-dropdown', function(config, statics) {
     request.send();
   }
 
+  function set_visible(menu, icon) {
+    if (menu) {
+      statics.visible = {menu: menu, icon: icon};
+      if (icon) {
+        JX.DOM.alterClass(icon, 'white', true);
+      }
+    } else {
+      if (statics.visible) {
+        JX.DOM.hide(statics.visible.menu);
+        if (statics.visible.icon) {
+          JX.DOM.alterClass(statics.visible.icon, 'white', false);
+        }
+      }
+      statics.visible = null;
+    }
+  }
+
   JX.Stratcom.listen(
     'click',
     null,
     function(e) {
       if (!e.getNode('phabricator-notification-menu')) {
         // Click outside the dropdown; hide it.
-        JX.DOM.hide(dropdown);
-        statics.visible = null;
+        set_visible(null);
         return;
       }
 
@@ -93,7 +111,6 @@ JX.behavior('aphlict-dropdown', function(config, statics) {
       }
     });
 
-
   JX.DOM.listen(
     bubble,
     'click',
@@ -112,14 +129,13 @@ JX.behavior('aphlict-dropdown', function(config, statics) {
       // If a menu is currently open, close it.
       if (statics.visible) {
         var previously_visible = statics.visible;
-        JX.DOM.hide(statics.visible);
-        statics.visible = null;
+        set_visible(null);
 
         // If the menu we just closed was the menu attached to the clicked
         // icon, we're all done -- clicking the icon for an open menu just
         // closes it. Otherwise, we closed some other menu and still need to
         // open the one the user just clicked.
-        if (previously_visible === dropdown) {
+        if (previously_visible.menu === dropdown) {
           return;
         }
       }
@@ -132,14 +148,18 @@ JX.behavior('aphlict-dropdown', function(config, statics) {
       JX.DOM.show(dropdown);
 
       p.y = null;
-      if (config.right) {
+      if (config.containerDivID) {
+        var pc = JX.$V(JX.$(config.containerDivID));
+        p.x -= (JX.Vector.getDim(dropdown).x - JX.Vector.getDim(bubble).x +
+            pc.x);
+      } else if (config.right) {
         p.x -= (JX.Vector.getDim(dropdown).x - JX.Vector.getDim(bubble).x);
       } else {
         p.x -= 6;
       }
       p.setPos(dropdown);
 
-      statics.visible = dropdown;
+      set_visible(dropdown, icon);
     }
   );
 
@@ -149,5 +169,9 @@ JX.behavior('aphlict-dropdown', function(config, statics) {
     }
     dirty = true;
     refresh();
+  });
+
+  JX.Stratcom.listen('notification-panel-close', null, function() {
+    set_visible(null);
   });
 });

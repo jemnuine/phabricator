@@ -11,6 +11,14 @@ final class PhabricatorMetaMTAConfigOptions
     return pht('Configure Mail.');
   }
 
+  public function getFontIcon() {
+    return 'fa-send';
+  }
+
+  public function getGroup() {
+    return 'core';
+  }
+
   public function getOptions() {
     $send_as_user_desc = $this->deformat(pht(<<<EODOC
 When a user takes an action which generates an email notification (like
@@ -97,6 +105,12 @@ This may improve the behavior of some auto-responder software and prevent it
 from replying. However, it may also cause deliverability issues -- notably, you
 currently can not send this header via Amazon SES, and enabling this option with
 SES will prevent delivery of any affected mail.
+EODOC
+));
+
+    $email_preferences_description = $this->deformat(pht(<<<EODOC
+You can disable the email preference link in emails if users prefer smaller
+emails.
 EODOC
 ));
 
@@ -229,18 +243,10 @@ EODOC
       $this->newOption(
         'metamta.reply-handler-domain',
         'string',
-        'phabricator.example.com')
-        ->setDescription(pht(
-          'Domain used for reply email addresses. Some applications can '.
-          'configure this domain.')),
-      $this->newOption('metamta.reply.show-hints', 'bool', true)
-        ->setBoolOptions(
-          array(
-            pht('Show Reply Handler Hints'),
-            pht('No Reply Handler Hints'),
-          ))
-        ->setSummary(pht('Show hints about reply handler actions in email.'))
-        ->setDescription($reply_hints_description),
+        null)
+        ->setLocked(true)
+        ->setDescription(pht('Domain used for reply email addresses.'))
+        ->addExample('phabricator.example.com', ''),
       $this->newOption('metamta.herald.show-hints', 'bool', true)
         ->setBoolOptions(
           array(
@@ -257,14 +263,14 @@ EODOC
           ))
         ->setSummary(pht('Show "To:" and "Cc:" footer hints in email.'))
         ->setDescription($recipient_hints_description),
-      $this->newOption('metamta.precedence-bulk', 'bool', false)
+      $this->newOption('metamta.email-preferences', 'bool', true)
         ->setBoolOptions(
           array(
-            pht('Add "Precedence: bulk" Header'),
-            pht('No "Precedence: bulk" Header'),
+            pht('Show Email Preferences Link'),
+            pht('No Email Preferences Link'),
           ))
-        ->setSummary(pht('Control the "Precedence: bulk" header.'))
-        ->setDescription($bulk_description),
+        ->setSummary(pht('Show email preferences link in email.'))
+        ->setDescription($email_preferences_description),
       $this->newOption('metamta.re-prefix', 'bool', false)
         ->setBoolOptions(
           array(

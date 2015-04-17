@@ -1,21 +1,26 @@
 <?php
 
 final class PhortuneCart extends PhortuneDAO
-  implements PhabricatorPolicyInterface {
+  implements
+    PhabricatorApplicationTransactionInterface,
+    PhabricatorPolicyInterface {
 
   const STATUS_BUILDING = 'cart:building';
   const STATUS_READY = 'cart:ready';
   const STATUS_PURCHASING = 'cart:purchasing';
   const STATUS_CHARGED = 'cart:charged';
   const STATUS_HOLD = 'cart:hold';
+  const STATUS_REVIEW = 'cart:review';
   const STATUS_PURCHASED = 'cart:purchased';
 
   protected $accountPHID;
   protected $authorPHID;
   protected $merchantPHID;
+  protected $subscriptionPHID;
   protected $cartClass;
   protected $status;
   protected $metadata = array();
+  protected $mailKey;
 
   private $account = self::ATTACHABLE;
   private $purchases = self::ATTACHABLE;
@@ -30,7 +35,9 @@ final class PhortuneCart extends PhortuneDAO
       ->setAuthorPHID($actor->getPHID())
       ->setStatus(self::STATUS_BUILDING)
       ->setAccountPHID($account->getPHID())
-      ->setMerchantPHID($merchant->getPHID());
+      ->attachAccount($account)
+      ->setMerchantPHID($merchant->getPHID())
+      ->attachMerchant($merchant);
 
     $cart->account = $account;
     $cart->purchases = array();
@@ -59,6 +66,7 @@ final class PhortuneCart extends PhortuneDAO
       self::STATUS_PURCHASING => pht('Purchasing'),
       self::STATUS_CHARGED => pht('Charged'),
       self::STATUS_HOLD => pht('Hold'),
+      self::STATUS_REVIEW => pht('Review'),
       self::STATUS_PURCHASED => pht('Purchased'),
     );
   }
@@ -68,7 +76,26 @@ final class PhortuneCart extends PhortuneDAO
   }
 
   public function activateCart() {
-    $this->setStatus(self::STATUS_READY)->save();
+    $this->openTransaction();
+      $this->beginReadLocking();
+
+        $copy = clone $this;
+        $copy->reload();
+
+        if ($copy->getStatus() !== self::STATUS_BUILDING) {
+          throw new Exception(
+            pht(
+              'Cart has wrong status ("%s") to call willApplyCharge().',
+              $copy->getStatus()));
+        }
+
+        $this->setStatus(self::STATUS_READY)->save();
+
+      $this->endReadLocking();
+    $this->saveTransaction();
+
+    $this->recordCartTransaction(PhortuneCartTransaction::TYPE_CREATED);
+
     return $this;
   }
 
@@ -138,6 +165,8 @@ final class PhortuneCart extends PhortuneDAO
 
       $this->endReadLocking();
     $this->saveTransaction();
+
+    $this->recordCartTransaction(PhortuneCartTransaction::TYPE_HOLD);
   }
 
   public function didApplyCharge(PhortuneCharge $charge) {
@@ -149,13 +178,12 @@ final class PhortuneCart extends PhortuneDAO
         $copy = clone $this;
         $copy->reload();
 
-        if ($copy->getStatus() !== self::STATUS_PURCHASING) {
+        if (($copy->getStatus() !== self::STATUS_PURCHASING) &&
+            ($copy->getStatus() !== self::STATUS_HOLD)) {
           throw new Exception(
             pht(
-              'Cart has wrong status ("%s") to call didApplyCharge(), '.
-              'expected "%s".',
-              $copy->getStatus(),
-              self::STATUS_PURCHASING));
+              'Cart has wrong status ("%s") to call didApplyCharge().',
+              $copy->getStatus()));
         }
 
         $charge->save();
@@ -164,11 +192,70 @@ final class PhortuneCart extends PhortuneDAO
       $this->endReadLocking();
     $this->saveTransaction();
 
-    foreach ($this->purchases as $purchase) {
-      $purchase->getProduct()->didPurchaseProduct($purchase);
+    // TODO: Perform purchase review. Here, we would apply rules to determine
+    // whether the charge needs manual review (maybe making the decision via
+    // Herald, configuration, or by examining provider fraud data). For now,
+    // don't require review.
+    $needs_review = false;
+
+    if ($needs_review) {
+      $this->willReviewCart();
+    } else {
+      $this->didReviewCart();
     }
 
-    $this->setStatus(self::STATUS_PURCHASED)->save();
+    return $this;
+  }
+
+  public function willReviewCart() {
+    $this->openTransaction();
+      $this->beginReadLocking();
+
+        $copy = clone $this;
+        $copy->reload();
+
+        if (($copy->getStatus() !== self::STATUS_CHARGED)) {
+          throw new Exception(
+            pht(
+              'Cart has wrong status ("%s") to call willReviewCart()!',
+              $copy->getStatus()));
+        }
+
+        $this->setStatus(self::STATUS_REVIEW)->save();
+
+      $this->endReadLocking();
+    $this->saveTransaction();
+
+    $this->recordCartTransaction(PhortuneCartTransaction::TYPE_REVIEW);
+
+    return $this;
+  }
+
+  public function didReviewCart() {
+    $this->openTransaction();
+      $this->beginReadLocking();
+
+        $copy = clone $this;
+        $copy->reload();
+
+        if (($copy->getStatus() !== self::STATUS_CHARGED) &&
+            ($copy->getStatus() !== self::STATUS_REVIEW)) {
+          throw new Exception(
+            pht(
+              'Cart has wrong status ("%s") to call didReviewCart()!',
+              $copy->getStatus()));
+        }
+
+        foreach ($this->purchases as $purchase) {
+          $purchase->getProduct()->didPurchaseProduct($purchase);
+        }
+
+        $this->setStatus(self::STATUS_PURCHASED)->save();
+
+      $this->endReadLocking();
+    $this->saveTransaction();
+
+    $this->recordCartTransaction(PhortuneCartTransaction::TYPE_PURCHASED);
 
     return $this;
   }
@@ -182,13 +269,12 @@ final class PhortuneCart extends PhortuneDAO
         $copy = clone $this;
         $copy->reload();
 
-        if ($copy->getStatus() !== self::STATUS_PURCHASING) {
+        if (($copy->getStatus() !== self::STATUS_PURCHASING) &&
+            ($copy->getStatus() !== self::STATUS_HOLD)) {
           throw new Exception(
             pht(
-              'Cart has wrong status ("%s") to call didFailCharge(), '.
-              'expected "%s".',
-              $copy->getStatus(),
-              self::STATUS_PURCHASING));
+              'Cart has wrong status ("%s") to call didFailCharge().',
+              $copy->getStatus()));
         }
 
         $charge->save();
@@ -294,8 +380,9 @@ final class PhortuneCart extends PhortuneDAO
       $this->endReadLocking();
     $this->saveTransaction();
 
+    $amount = $refund->getAmountAsCurrency()->negate();
     foreach ($this->purchases as $purchase) {
-      $purchase->getProduct()->didRefundProduct($purchase);
+      $purchase->getProduct()->didRefundProduct($purchase, $amount);
     }
 
     return $this;
@@ -326,6 +413,30 @@ final class PhortuneCart extends PhortuneDAO
     $this->saveTransaction();
   }
 
+  private function recordCartTransaction($type) {
+    $omnipotent_user = PhabricatorUser::getOmnipotentUser();
+    $phortune_phid = id(new PhabricatorPhortuneApplication())->getPHID();
+
+    $xactions = array();
+
+    $xactions[] = id(new PhortuneCartTransaction())
+      ->setTransactionType($type)
+      ->setNewValue(true);
+
+    $content_source = PhabricatorContentSource::newForSource(
+      PhabricatorContentSource::SOURCE_PHORTUNE,
+      array());
+
+    $editor = id(new PhortuneCartEditor())
+      ->setActor($omnipotent_user)
+      ->setActingAsPHID($phortune_phid)
+      ->setContentSource($content_source)
+      ->setContinueOnMissingFields(true)
+      ->setContinueOnNoEffect(true);
+
+    $editor->applyTransactions($this, $xactions);
+  }
+
   public function getName() {
     return $this->getImplementation()->getName($this);
   }
@@ -334,12 +445,21 @@ final class PhortuneCart extends PhortuneDAO
     return $this->getImplementation()->getDoneURI($this);
   }
 
+  public function getDoneActionName() {
+    return $this->getImplementation()->getDoneActionName($this);
+  }
+
   public function getCancelURI() {
     return $this->getImplementation()->getCancelURI($this);
   }
 
-  public function getDetailURI() {
-    return '/phortune/cart/'.$this->getID().'/';
+  public function getDetailURI(PhortuneMerchant $authority = null) {
+    if ($authority) {
+      $prefix = 'merchant/'.$authority->getID().'/';
+    } else {
+      $prefix = '';
+    }
+    return '/phortune/'.$prefix.'cart/'.$this->getID().'/';
   }
 
   public function getCheckoutURI() {
@@ -396,7 +516,7 @@ final class PhortuneCart extends PhortuneDAO
     return $this->getImplementation()->assertCanRefundOrder($this);
   }
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_SERIALIZATION => array(
@@ -405,6 +525,8 @@ final class PhortuneCart extends PhortuneDAO
       self::CONFIG_COLUMN_SCHEMA => array(
         'status' => 'text32',
         'cartClass' => 'text128',
+        'mailKey' => 'bytes20',
+        'subscriptionPHID' => 'phid?',
       ),
       self::CONFIG_KEY_SCHEMA => array(
         'key_account' => array(
@@ -413,6 +535,9 @@ final class PhortuneCart extends PhortuneDAO
         'key_merchant' => array(
           'columns' => array('merchantPHID'),
         ),
+        'key_subscription' => array(
+          'columns' => array('subscriptionPHID'),
+        ),
       ),
     ) + parent::getConfiguration();
   }
@@ -420,6 +545,13 @@ final class PhortuneCart extends PhortuneDAO
   public function generatePHID() {
     return PhabricatorPHID::generateNewPHID(
       PhortuneCartPHIDType::TYPECONST);
+  }
+
+  public function save() {
+    if (!$this->getMailKey()) {
+      $this->setMailKey(Filesystem::readRandomCharacters(20));
+    }
+    return parent::save();
   }
 
   public function attachPurchases(array $purchases) {
@@ -476,6 +608,29 @@ final class PhortuneCart extends PhortuneDAO
 
   public function getMetadataValue($key, $default = null) {
     return idx($this->metadata, $key, $default);
+  }
+
+
+/* -(  PhabricatorApplicationTransactionInterface  )------------------------- */
+
+
+  public function getApplicationTransactionEditor() {
+    return new PhortuneCartEditor();
+  }
+
+  public function getApplicationTransactionObject() {
+    return $this;
+  }
+
+  public function getApplicationTransactionTemplate() {
+    return new PhortuneCartTransaction();
+  }
+
+  public function willRenderTimeline(
+    PhabricatorApplicationTransactionView $timeline,
+    AphrontRequest $request) {
+
+    return $timeline;
   }
 
 

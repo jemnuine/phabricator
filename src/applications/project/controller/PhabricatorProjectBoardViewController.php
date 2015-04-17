@@ -15,16 +15,9 @@ final class PhabricatorProjectBoardViewController
     return true;
   }
 
-  public function willProcessRequest(array $data) {
-    $this->id = idx($data, 'id');
-    $this->slug = idx($data, 'slug');
-    $this->queryKey = idx($data, 'queryKey');
-    $this->filter = (bool)idx($data, 'filter');
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
+  public function handleRequest(AphrontRequest $request) {
     $viewer = $request->getUser();
+    $id = $request->getURIData('id');
 
     $show_hidden = $request->getBool('hidden');
     $this->showHidden = $show_hidden;
@@ -32,10 +25,12 @@ final class PhabricatorProjectBoardViewController
     $project = id(new PhabricatorProjectQuery())
       ->setViewer($viewer)
       ->needImages(true);
-    if ($this->slug) {
-      $project->withSlugs(array($this->slug));
+    $id = $request->getURIData('id');
+    $slug = $request->getURIData('slug');
+    if ($slug) {
+      $project->withSlugs(array($slug));
     } else {
-      $project->withIDs(array($this->id));
+      $project->withIDs(array($id));
     }
     $project = $project->executeOne();
     if (!$project) {
@@ -106,12 +101,25 @@ final class PhabricatorProjectBoardViewController
     if ($request->isFormPost()) {
       $saved = $engine->buildSavedQueryFromRequest($request);
       $engine->saveQuery($saved);
+      $filter_form = id(new AphrontFormView())
+        ->setUser($viewer);
+      $engine->buildSearchForm($filter_form, $saved);
+      if ($engine->getErrors()) {
+        return $this->newDialog()
+          ->setWidth(AphrontDialogView::WIDTH_FULL)
+          ->setTitle(pht('Advanced Filter'))
+          ->appendChild($filter_form->buildLayoutView())
+          ->setErrors($engine->getErrors())
+          ->setSubmitURI($board_uri)
+          ->addSubmitButton(pht('Apply Filter'))
+          ->addCancelButton($board_uri);
+      }
       return id(new AphrontRedirectResponse())->setURI(
         $this->getURIWithState(
           $engine->getQueryResultsPageURI($saved->getQueryKey())));
     }
 
-    $query_key = $this->queryKey;
+    $query_key = $request->getURIData('queryKey');
     if (!$query_key) {
       $query_key = 'open';
     }
@@ -133,7 +141,7 @@ final class PhabricatorProjectBoardViewController
       $custom_query = $saved;
     }
 
-    if ($this->filter) {
+    if ($request->getURIData('filter')) {
       $filter_form = id(new AphrontFormView())
         ->setUser($viewer);
       $engine->buildSearchForm($filter_form, $saved);
@@ -227,6 +235,7 @@ final class PhabricatorProjectBoardViewController
 
       $panel = id(new PHUIWorkpanelView())
         ->setHeader($column->getDisplayName())
+        ->setSubHeader($column->getDisplayType())
         ->addSigil('workpanel');
 
       $header_icon = $column->getHeaderIcon();
@@ -302,16 +311,14 @@ final class PhabricatorProjectBoardViewController
     $header_link = phutil_tag(
       'a',
       array(
-        'href' => $this->getApplicationURI('view/'.$project->getID().'/'),
+        'href' => $this->getApplicationURI('profile/'.$project->getID().'/'),
       ),
       $project->getName());
 
     $header = id(new PHUIHeaderView())
-      ->setHeader($header_link)
+      ->setHeader(pht('%s Workboard', $header_link))
       ->setUser($viewer)
       ->setNoBackground(true)
-      ->setImage($project->getProfileImageURI())
-      ->setImageURL($this->getApplicationURI('view/'.$project->getID().'/'))
       ->addActionLink($sort_menu)
       ->addActionLink($filter_menu)
       ->addActionLink($manage_menu)
@@ -321,11 +328,12 @@ final class PhabricatorProjectBoardViewController
       ->appendChild($board)
       ->addClass('project-board-wrapper');
 
+    $nav = $this->buildIconNavView($project);
+    $nav->appendChild($header);
+    $nav->appendChild($board_box);
+
     return $this->buildApplicationPage(
-      array(
-        $header,
-        $board_box,
-      ),
+      $nav,
       array(
         'title' => pht('%s Board', $project->getName()),
         'showFooter' => false,

@@ -12,7 +12,7 @@ final class DiffusionMergedCommitsQueryConduitAPIMethod
       'Merged commit information for a specific commit in a repository.';
   }
 
-  public function defineReturnType() {
+  protected function defineReturnType() {
     return 'array';
   }
 
@@ -61,9 +61,10 @@ final class DiffusionMergedCommitsQueryConduitAPIMethod
     // Remove the merge commit.
     $hashes = array_diff($hashes, array($commit));
 
-    return DiffusionQuery::loadHistoryForCommitIdentifiers(
+    $history = DiffusionQuery::loadHistoryForCommitIdentifiers(
       $hashes,
       $drequest);
+    return mpull($history, 'toDictionary');
    }
 
   protected function getMercurialResult(ConduitAPIRequest $request) {
@@ -100,9 +101,10 @@ final class DiffusionMergedCommitsQueryConduitAPIMethod
     // Remove the merge commit.
     $hashes = array_diff($hashes, array($commit));
 
-    return DiffusionQuery::loadHistoryForCommitIdentifiers(
+    $history = DiffusionQuery::loadHistoryForCommitIdentifiers(
       $hashes,
       $drequest);
+    return mpull($history, 'toDictionary');
   }
 
 }

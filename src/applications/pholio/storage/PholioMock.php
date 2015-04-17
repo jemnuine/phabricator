@@ -41,6 +41,7 @@ final class PholioMock extends PholioDAO
     return id(new PholioMock())
       ->setAuthorPHID($actor->getPHID())
       ->attachImages(array())
+      ->setStatus('open')
       ->setViewPolicy($view_policy)
       ->setEditPolicy($edit_policy);
   }
@@ -49,7 +50,7 @@ final class PholioMock extends PholioDAO
     return 'M'.$this->getID();
   }
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_COLUMN_SCHEMA => array(
@@ -264,6 +265,17 @@ final class PholioMock extends PholioDAO
     return new PholioTransaction();
   }
 
+  public function willRenderTimeline(
+    PhabricatorApplicationTransactionView $timeline,
+    AphrontRequest $request) {
+
+    PholioMockQuery::loadImages(
+      $request->getUser(),
+      array($this),
+      $need_inline_comments = true);
+    $timeline->setMock($this);
+    return $timeline;
+  }
 
 /* -(  PhabricatorTokenReceiverInterface  )---------------------------------- */
 

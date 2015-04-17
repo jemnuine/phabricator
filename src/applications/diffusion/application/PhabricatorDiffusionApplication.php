@@ -14,16 +14,21 @@ final class PhabricatorDiffusionApplication extends PhabricatorApplication {
     return '/diffusion/';
   }
 
-  public function getIconName() {
-    return 'diffusion';
+  public function getFontIcon() {
+    return 'fa-code';
   }
 
   public function isPinnedByDefault(PhabricatorUser $viewer) {
     return true;
   }
 
-  public function getHelpURI() {
-    return PhabricatorEnv::getDoclink('Diffusion User Guide');
+  public function getHelpDocumentationArticles(PhabricatorUser $viewer) {
+    return array(
+      array(
+        'name' => pht('Diffusion User Guide'),
+        'href' => PhabricatorEnv::getDoclink('Diffusion User Guide'),
+      ),
+    );
   }
 
   public function getFactObjectsForAnalysis() {
@@ -40,8 +45,9 @@ final class PhabricatorDiffusionApplication extends PhabricatorApplication {
 
   public function getRemarkupRules() {
     return array(
-      new DiffusionRepositoryRemarkupRule(),
       new DiffusionCommitRemarkupRule(),
+      new DiffusionRepositoryRemarkupRule(),
+      new DiffusionRepositoryByIDRemarkupRule(),
     );
   }
 
@@ -88,7 +94,7 @@ final class PhabricatorDiffusionApplication extends PhabricatorApplication {
             'actions/' => 'DiffusionRepositoryEditActionsController',
             '(?P<edit>remote)/' => 'DiffusionRepositoryCreateController',
             '(?P<edit>policy)/' => 'DiffusionRepositoryCreateController',
-            'local/' => 'DiffusionRepositoryEditLocalController',
+            'storage/' => 'DiffusionRepositoryEditStorageController',
             'delete/' => 'DiffusionRepositoryEditDeleteController',
             'hosting/' => 'DiffusionRepositoryEditHostingController',
             '(?P<serve>serve)/' => 'DiffusionRepositoryEditHostingController',
@@ -138,6 +144,19 @@ final class PhabricatorDiffusionApplication extends PhabricatorApplication {
       DiffusionDefaultPushCapability::CAPABILITY => array(),
       DiffusionCreateRepositoriesCapability::CAPABILITY => array(
         'default' => PhabricatorPolicies::POLICY_ADMIN,
+      ),
+    );
+  }
+
+  public function getMailCommandObjects() {
+    return array(
+      'commit' => array(
+        'name' => pht('Email Commands: Commits'),
+        'header' => pht('Interacting with Commits'),
+        'object' => new PhabricatorRepositoryCommit(),
+        'summary' => pht(
+          'This page documents the commands you can use to interact with '.
+          'commits and audits in Diffusion.'),
       ),
     );
   }

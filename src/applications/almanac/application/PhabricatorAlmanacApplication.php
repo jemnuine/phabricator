@@ -14,8 +14,8 @@ final class PhabricatorAlmanacApplication extends PhabricatorApplication {
     return pht('Service Directory');
   }
 
-  public function getIconName() {
-    return 'almanac';
+  public function getFontIcon() {
+    return 'fa-server';
   }
 
   public function getTitleGlyph() {
@@ -26,16 +26,68 @@ final class PhabricatorAlmanacApplication extends PhabricatorApplication {
     return self::GROUP_UTILITIES;
   }
 
+  public function getHelpDocumentationArticles(PhabricatorUser $viewer) {
+    return array(
+      array(
+        'name' => pht('Alamanac User Guide'),
+        'href' => PhabricatorEnv::getDoclink('Almanac User Guide'),
+      ),
+    );
+  }
+
   public function isPrototype() {
     return true;
   }
 
-  public function isLaunchable() {
-    return false;
+  public function getRoutes() {
+    return array(
+      '/almanac/' => array(
+        '' => 'AlmanacConsoleController',
+        'service/' => array(
+          '(?:query/(?P<queryKey>[^/]+)/)?' => 'AlmanacServiceListController',
+          'edit/(?:(?P<id>\d+)/)?' => 'AlmanacServiceEditController',
+          'view/(?P<name>[^/]+)/' => 'AlmanacServiceViewController',
+        ),
+        'device/' => array(
+          '(?:query/(?P<queryKey>[^/]+)/)?' => 'AlmanacDeviceListController',
+          'edit/(?:(?P<id>\d+)/)?' => 'AlmanacDeviceEditController',
+          'view/(?P<name>[^/]+)/' => 'AlmanacDeviceViewController',
+        ),
+        'interface/' => array(
+          'edit/(?:(?P<id>\d+)/)?' => 'AlmanacInterfaceEditController',
+        ),
+        'binding/' => array(
+          'edit/(?:(?P<id>\d+)/)?' => 'AlmanacBindingEditController',
+          '(?P<id>\d+)/' => 'AlmanacBindingViewController',
+        ),
+        'network/' => array(
+          '(?:query/(?P<queryKey>[^/]+)/)?' => 'AlmanacNetworkListController',
+          'edit/(?:(?P<id>\d+)/)?' => 'AlmanacNetworkEditController',
+          '(?P<id>\d+)/' => 'AlmanacNetworkViewController',
+        ),
+        'property/' => array(
+          'edit/' => 'AlmanacPropertyEditController',
+          'delete/' => 'AlmanacPropertyDeleteController',
+        ),
+      ),
+    );
   }
 
-  public function getRoutes() {
-    return array();
+  protected function getCustomCapabilities() {
+    return array(
+      AlmanacCreateServicesCapability::CAPABILITY => array(
+        'default' => PhabricatorPolicies::POLICY_ADMIN,
+      ),
+      AlmanacCreateDevicesCapability::CAPABILITY => array(
+        'default' => PhabricatorPolicies::POLICY_ADMIN,
+      ),
+      AlmanacCreateNetworksCapability::CAPABILITY => array(
+        'default' => PhabricatorPolicies::POLICY_ADMIN,
+      ),
+      AlmanacCreateClusterServicesCapability::CAPABILITY => array(
+        'default' => PhabricatorPolicies::POLICY_ADMIN,
+      ),
+    );
   }
 
 }

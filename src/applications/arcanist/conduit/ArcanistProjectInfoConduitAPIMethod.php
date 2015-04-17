@@ -11,17 +11,17 @@ final class ArcanistProjectInfoConduitAPIMethod
     return 'Get information about Arcanist projects.';
   }
 
-  public function defineParamTypes() {
+  protected function defineParamTypes() {
     return array(
       'name' => 'required string',
     );
   }
 
-  public function defineReturnType() {
+  protected function defineReturnType() {
     return 'nonempty dict';
   }
 
-  public function defineErrorTypes() {
+  protected function defineErrorTypes() {
     return array(
       'ERR-BAD-ARCANIST-PROJECT' => 'No such project exists.',
     );
@@ -38,7 +38,13 @@ final class ArcanistProjectInfoConduitAPIMethod
       throw new ConduitException('ERR-BAD-ARCANIST-PROJECT');
     }
 
-    $repository = $project->loadRepository();
+    $repository = null;
+    if ($project->getRepositoryID()) {
+      $repository = id(new PhabricatorRepositoryQuery())
+        ->setViewer($request->getUser())
+        ->withIDs(array($project->getRepositoryID()))
+        ->executeOne();
+    }
 
     $repository_phid = null;
     $tracked = false;

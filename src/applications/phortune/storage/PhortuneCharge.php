@@ -36,7 +36,7 @@ final class PhortuneCharge extends PhortuneDAO
       ->setAmountRefundedAsCurrency(PhortuneCurrency::newEmptyCurrency());
   }
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_SERIALIZATION => array(
@@ -82,6 +82,10 @@ final class PhortuneCharge extends PhortuneDAO
 
   public static function getNameForStatus($status) {
     return idx(self::getStatusNameMap(), $status, pht('Unknown'));
+  }
+
+  public function isRefund() {
+    return $this->getAmountAsCurrency()->negate()->isPositive();
   }
 
   public function getStatusForDisplay() {

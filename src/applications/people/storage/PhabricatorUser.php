@@ -1,7 +1,8 @@
 <?php
 
 /**
- * @task factors  Multi-Factor Authentication
+ * @task factors Multi-Factor Authentication
+ * @task handles Managing Handles
  */
 final class PhabricatorUser
   extends PhabricatorUserDAO
@@ -9,7 +10,8 @@ final class PhabricatorUser
     PhutilPerson,
     PhabricatorPolicyInterface,
     PhabricatorCustomFieldInterface,
-    PhabricatorDestructibleInterface {
+    PhabricatorDestructibleInterface,
+    PhabricatorSSHPublicKeyInterface {
 
   const SESSION_TABLE = 'phabricator_session';
   const NAMETOKEN_TABLE = 'user_nametoken';
@@ -49,6 +51,9 @@ final class PhabricatorUser
   private $alternateCSRFString = self::ATTACHABLE;
   private $session = self::ATTACHABLE;
 
+  private $authorities = array();
+  private $handlePool;
+
   protected function readField($field) {
     switch ($field) {
       case 'timezoneIdentifier':
@@ -81,6 +86,10 @@ final class PhabricatorUser
    * @return bool True if this is a standard, usable account.
    */
   public function isUserActivated() {
+    if ($this->isOmnipotent()) {
+      return true;
+    }
+
     if ($this->getIsDisabled()) {
       return false;
     }
@@ -110,11 +119,11 @@ final class PhabricatorUser
     return $this->getPHID() && (phid_get_type($this->getPHID()) == $type_user);
   }
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_COLUMN_SCHEMA => array(
-        'userName' => 'text64',
+        'userName' => 'sort64',
         'realName' => 'text128',
         'sex' => 'text4?',
         'translation' => 'text64?',
@@ -183,19 +192,6 @@ final class PhabricatorUser
 
   public function getMonogram() {
     return '@'.$this->getUsername();
-  }
-
-  public function getTranslation() {
-    try {
-      if ($this->translation &&
-          class_exists($this->translation) &&
-          is_subclass_of($this->translation, 'PhabricatorTranslation')) {
-        return $this->translation;
-      }
-    } catch (PhutilMissingSymbolException $ex) {
-      return null;
-    }
-    return null;
   }
 
   public function isLoggedIn() {
@@ -678,27 +674,6 @@ EOBODY;
     return $this->assertAttached($this->profileImage);
   }
 
-  public function loadProfileImageURI() {
-    if ($this->profileImage && ($this->profileImage !== self::ATTACHABLE)) {
-      return $this->profileImage;
-    }
-
-    $src_phid = $this->getProfileImagePHID();
-
-    if ($src_phid) {
-      // TODO: (T603) Can we get rid of this entirely and move it to
-      // PeopleQuery with attach/attachable?
-      $file = id(new PhabricatorFile())->loadOneWhere('phid = %s', $src_phid);
-      if ($file) {
-        $this->profileImage = $file->getBestURI();
-        return $this->profileImage;
-      }
-    }
-
-    $this->profileImage = self::getDefaultProfileImageURI();
-    return $this->profileImage;
-  }
-
   public function getFullName() {
     if (strlen($this->getRealName())) {
       return $this->getUsername().' ('.$this->getRealName().')';
@@ -722,6 +697,25 @@ EOBODY;
       'phid = %s',
       $email->getUserPHID());
   }
+
+
+  /**
+   * Grant a user a source of authority, to let them bypass policy checks they
+   * could not otherwise.
+   */
+  public function grantAuthority($authority) {
+    $this->authorities[] = $authority;
+    return $this;
+  }
+
+
+  /**
+   * Get authorities granted to the user.
+   */
+  public function getAuthorities() {
+    return $this->authorities;
+  }
+
 
 /* -(  Multi-Factor Authentication  )---------------------------------------- */
 
@@ -805,6 +799,55 @@ EOBODY;
       $user->makeEphemeral();
     }
     return $user;
+  }
+
+
+/* -(  Managing Handles  )--------------------------------------------------- */
+
+
+  /**
+   * Get a @{class:PhabricatorHandleList} which benefits from this viewer's
+   * internal handle pool.
+   *
+   * @param list<phid> List of PHIDs to load.
+   * @return PhabricatorHandleList Handle list object.
+   * @task handle
+   */
+  public function loadHandles(array $phids) {
+    if ($this->handlePool === null) {
+      $this->handlePool = id(new PhabricatorHandlePool())
+        ->setViewer($this);
+    }
+
+    return $this->handlePool->newHandleList($phids);
+  }
+
+
+  /**
+   * Get a @{class:PHUIHandleView} for a single handle.
+   *
+   * This benefits from the viewer's internal handle pool.
+   *
+   * @param phid PHID to render a handle for.
+   * @return PHUIHandleView View of the handle.
+   * @task handle
+   */
+  public function renderHandle($phid) {
+    return $this->loadHandles(array($phid))->renderHandle($phid);
+  }
+
+
+  /**
+   * Get a @{class:PHUIHandleListView} for a list of handles.
+   *
+   * This benefits from the viewer's internal handle pool.
+   *
+   * @param list<phid> List of PHIDs to render.
+   * @return PHUIHandleListView View of the handles.
+   * @task handle
+   */
+  public function renderHandleList(array $phids) {
+    return $this->loadHandles($phids)->renderList();
   }
 
 
@@ -896,8 +939,8 @@ EOBODY;
         $profile->delete();
       }
 
-      $keys = id(new PhabricatorUserSSHKey())->loadAllWhere(
-        'userPHID = %s',
+      $keys = id(new PhabricatorAuthSSHKey())->loadAllWhere(
+        'objectPHID = %s',
         $this->getPHID());
       foreach ($keys as $key) {
         $key->delete();
@@ -927,5 +970,23 @@ EOBODY;
     $this->saveTransaction();
   }
 
+
+/* -(  PhabricatorSSHPublicKeyInterface  )----------------------------------- */
+
+
+  public function getSSHPublicKeyManagementURI(PhabricatorUser $viewer) {
+    if ($viewer->getPHID() == $this->getPHID()) {
+      // If the viewer is managing their own keys, take them to the normal
+      // panel.
+      return '/settings/panel/ssh/';
+    } else {
+      // Otherwise, take them to the administrative panel for this user.
+      return '/settings/'.$this->getID().'/panel/ssh/';
+    }
+  }
+
+  public function getSSHKeyDefaultName() {
+    return 'id_rsa_phabricator';
+  }
 
 }
