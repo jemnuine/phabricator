@@ -5,20 +5,19 @@ abstract class PhabricatorDaemonManagementWorkflow
 
   private $runDaemonsAsUser = null;
 
-  protected final function loadAvailableDaemonClasses() {
-    $loader = new PhutilSymbolLoader();
-    return $loader
+  final protected function loadAvailableDaemonClasses() {
+    return id(new PhutilSymbolLoader())
       ->setAncestorClass('PhutilDaemon')
       ->setConcreteOnly(true)
       ->selectSymbolsWithoutLoading();
   }
 
-  protected final function getPIDDirectory() {
+  final protected function getPIDDirectory() {
     $path = PhabricatorEnv::getEnvConfig('phd.pid-directory');
     return $this->getControlDirectory($path);
   }
 
-  protected final function getLogDirectory() {
+  final protected function getLogDirectory() {
     $path = PhabricatorEnv::getEnvConfig('phd.log-directory');
     return $this->getControlDirectory($path);
   }
@@ -28,16 +27,21 @@ abstract class PhabricatorDaemonManagementWorkflow
       list($err) = exec_manual('mkdir -p %s', $path);
       if ($err) {
         throw new Exception(
-          "phd requires the directory '{$path}' to exist, but it does not ".
-          "exist and could not be created. Create this directory or update ".
-          "'phd.pid-directory' / 'phd.log-directory' in your configuration ".
-          "to point to an existing directory.");
+          pht(
+            "%s requires the directory '%s' to exist, but it does not exist ".
+            "and could not be created. Create this directory or update ".
+            "'%s' / '%s' in your configuration to point to an existing ".
+            "directory.",
+            'phd',
+            $path,
+            'phd.pid-directory',
+            'phd.log-directory'));
       }
     }
     return $path;
   }
 
-  protected final function loadRunningDaemons() {
+  final protected function loadRunningDaemons() {
     $daemons = array();
 
     $pid_dir = $this->getPIDDirectory();
@@ -51,7 +55,7 @@ abstract class PhabricatorDaemonManagementWorkflow
     return array_mergev($daemons);
   }
 
-  protected final function loadAllRunningDaemons() {
+  final protected function loadAllRunningDaemons() {
     $local_daemons = $this->loadRunningDaemons();
 
     $local_ids = array();
@@ -95,9 +99,9 @@ abstract class PhabricatorDaemonManagementWorkflow
     if (count($match) == 0) {
       throw new PhutilArgumentUsageException(
         pht(
-          "No daemons match '%s'! Use 'phd list' for a list of available ".
-          "daemons.",
-          $substring));
+          "No daemons match '%s'! Use '%s' for a list of available daemons.",
+          $substring,
+          'phd list'));
     } else if (count($match) > 1) {
       throw new PhutilArgumentUsageException(
         pht(
@@ -109,7 +113,7 @@ abstract class PhabricatorDaemonManagementWorkflow
     return head($match);
   }
 
-  protected final function launchDaemons(
+  final protected function launchDaemons(
     array $daemons,
     $debug,
     $run_as_current_user = false) {
@@ -130,14 +134,21 @@ abstract class PhabricatorDaemonManagementWorkflow
       $current_user = $current_user['name'];
       if ($phd_user && $phd_user != $current_user) {
         if ($debug) {
-          throw new PhutilArgumentUsageException(pht(
-            'You are trying to run a daemon as a nonstandard user, '.
-            'and `phd` was not able to `sudo` to the correct user. '."\n".
-            'Phabricator is configured to run daemons as "%s", '.
-            'but the current user is "%s". '."\n".
-            'Use `sudo` to run as a different user, pass `--as-current-user` '.
-            'to ignore this warning, or edit `phd.user` '.
-            'to change the configuration.', $phd_user, $current_user));
+          throw new PhutilArgumentUsageException(
+            pht(
+              "You are trying to run a daemon as a nonstandard user, ".
+              "and `%s` was not able to `%s` to the correct user. \n".
+              'Phabricator is configured to run daemons as "%s", '.
+              'but the current user is "%s". '."\n".
+              'Use `%s` to run as a different user, pass `%s` to ignore this '.
+              'warning, or edit `%s` to change the configuration.',
+              'phd',
+              'sudo',
+              $phd_user,
+              $current_user,
+              'sudo',
+              '--as-current-user',
+              'phd.user'));
         } else {
           $this->runDaemonsAsUser = $phd_user;
           $console->writeOut(pht('Starting daemons as %s', $phd_user)."\n");
@@ -147,8 +158,10 @@ abstract class PhabricatorDaemonManagementWorkflow
 
     $this->printLaunchingDaemons($daemons, $debug);
 
+    $trace = PhutilArgumentParser::isTraceModeEnabled();
+
     $flags = array();
-    if ($debug || PhabricatorEnv::getEnvConfig('phd.trace')) {
+    if ($trace || PhabricatorEnv::getEnvConfig('phd.trace')) {
       $flags[] = '--trace';
     }
 
@@ -211,14 +224,18 @@ abstract class PhabricatorDaemonManagementWorkflow
           $daemon_script_dir,
           $config,
           $this->runDaemonsAsUser);
-      } catch (Exception $e) {
-        // Retry without sudo
-        $console->writeOut(pht(
-          "sudo command failed. Starting daemon as current user\n"));
-        $this->executeDaemonLaunchCommand(
-          $command,
-          $daemon_script_dir,
-          $config);
+      } catch (Exception $ex) {
+        throw new PhutilArgumentUsageException(
+          pht(
+            'Daemons are configured to run as user "%s" in configuration '.
+            'option `%s`, but the current user is "%s" and `phd` was unable '.
+            'to switch to the correct user with `sudo`. Command output:'.
+            "\n\n".
+            '%s',
+            $phd_user,
+            'phd.user',
+            $current_user,
+            $ex->getMessage()));
       }
     }
   }
@@ -253,8 +270,9 @@ abstract class PhabricatorDaemonManagementWorkflow
       if (preg_match('/sudo: a password is required/', $stderr)) {
         throw new Exception(
           pht(
-            'sudo exited with a zero exit code, but emitted output '.
-            'consistent with failure under OSX.'));
+            '%s exited with a zero exit code, but emitted output '.
+            'consistent with failure under OSX.',
+            'sudo'));
       }
     }
   }
@@ -270,8 +288,10 @@ abstract class PhabricatorDaemonManagementWorkflow
 
   private static function mustHaveExtension($ext) {
     if (!extension_loaded($ext)) {
-      echo "ERROR: The PHP extension '{$ext}' is not installed. You must ".
-           "install it to run daemons on this machine.\n";
+      echo pht(
+        "ERROR: The PHP extension '%s' is not installed. You must ".
+        "install it to run daemons on this machine.\n",
+        $ext);
       exit(1);
     }
 
@@ -279,8 +299,10 @@ abstract class PhabricatorDaemonManagementWorkflow
     foreach ($extension->getFunctions() as $function) {
       $function = $function->name;
       if (!function_exists($function)) {
-        echo "ERROR: The PHP function {$function}() is disabled. You must ".
-             "enable it to run daemons on this machine.\n";
+        echo pht(
+          "ERROR: The PHP function %s is disabled. You must ".
+          "enable it to run daemons on this machine.\n",
+          $function.'()');
         exit(1);
       }
     }
@@ -290,7 +312,7 @@ abstract class PhabricatorDaemonManagementWorkflow
 /* -(  Commands  )----------------------------------------------------------- */
 
 
-  protected final function executeStartCommand(array $options) {
+  final protected function executeStartCommand(array $options) {
     PhutilTypeSpec::checkMap(
       $options,
       array(
@@ -311,11 +333,15 @@ abstract class PhabricatorDaemonManagementWorkflow
           $message = pht(
             "phd start: Unable to start daemons because daemons are already ".
             "running.\n\n".
-            "You can view running daemons with 'phd status'.\n".
-            "You can stop running daemons with 'phd stop'.\n".
-            "You can use 'phd restart' to stop all daemons before starting ".
+            "You can view running daemons with '%s'.\n".
+            "You can stop running daemons with '%s'.\n".
+            "You can use '%s' to stop all daemons before starting ".
             "new daemons.\n".
-            "You can force daemons to start anyway with --force.");
+            "You can force daemons to start anyway with %s.",
+            'phd status',
+            'phd stop',
+            'phd restart',
+            '--force');
 
           $console->writeErr("%s\n", $message);
           exit(1);
@@ -336,27 +362,27 @@ abstract class PhabricatorDaemonManagementWorkflow
     $daemons = array(
       array(
         'class' => 'PhabricatorRepositoryPullLocalDaemon',
+        'label' => 'pull',
       ),
       array(
         'class' => 'PhabricatorTriggerDaemon',
+        'label' => 'trigger',
       ),
       array(
         'class' => 'PhabricatorTaskmasterDaemon',
-        'autoscale' => array(
-          'group' => 'task',
-          'pool' => PhabricatorEnv::getEnvConfig('phd.taskmasters'),
-          'reserve' => idx($options, 'reserve', 0),
-        ),
+        'label' => 'task',
+        'pool' => PhabricatorEnv::getEnvConfig('phd.taskmasters'),
+        'reserve' => idx($options, 'reserve', 0),
       ),
     );
 
     $this->launchDaemons($daemons, $is_debug = false);
 
-    $console->writeErr(pht('Done.')."\n");
+    $console->writeErr("%s\n", pht('Done.'));
     return 0;
   }
 
-  protected final function executeStopCommand(
+  final protected function executeStopCommand(
     array $pids,
     array $options) {
 
@@ -369,8 +395,9 @@ abstract class PhabricatorDaemonManagementWorkflow
     if ($gently && $force) {
       throw new PhutilArgumentUsageException(
         pht(
-          'You can not specify conflicting options --gently and --force '.
-          'together.'));
+          'You can not specify conflicting options %s and %s together.',
+          '--gently',
+          '--force'));
     }
 
     $daemons = $this->loadRunningDaemons();
@@ -383,8 +410,9 @@ abstract class PhabricatorDaemonManagementWorkflow
           $force);
       }
       if (!$survivors) {
-        $console->writeErr(pht(
-          'There are no running Phabricator daemons.')."\n");
+        $console->writeErr(
+          "%s\n",
+          pht('There are no running Phabricator daemons.'));
       }
       return 0;
     }
@@ -392,7 +420,7 @@ abstract class PhabricatorDaemonManagementWorkflow
     $stop_pids = $this->selectDaemonPIDs($daemons, $pids);
 
     if (!$stop_pids) {
-      $console->writeErr(pht('No daemons to kill.')."\n");
+      $console->writeErr("%s\n", pht('No daemons to kill.'));
       return 0;
     }
 
@@ -431,7 +459,7 @@ abstract class PhabricatorDaemonManagementWorkflow
     return 0;
   }
 
-  protected final function executeReloadCommand(array $pids) {
+  final protected function executeReloadCommand(array $pids) {
     $console = PhutilConsole::getConsole();
 
     $daemons = $this->loadRunningDaemons();
@@ -470,12 +498,13 @@ abstract class PhabricatorDaemonManagementWorkflow
         $survivors = $this->sendStopSignals($rogue_pids, $grace_period);
         if ($survivors) {
           $console->writeErr(
+            "%s\n",
             pht(
               'Unable to stop processes running without PID files. '.
-              'Try running this command again with sudo.')."\n");
+              'Try running this command again with sudo.'));
         }
       } else if ($warn) {
-        $console->writeErr($this->getForceStopHint($rogue_daemons)."\n");
+        $console->writeErr("%s\n", $this->getForceStopHint($rogue_daemons));
       }
     }
 
@@ -488,11 +517,11 @@ abstract class PhabricatorDaemonManagementWorkflow
       $debug_output .= $rogue['pid'].' '.$rogue['command']."\n";
     }
     return pht(
-      'There are processes running that look like Phabricator daemons but '.
-      'have no corresponding PID files:'."\n\n".'%s'."\n\n".
-      'Stop these processes by re-running this command with the --force '.
-      'parameter.',
-      $debug_output);
+      "There are processes running that look like Phabricator daemons but ".
+      "have no corresponding PID files:\n\n%s\n\n".
+      "Stop these processes by re-running this command with the %s parameter.",
+      $debug_output,
+      '--force');
   }
 
   private function sendStopSignals($pids, $grace_period) {
@@ -589,23 +618,12 @@ abstract class PhabricatorDaemonManagementWorkflow
       pht('(Logs will appear in "%s".)', $log_dir));
 
     foreach ($daemons as $daemon) {
-      $is_autoscale = isset($daemon['autoscale']['group']);
-      if ($is_autoscale) {
-        $autoscale = $daemon['autoscale'];
-        foreach ($autoscale as $key => $value) {
-          $autoscale[$key] = $key.'='.$value;
-        }
-        $autoscale = implode(', ', $autoscale);
-
-        $autoscale = pht('(Autoscaling: %s)', $autoscale);
-      } else {
-        $autoscale = pht('(Static)');
-      }
+      $pool_size = pht('(Pool: %s)', idx($daemon, 'pool', 1));
 
       $console->writeOut(
         "    %s %s\n",
+        $pool_size,
         $daemon['class'],
-        $autoscale,
         implode(' ', idx($daemon, 'argv', array())));
     }
     $console->writeOut("\n");

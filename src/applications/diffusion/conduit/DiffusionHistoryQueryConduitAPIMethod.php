@@ -10,8 +10,9 @@ final class DiffusionHistoryQueryConduitAPIMethod
   }
 
   public function getMethodDescription() {
-    return 'Returns history information for a repository at a specific '.
-      'commit and path.';
+    return pht(
+      'Returns history information for a repository at a specific '.
+      'commit and path.');
   }
 
   protected function defineReturnType() {
@@ -21,6 +22,7 @@ final class DiffusionHistoryQueryConduitAPIMethod
   protected function defineCustomParamTypes() {
     return array(
       'commit' => 'required string',
+      'against' => 'optional string',
       'path' => 'required string',
       'offset' => 'required int',
       'limit' => 'required int',
@@ -42,9 +44,16 @@ final class DiffusionHistoryQueryConduitAPIMethod
     $drequest = $this->getDiffusionRequest();
     $repository = $drequest->getRepository();
     $commit_hash = $request->getValue('commit');
+    $against_hash = $request->getValue('against');
     $path = $request->getValue('path');
     $offset = $request->getValue('offset');
     $limit = $request->getValue('limit');
+
+    if (strlen($against_hash)) {
+      $commit_range = "${against_hash}..${commit_hash}";
+    } else {
+      $commit_range = $commit_hash;
+    }
 
     list($stdout) = $repository->execxLocalCommand(
       'log '.
@@ -55,15 +64,12 @@ final class DiffusionHistoryQueryConduitAPIMethod
       $offset,
       $limit,
       '%H:%P',
-      $commit_hash,
+      $commit_range,
       // Git omits merge commits if the path is provided, even if it is empty.
       (strlen($path) ? csprintf('%s', $path) : ''));
 
     $lines = explode("\n", trim($stdout));
     $lines = array_filter($lines);
-    if (!$lines) {
-      return array();
-    }
 
     $hash_list = array();
     $parent_map = array();
@@ -74,6 +80,10 @@ final class DiffusionHistoryQueryConduitAPIMethod
     }
 
     $this->parents = $parent_map;
+
+    if (!$hash_list) {
+      return array();
+    }
 
     return DiffusionQuery::loadHistoryForCommitIdentifiers(
       $hash_list,
@@ -113,24 +123,27 @@ final class DiffusionHistoryQueryConduitAPIMethod
     // branches).
 
     if (strlen($path)) {
-      $path_arg = csprintf('-- %s', $path);
-      $branch_arg = '';
+      $path_arg = csprintf('%s', $path);
+      $revset_arg = hgsprintf(
+        'reverse(ancestors(%s))',
+        $commit_hash);
     } else {
       $path_arg = '';
-      // NOTE: --branch used to be called --only-branch; use -b for
-      // compatibility.
-      $branch_arg = csprintf('-b %s', $drequest->getBranch());
+      $revset_arg = hgsprintf(
+        'reverse(ancestors(%s)) and branch(%s)',
+        $drequest->getBranch(),
+        $commit_hash);
     }
 
     list($stdout) = $repository->execxLocalCommand(
-      'log --debug --template %s --limit %d %C --rev %s %C',
+      'log --debug --template %s --limit %d --rev %s -- %C',
       '{node};{parents}\\n',
       ($offset + $limit), // No '--skip' in Mercurial.
-      $branch_arg,
-      hgsprintf('reverse(ancestors(%s))', $commit_hash),
+      $revset_arg,
       $path_arg);
 
-    $stdout = PhabricatorRepository::filterMercurialDebugOutput($stdout);
+    $stdout = DiffusionMercurialCommandEngine::filterMercurialDebugOutput(
+      $stdout);
     $lines = explode("\n", trim($stdout));
     $lines = array_slice($lines, $offset);
 
@@ -171,7 +184,7 @@ final class DiffusionHistoryQueryConduitAPIMethod
     }
 
     $hash_list = array_reverse($hash_list);
-    $this->parents = $parent_map;
+    $this->parents = array_reverse($parent_map, true);
 
     return DiffusionQuery::loadHistoryForCommitIdentifiers(
       $hash_list,

@@ -3,18 +3,18 @@
  */
 
 .phabricator-notification-menu {
-  background: #fff;
-  font-size: 11px;
+  background: {$page.content};
+  font-size: {$smallerfontsize};
+  line-height: 18px;
   word-wrap: break-word;
   overflow-y: auto;
   box-shadow: {$dropshadow};
-  border: 1px solid {$blueborder};
+  border: 1px solid {$lightgreyborder};
   border-radius: 3px;
 }
 
-.phabricator-notification .phabricator-notification-date {
-  margin-left: 8px;
-  color: {$lightgreytext};
+.phabricator-notification {
+  padding: 8px 12px;
 }
 
 .phabricator-notification-menu-loading {
@@ -37,11 +37,14 @@
   top: 42px !important;
   left: 3% !important;
   position: absolute;
-
 }
 
-.phabricator-notification {
-  padding: 6px 8px;
+.phabricator-notification-list.pm {
+  padding: 0;
+}
+
+.phabricator-notification-list .phabricator-notification {
+  padding: 8px;
 }
 
 .phabricator-notification-menu .phabricator-notification {
@@ -49,7 +52,7 @@
 }
 
 .device-desktop .phabricator-notification-menu .phabricator-notification:hover {
-  background: {$hoverblue};
+  background: {$lightgreybackground};
 }
 
 .device-desktop .phabricator-notification-menu
@@ -58,11 +61,15 @@
 }
 
 .phabricator-notification + .phabricator-notification {
-  border-top: 1px solid {$hoverborder};
+  border-top: 1px solid {$thinblueborder};
 }
 
 .no-notifications {
   color: {$lightgreytext};
+}
+
+.phabricator-notification-warning {
+  background: {$sh-yellowbackground};
 }
 
 .phabricator-notification-list .phabricator-notification-unread,
@@ -70,10 +77,39 @@
   background: {$hoverblue};
 }
 
+.phabricator-notification-read {
+  color: {$lightgreytext};
+}
+
+.phabricator-notification-foot {
+  color: {$lightgreytext};
+  font-size: {$smallestfontsize};
+  line-height: 18px;
+  position: relative;
+}
+
+.phabricator-notification-unread .phabricator-notification-foot {
+  padding-left: 10px;
+}
+
+.phabricator-notification-foot .phabricator-notification-status {
+  display: none;
+}
+
+.phabricator-notification-unread .phabricator-notification-foot
+  .phabricator-notification-status {
+    font-size: 7px;
+    color: {$lightbluetext};
+    position: absolute;
+    display: inline-block;
+    top: 6px;
+    left: 0;
+}
+
 .phabricator-notification-header {
   font-weight: bold;
-  padding: 10px 8px;
-  font-size: 12px;
+  padding: 10px 12px;
+  font-size: {$smallerfontsize};
   border-bottom: 1px solid {$thinblueborder};
 }
 
@@ -86,7 +122,7 @@
 }
 
 .phabricator-notification-header .phabricator-notification-clear-all {
-  color: #18559D;
+  color: {$anchor};
   float: right;
   font-weight: normal;
 }
@@ -97,7 +133,7 @@
   border-bottom-left-radius: 3px;
   border-bottom-right-radius: 3px;
   padding: 8px;
-  font-size: 12px;
+  font-size: {$smallerfontsize};
   color: {$darkgreytext};
 }
 
@@ -113,10 +149,16 @@
   color: {$lightgreytext};
 }
 
-.aphlict-connection-status .aphlict-connection-status-connected {
-  color: {$green};
+.aphlict-connection-status {
+  position: relative;
 }
 
-.aphlict-connection-status .aphlict-connection-status-error {
-  color: {$red};
+.aphlict-connection-status .phui-icon-view {
+  font-size: 9px;
+  position: absolute;
+  top: 4px;
+}
+
+.aphlict-connection-status .connection-status-text {
+  margin-left: 12px;
 }

@@ -2,19 +2,13 @@
 
 final class PhrictionDeleteController extends PhrictionController {
 
-  private $id;
-
-  public function willProcessRequest(array $data) {
-    $this->id = $data['id'];
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $id = $request->getURIData('id');
 
     $document = id(new PhrictionDocumentQuery())
-      ->setViewer($user)
-      ->withIDs(array($this->id))
+      ->setViewer($viewer)
+      ->withIDs(array($id))
       ->needContent(true)
       ->requireCapabilities(
         array(
@@ -32,11 +26,12 @@ final class PhrictionDeleteController extends PhrictionController {
     if ($request->isFormPost()) {
         $xactions = array();
         $xactions[] = id(new PhrictionTransaction())
-          ->setTransactionType(PhrictionTransaction::TYPE_DELETE)
+          ->setTransactionType(
+            PhrictionDocumentDeleteTransaction::TRANSACTIONTYPE)
           ->setNewValue(true);
 
         $editor = id(new PhrictionTransactionEditor())
-          ->setActor($user)
+          ->setActor($viewer)
           ->setContentSourceFromRequest($request)
           ->setContinueOnNoEffect(true);
         try {
@@ -49,13 +44,13 @@ final class PhrictionDeleteController extends PhrictionController {
 
     if ($e_text) {
       $dialog = id(new AphrontDialogView())
-        ->setUser($user)
+        ->setUser($viewer)
         ->setTitle(pht('Can Not Delete Document!'))
         ->appendChild($e_text)
         ->addCancelButton($document_uri);
     } else {
       $dialog = id(new AphrontDialogView())
-        ->setUser($user)
+        ->setUser($viewer)
         ->setTitle(pht('Delete Document?'))
         ->appendChild(
           pht('Really delete this document? You can recover it later by '.

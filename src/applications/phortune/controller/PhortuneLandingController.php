@@ -2,21 +2,12 @@
 
 final class PhortuneLandingController extends PhortuneController {
 
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
 
-    $accounts = id(new PhortuneAccountQuery())
-      ->setViewer($user)
-      ->withMemberPHIDs(array($user->getPHID()))
-      ->execute();
-
-    if (!$accounts) {
-      $account = PhortuneAccount::createNewAccount(
-        $user,
-        PhabricatorContentSource::newFromRequest($request));
-      $accounts = array($account);
-    }
+    $accounts = PhortuneAccountQuery::loadAccountsForUser(
+      $viewer,
+      PhabricatorContentSource::newFromRequest($request));
 
     if (count($accounts) == 1) {
       $account = head($accounts);

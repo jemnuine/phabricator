@@ -122,7 +122,8 @@ final class PhabricatorPhabricatorAuthProvider
       $uri = new PhutilURI($values[$key_uri]);
       if (!$uri->getProtocol()) {
         $errors[] = pht(
-          'Phabricator base URI should include protocol (like "https://").');
+          'Phabricator base URI should include protocol (like "%s").',
+          'https://');
         $issues[$key_uri] = pht('Invalid');
       }
     }
@@ -198,6 +199,11 @@ final class PhabricatorPhabricatorAuthProvider
 
   public function hasSetupStep() {
     return true;
+  }
+
+  public function getPhabricatorURI() {
+    $config = $this->getProviderConfig();
+    return $config->getProperty(self::PROPERTY_PHABRICATOR_URI);
   }
 
 }

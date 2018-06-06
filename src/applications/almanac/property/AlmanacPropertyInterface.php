@@ -8,5 +8,8 @@ interface AlmanacPropertyInterface {
   public function getAlmanacProperty($key);
   public function getAlmanacPropertyValue($key, $default = null);
   public function getAlmanacPropertyFieldSpecifications();
+  public function newAlmanacPropertyEditEngine();
+  public function getAlmanacPropertySetTransactionType();
+  public function getAlmanacPropertyDeleteTransactionType();
 
 }

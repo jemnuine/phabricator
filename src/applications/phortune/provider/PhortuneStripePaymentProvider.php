@@ -24,8 +24,7 @@ final class PhortuneStripePaymentProvider extends PhortunePaymentProvider {
   }
 
   public function getConfigureProvidesDescription() {
-    return pht(
-      'This merchant accepts credit and debit cards via Stripe.');
+    return pht('This merchant accepts credit and debit cards via Stripe.');
   }
 
   public function getPaymentMethodDescription() {
@@ -147,7 +146,7 @@ final class PhortuneStripePaymentProvider extends PhortunePaymentProvider {
 
     $id = $stripe_charge->id;
     if (!$id) {
-      throw new Exception('Stripe charge call did not return an ID!');
+      throw new Exception(pht('Stripe charge call did not return an ID!'));
     }
 
     $charge->setMetadataValue('stripe.chargeID', $id);
@@ -276,12 +275,18 @@ final class PhortuneStripePaymentProvider extends PhortunePaymentProvider {
     AphrontRequest $request,
     array $errors) {
 
+    $src = 'https://js.stripe.com/v2/';
+
     $ccform = id(new PhortuneCreditCardForm())
       ->setSecurityAssurance(
         pht('Payments are processed securely by Stripe.'))
       ->setUser($request->getUser())
       ->setErrors($errors)
-      ->addScript('https://js.stripe.com/v2/');
+      ->addScript($src);
+
+    CelerityAPI::getStaticResourceResponse()
+      ->addContentSecurityPolicyURI('script-src', $src)
+      ->addContentSecurityPolicyURI('frame-src', $src);
 
     Javelin::initBehavior(
       'stripe-payment-form',
@@ -362,7 +367,7 @@ final class PhortuneStripePaymentProvider extends PhortunePaymentProvider {
       case 'error:duplicate_transaction':
       case 'error:processing_error':
       default:
-        // NOTE: These errors currently don't recevive a detailed message.
+        // NOTE: These errors currently don't receive a detailed message.
         // NOTE: We can also end up here with "http:nnn" messages.
 
         // TODO: At least some of these should have a better message, or be

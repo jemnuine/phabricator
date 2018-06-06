@@ -2,6 +2,10 @@
 
 final class ConpherenceRoomListController extends ConpherenceController {
 
+  public function shouldAllowPublic() {
+    return true;
+  }
+
   public function handleRequest(AphrontRequest $request) {
     $user = $request->getUser();
 
@@ -12,10 +16,6 @@ final class ConpherenceRoomListController extends ConpherenceController {
       ->setNavigation($this->buildRoomsSideNavView());
 
     return $this->delegateToController($controller);
-  }
-
-  protected function buildApplicationCrumbs() {
-    return $this->buildConpherenceApplicationCrumbs($is_rooms = true);
   }
 
   public function buildApplicationMenu() {
@@ -29,7 +29,7 @@ final class ConpherenceRoomListController extends ConpherenceController {
     $nav->setBaseURI(new PhutilURI($this->getApplicationURI()));
 
     if ($for_app) {
-      $nav->addFilter('room/new/', pht('Create Room'));
+      $nav->addFilter('new/', pht('Create Room'));
     }
 
     id(new ConpherenceThreadSearchEngine())

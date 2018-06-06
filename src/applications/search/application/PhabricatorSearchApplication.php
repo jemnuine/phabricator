@@ -18,7 +18,7 @@ final class PhabricatorSearchApplication extends PhabricatorApplication {
     return pht('Find stuff in big piles.');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-search';
   }
 
@@ -30,17 +30,26 @@ final class PhabricatorSearchApplication extends PhabricatorApplication {
     return array(
       '/search/' => array(
         '(?:query/(?P<queryKey>[^/]+)/)?' => 'PhabricatorSearchController',
-        'attach/(?P<phid>[^/]+)/(?P<type>\w+)/(?:(?P<action>\w+)/)?'
-          => 'PhabricatorSearchAttachController',
-        'select/(?P<type>\w+)/'
-          => 'PhabricatorSearchSelectController',
         'index/(?P<phid>[^/]+)/' => 'PhabricatorSearchIndexController',
-        'hovercard/(?P<mode>retrieve|test)/'
+        'hovercard/'
           => 'PhabricatorSearchHovercardController',
-        'edit/(?P<queryKey>[^/]+)/' => 'PhabricatorSearchEditController',
-        'delete/(?P<queryKey>[^/]+)/(?P<engine>[^/]+)/'
-          => 'PhabricatorSearchDeleteController',
+        'edit/' => array(
+          'key/(?P<queryKey>[^/]+)/' => 'PhabricatorSearchEditController',
+          'id/(?P<id>[^/]+)/' => 'PhabricatorSearchEditController',
+        ),
+        'default/(?P<queryKey>[^/]+)/(?P<engine>[^/]+)/'
+          => 'PhabricatorSearchDefaultController',
+        'delete/' => array(
+          'key/(?P<queryKey>[^/]+)/(?P<engine>[^/]+)/'
+            => 'PhabricatorSearchDeleteController',
+          'id/(?P<id>[^/]+)/'
+            => 'PhabricatorSearchDeleteController',
+        ),
         'order/(?P<engine>[^/]+)/' => 'PhabricatorSearchOrderController',
+        'rel/(?P<relationshipKey>[^/]+)/(?P<sourcePHID>[^/]+)/'
+          => 'PhabricatorSearchRelationshipController',
+        'source/(?P<relationshipKey>[^/]+)/(?P<sourcePHID>[^/]+)/'
+          => 'PhabricatorSearchRelationshipSourceController',
       ),
     );
   }

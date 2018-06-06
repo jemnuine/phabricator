@@ -14,7 +14,9 @@
  * @task file Managing File Data
  * @task load Loading Storage Engines
  */
-abstract class PhabricatorFileStorageEngine {
+abstract class PhabricatorFileStorageEngine extends Phobject {
+
+  const HMAC_INTEGRITY = 'file.integrity';
 
   /**
    * Construct a new storage engine.
@@ -224,36 +226,11 @@ abstract class PhabricatorFileStorageEngine {
    * @task load
    */
   public static function loadAllEngines() {
-    static $engines;
-
-    if ($engines === null) {
-      $objects = id(new PhutilSymbolLoader())
-        ->setAncestorClass(__CLASS__)
-        ->loadObjects();
-
-      $map = array();
-      foreach ($objects as $engine) {
-        $key = $engine->getEngineIdentifier();
-        if (empty($map[$key])) {
-          $map[$key] = $engine;
-        } else {
-          throw new Exception(
-            pht(
-              'Storage engines "%s" and "%s" have the same engine '.
-              'identifier "%s". Each storage engine must have a unique '.
-              'identifier.',
-              get_class($engine),
-              get_class($map[$key]),
-              $key));
-        }
-      }
-
-      $map = msort($map, 'getEnginePriority');
-
-      $engines = $map;
-    }
-
-    return $engines;
+    return id(new PhutilClassMapQuery())
+      ->setAncestorClass(__CLASS__)
+      ->setUniqueMethod('getEngineIdentifier')
+      ->setSortMethod('getEnginePriority')
+      ->execute();
   }
 
 
@@ -350,10 +327,32 @@ abstract class PhabricatorFileStorageEngine {
     return $engine->getChunkSize();
   }
 
-  public function getFileDataIterator(PhabricatorFile $file, $begin, $end) {
-    // The default implementation is trivial and just loads the entire file
-    // upfront.
-    $data = $file->loadFileData();
+  public function getRawFileDataIterator(
+    PhabricatorFile $file,
+    $begin,
+    $end,
+    PhabricatorFileStorageFormat $format) {
+
+    $formatted_data = $this->readFile($file->getStorageHandle());
+
+    $known_integrity = $file->getIntegrityHash();
+    if ($known_integrity !== null) {
+      $new_integrity = $this->newIntegrityHash($formatted_data, $format);
+      if (!phutil_hashes_are_identical($known_integrity, $new_integrity)) {
+        throw new PhabricatorFileIntegrityException(
+          pht(
+            'File data integrity check failed. Dark forces have corrupted '.
+            'or tampered with this file. The file data can not be read.'));
+      }
+    }
+
+    $formatted_data = array($formatted_data);
+
+    $data = '';
+    $format_iterator = $format->newReadIterator($formatted_data);
+    foreach ($format_iterator as $raw_chunk) {
+      $data .= $raw_chunk;
+    }
 
     if ($begin !== null && $end !== null) {
       $data = substr($data, $begin, ($end - $begin));
@@ -364,6 +363,20 @@ abstract class PhabricatorFileStorageEngine {
     }
 
     return array($data);
+  }
+
+  public function newIntegrityHash(
+    $data,
+    PhabricatorFileStorageFormat $format) {
+
+    $hmac_name = self::HMAC_INTEGRITY;
+
+    $data_hash = PhabricatorHash::digestWithNamedKey($data, $hmac_name);
+    $format_hash = $format->newFormatIntegrityHash();
+
+    $full_hash = "{$data_hash}/{$format_hash}";
+
+    return PhabricatorHash::digestWithNamedKey($full_hash, $hmac_name);
   }
 
 }

@@ -14,7 +14,7 @@ final class PhabricatorXHProfApplication extends PhabricatorApplication {
     return pht('PHP Profiling Tool');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-stethoscope';
   }
 
@@ -32,6 +32,7 @@ final class PhabricatorXHProfApplication extends PhabricatorApplication {
         '' => 'PhabricatorXHProfSampleListController',
         'list/(?P<view>[^/]+)/' => 'PhabricatorXHProfSampleListController',
         'profile/(?P<phid>[^/]+)/' => 'PhabricatorXHProfProfileController',
+        'import/drop/' => 'PhabricatorXHProfDropController',
       ),
     );
   }

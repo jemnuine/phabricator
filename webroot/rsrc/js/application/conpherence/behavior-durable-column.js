@@ -25,13 +25,12 @@ JX.behavior('durable-column', function(config, statics) {
   }
 
   var userVisible = config.visible;
+  var userMinimize = config.minimize;
   var show = null;
   var loadThreadID = null;
   var scrollbar = null;
 
-  var columnWidth = 300;
-  // This is the smallest window size where we'll enable the column.
-  var minimumViewportWidth = 768;
+  var margin = JX.Scrollbar.getScrollbarControlMargin();
 
   var quick = JX.$('phabricator-standard-page-body');
 
@@ -44,34 +43,45 @@ JX.behavior('durable-column', function(config, statics) {
     return JX.DOM.find(column, 'div', 'conpherence-durable-column-main');
   }
 
-  function _isViewportWideEnoughForColumn() {
-    var viewport = JX.Vector.getViewport();
-    if (viewport.x < minimumViewportWidth) {
-      return false;
-    } else {
-      return true;
-    }
-  }
-
   function _updateColumnVisibility() {
-    var new_value = (userVisible && _isViewportWideEnoughForColumn());
+    var new_value = (userVisible);
     if (new_value !== show) {
       show = new_value;
       _drawColumn(show);
     }
   }
 
-  function _toggleColumn(explicit) {
+  function _toggleColumn() {
     userVisible = !userVisible;
     _updateColumnVisibility();
 
-    new JX.Request(config.settingsURI)
+    new JX.Request(config.visibleURI)
       .setData({value: (show ? 1 : 0)})
       .send();
   }
 
+  function _minimizeColumn(e) {
+    e.kill();
+    userMinimize = !userMinimize;
+    JX.DOM.alterClass(document.body, 'minimize-column', userMinimize);
+    JX.Stratcom.invoke('resize');
+
+    if (!userMinimize) {
+      var messages = _getColumnMessagesNode();
+      scrollbar.scrollTo(messages.scrollHeight);
+    }
+
+    new JX.Request(config.minimizeURI)
+      .setData({value: (userMinimize ? 1 : 0)})
+      .send();
+  }
+
   function _drawColumn(visible) {
-    JX.DOM.alterClass(document.body, 'with-durable-column', visible);
+    JX.DOM.alterClass(
+      document.body,
+      'with-durable-column',
+      visible);
+
     var column = _getColumnNode();
     if (visible) {
       JX.DOM.show(column);
@@ -81,33 +91,32 @@ JX.behavior('durable-column', function(config, statics) {
     }
     JX.Quicksand.setFrame(visible ? quick : null);
 
-    // When we activate the column, adjust the tablet breakpoint so that we
-    // convert the left side of the screen to tablet mode on narrow displays.
-    var breakpoint;
-    if (visible) {
-      breakpoint = minimumViewportWidth + columnWidth;
-    } else {
-      breakpoint = minimumViewportWidth;
-    }
-    JX.Device.setTabletBreakpoint(breakpoint);
-
     JX.Stratcom.invoke('resize');
   }
 
-  new JX.KeyboardShortcut('\\', 'Toggle Conpherence Column')
-    .setHandler(_toggleColumn)
-    .register();
+  JX.Stratcom.listen(
+    'click',
+    'conpherence-persist-column',
+    _toggleColumn);
+
+  JX.Stratcom.listen(
+    'click',
+    'conpherence-minimize-window',
+    _minimizeColumn);
 
   scrollbar = new JX.Scrollbar(_getColumnScrollNode());
 
-  JX.Quicksand.start();
+  JX.Quicksand.setFrame(userVisible ? quick : null);
+  JX.Quicksand.start(config.quicksandConfig);
 
   /* Conpherence Thread Manager configuration - lots of display
    * callbacks.
    */
 
   var threadManager = new JX.ConpherenceThreadManager();
-  threadManager.setMinimalDisplay(true);
+  threadManager.setMessagesRootCallback(function() {
+    return _getColumnMessagesNode();
+  });
   threadManager.setLoadThreadURI('/conpherence/columnview/');
   threadManager.setWillLoadThreadCallback(function() {
     _markLoading(true);
@@ -129,7 +138,6 @@ JX.behavior('durable-column', function(config, statics) {
   });
   threadManager.setDidUpdateThreadCallback(function(r) {
     var messages = _getColumnMessagesNode();
-    JX.DOM.appendContent(messages, JX.$H(r.transactions));
     scrollbar.scrollTo(messages.scrollHeight);
   });
 
@@ -145,7 +153,6 @@ JX.behavior('durable-column', function(config, statics) {
       return;
     }
     var messages = _getColumnMessagesNode();
-    JX.DOM.appendContent(messages, JX.$H(r.transactions));
     scrollbar.scrollTo(messages.scrollHeight);
   });
 
@@ -154,7 +161,6 @@ JX.behavior('durable-column', function(config, statics) {
   });
   threadManager.setDidUpdateWorkflowCallback(function(r) {
     var messages = _getColumnMessagesNode();
-    JX.DOM.appendContent(messages, JX.$H(r.transactions));
     scrollbar.scrollTo(messages.scrollHeight);
     JX.DOM.setContent(_getColumnTitleNode(), r.conpherence_title);
   });
@@ -171,7 +177,7 @@ JX.behavior('durable-column', function(config, statics) {
       var params = null;
 
       switch (action) {
-        case 'metadata':
+        case 'go_edit':
           threadManager.runUpdateWorkflowFromLink(
             link,
             {
@@ -275,7 +281,7 @@ JX.behavior('durable-column', function(config, statics) {
   function _sendMessage(e) {
     e.kill();
     var form = _getColumnFormNode();
-    threadManager.sendMessage(form, { minimal_display: true });
+    threadManager.sendMessage(form, {});
   }
 
   JX.Stratcom.listen(
@@ -338,6 +344,19 @@ JX.behavior('durable-column', function(config, statics) {
           node.placeholderStorage = '';
         }
       }
+    });
+
+  JX.Stratcom.listen(
+    'quicksand-redraw',
+    null,
+    function (e) {
+      var new_data = e.getData().newResponse;
+      var new_classes = new_data.bodyClasses;
+      if (userMinimize) {
+        new_classes = new_classes + ' minimize-column';
+      }
+      document.body.className = new_classes;
+      JX.Title.setTitle(new_data.title);
     });
 
   _updateColumnVisibility();

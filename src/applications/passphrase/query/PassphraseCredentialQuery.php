@@ -53,19 +53,12 @@ final class PassphraseCredentialQuery
     return $this;
   }
 
+  public function newResultObject() {
+    return new PassphraseCredential();
+  }
+
   protected function loadPage() {
-    $table = new PassphraseCredential();
-    $conn_r = $table->establishConnection('r');
-
-    $rows = queryfx_all(
-      $conn_r,
-      'SELECT * FROM %T %Q %Q %Q',
-      $table->getTableName(),
-      $this->buildWhereClause($conn_r),
-      $this->buildOrderClause($conn_r),
-      $this->buildLimitClause($conn_r));
-
-    return $table->loadAllFromArray($rows);
+    return $this->loadStandardPage($this->newResultObject());
   }
 
   protected function willFilterPage(array $page) {
@@ -96,68 +89,81 @@ final class PassphraseCredentialQuery
       }
     }
 
+    foreach ($page as $key => $credential) {
+      $type = PassphraseCredentialType::getTypeByConstant(
+        $credential->getCredentialType());
+      if (!$type) {
+        unset($page[$key]);
+        continue;
+      }
+
+      $credential->attachImplementation(clone $type);
+    }
+
     return $page;
   }
 
-  private function buildWhereClause(AphrontDatabaseConnection $conn_r) {
-    $where = array();
+  protected function buildWhereClauseParts(AphrontDatabaseConnection $conn) {
+    $where = parent::buildWhereClauseParts($conn);
 
-    $where[] = $this->buildPagingClause($conn_r);
-
-    if ($this->ids) {
+    if ($this->ids !== null) {
       $where[] = qsprintf(
-        $conn_r,
-        'id IN (%Ld)',
+        $conn,
+        'c.id IN (%Ld)',
         $this->ids);
     }
 
-    if ($this->phids) {
+    if ($this->phids !== null) {
       $where[] = qsprintf(
-        $conn_r,
-        'phid IN (%Ls)',
+        $conn,
+        'c.phid IN (%Ls)',
         $this->phids);
     }
 
-    if ($this->credentialTypes) {
+    if ($this->credentialTypes !== null) {
       $where[] = qsprintf(
-        $conn_r,
-        'credentialType in (%Ls)',
+        $conn,
+        'c.credentialType in (%Ls)',
         $this->credentialTypes);
     }
 
-    if ($this->providesTypes) {
+    if ($this->providesTypes !== null) {
       $where[] = qsprintf(
-        $conn_r,
-        'providesType IN (%Ls)',
+        $conn,
+        'c.providesType IN (%Ls)',
         $this->providesTypes);
     }
 
     if ($this->isDestroyed !== null) {
       $where[] = qsprintf(
-        $conn_r,
-        'isDestroyed = %d',
+        $conn,
+        'c.isDestroyed = %d',
         (int)$this->isDestroyed);
     }
 
     if ($this->allowConduit !== null) {
       $where[] = qsprintf(
-        $conn_r,
-        'allowConduit = %d',
+        $conn,
+        'c.allowConduit = %d',
         (int)$this->allowConduit);
     }
 
     if (strlen($this->nameContains)) {
       $where[] = qsprintf(
-        $conn_r,
-        'name LIKE %~',
-        $this->nameContains);
+        $conn,
+        'LOWER(c.name) LIKE %~',
+        phutil_utf8_strtolower($this->nameContains));
     }
 
-    return $this->formatWhereClause($where);
+    return $where;
   }
 
   public function getQueryApplicationClass() {
     return 'PhabricatorPassphraseApplication';
+  }
+
+  protected function getPrimaryTableAlias() {
+    return 'c';
   }
 
 }

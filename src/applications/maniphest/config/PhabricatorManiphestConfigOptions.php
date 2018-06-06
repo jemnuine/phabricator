@@ -11,7 +11,7 @@ final class PhabricatorManiphestConfigOptions
     return pht('Configure Maniphest.');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-anchor';
   }
 
@@ -20,57 +20,64 @@ final class PhabricatorManiphestConfigOptions
   }
 
   public function getOptions() {
-
+    $priority_type = 'maniphest.priorities';
     $priority_defaults = array(
       100 => array(
         'name'  => pht('Unbreak Now!'),
-        'short' => pht('Unbreak!'),
-        'color' => 'indigo',
         'keywords' => array('unbreak'),
+        'short' => pht('Unbreak!'),
+        'color' => 'pink',
       ),
       90 => array(
         'name' => pht('Needs Triage'),
+        'keywords' => array('triage'),
         'short' => pht('Triage'),
         'color' => 'violet',
-        'keywords' => array('triage'),
       ),
       80 => array(
         'name' => pht('High'),
+        'keywords' => array('high'),
         'short' => pht('High'),
         'color' => 'red',
-        'keywords' => array('high'),
       ),
       50 => array(
         'name' => pht('Normal'),
+        'keywords' => array('normal'),
         'short' => pht('Normal'),
         'color' => 'orange',
-        'keywords' => array('normal'),
       ),
       25 => array(
         'name' => pht('Low'),
+        'keywords' => array('low'),
         'short' => pht('Low'),
         'color' => 'yellow',
-        'keywords' => array('low'),
       ),
       0 => array(
         'name' => pht('Wishlist'),
+        'keywords' => array('wish', 'wishlist'),
         'short' => pht('Wish'),
         'color' => 'sky',
-        'keywords' => array('wish', 'wishlist'),
       ),
     );
 
-    $status_type = 'custom:ManiphestStatusConfigOptionType';
+    $status_type = 'maniphest.statuses';
     $status_defaults = array(
       'open' => array(
         'name' => pht('Open'),
         'special' => ManiphestTaskStatus::SPECIAL_DEFAULT,
+        'prefixes' => array(
+          'open',
+          'opens',
+          'reopen',
+          'reopens',
+        ),
       ),
       'resolved' => array(
         'name' => pht('Resolved'),
         'name.full' => pht('Closed, Resolved'),
         'closed' => true,
         'special' => ManiphestTaskStatus::SPECIAL_CLOSED,
+        'transaction.icon' => 'fa-check-circle',
         'prefixes' => array(
           'closed',
           'closes',
@@ -91,6 +98,7 @@ final class PhabricatorManiphestConfigOptions
       'wontfix' => array(
         'name' => pht('Wontfix'),
         'name.full' => pht('Closed, Wontfix'),
+        'transaction.icon' => 'fa-ban',
         'closed' => true,
         'prefixes' => array(
           'wontfix',
@@ -104,7 +112,9 @@ final class PhabricatorManiphestConfigOptions
       'invalid' => array(
         'name' => pht('Invalid'),
         'name.full' => pht('Closed, Invalid'),
+        'transaction.icon' => 'fa-minus-circle',
         'closed' => true,
+        'claim' => false,
         'prefixes' => array(
           'invalidate',
           'invalidates',
@@ -117,9 +127,10 @@ final class PhabricatorManiphestConfigOptions
       'duplicate' => array(
         'name' => pht('Duplicate'),
         'name.full' => pht('Closed, Duplicate'),
-        'transaction.icon' => 'fa-times',
+        'transaction.icon' => 'fa-files-o',
         'special' => ManiphestTaskStatus::SPECIAL_DUPLICATE,
         'closed' => true,
+        'claim' => false,
       ),
       'spite' => array(
         'name' => pht('Spite'),
@@ -192,6 +203,15 @@ The keys you can provide in a specification are:
   - `keywords` //Optional list<string>.// Allows you to specify a list
     of keywords which can be used with `!status` commands in email to select
     this status.
+  - `disabled` //Optional bool.// Marks this status as no longer in use so
+    tasks can not be created or edited to have this status. Existing tasks with
+    this status will not be affected, but you can batch edit them or let them
+    die out on their own.
+  - `claim` //Optional bool.// By default, closing an unassigned task claims
+    it. You can set this to `false` to disable this behavior for a particular
+    status.
+  - `locked` //Optional bool.// Lock tasks in this status, preventing users
+    from commenting.
 
 Statuses will appear in the UI in the order specified. Note the status marked
 `special` as `duplicate` is not settable directly and will not appear in UI
@@ -206,16 +226,16 @@ EOTEXT
 
     $status_example = array(
       'open' => array(
-        'name' => 'Open',
+        'name' => pht('Open'),
         'special' => 'default',
       ),
       'closed' => array(
-        'name' => 'Closed',
+        'name' => pht('Closed'),
         'special' => 'closed',
         'closed' => true,
       ),
       'duplicate' => array(
-        'name' => 'Duplicate',
+        'name' => pht('Duplicate'),
         'special' => 'duplicate',
         'closed' => true,
       ),
@@ -236,6 +256,126 @@ EOTEXT
 
     $custom_field_type = 'custom:PhabricatorCustomFieldConfigOptionType';
 
+    $fields_example = array(
+      'mycompany.estimated-hours' => array(
+        'name' => pht('Estimated Hours'),
+        'type' => 'int',
+        'caption' => pht('Estimated number of hours this will take.'),
+      ),
+    );
+    $fields_json = id(new PhutilJSON())->encodeFormatted($fields_example);
+
+    $points_type = 'maniphest.points';
+
+    $points_example_1 = array(
+      'enabled' => true,
+      'label' => pht('Story Points'),
+      'action' => pht('Change Story Points'),
+    );
+    $points_json_1 = id(new PhutilJSON())->encodeFormatted($points_example_1);
+
+    $points_example_2 = array(
+      'enabled' => true,
+      'label' => pht('Estimated Hours'),
+      'action' => pht('Change Estimate'),
+    );
+    $points_json_2 = id(new PhutilJSON())->encodeFormatted($points_example_2);
+
+    $points_description = $this->deformat(pht(<<<EOTEXT
+Activates a points field on tasks. You can use points for estimation or
+planning. If configured, points will appear on workboards.
+
+To activate points, set this value to a map with these keys:
+
+  - `enabled` //Optional bool.// Use `true` to enable points, or
+    `false` to disable them.
+  - `label` //Optional string.// Label for points, like "Story Points" or
+    "Estimated Hours". If omitted, points will be called "Points".
+  - `action` //Optional string.// Label for the action which changes points
+    in Maniphest, like "Change Estimate". If omitted, the action will
+    be called "Change Points".
+
+See the example below for a starting point.
+EOTEXT
+));
+
+    $subtype_type = 'maniphest.subtypes';
+    $subtype_default_key = PhabricatorEditEngineSubtype::SUBTYPE_DEFAULT;
+    $subtype_example = array(
+      array(
+        'key' => $subtype_default_key,
+        'name' => pht('Task'),
+      ),
+      array(
+        'key' => 'bug',
+        'name' => pht('Bug'),
+      ),
+      array(
+        'key' => 'feature',
+        'name' => pht('Feature Request'),
+      ),
+    );
+    $subtype_example = id(new PhutilJSON())->encodeAsList($subtype_example);
+
+    $subtype_default = array(
+      array(
+        'key' => $subtype_default_key,
+        'name' => pht('Task'),
+      ),
+    );
+
+    $subtype_description = $this->deformat(pht(<<<EOTEXT
+Allows you to define task subtypes. Subtypes let you hide fields you don't
+need to simplify the workflows for editing tasks.
+
+To define subtypes, provide a list of subtypes. Each subtype should be a
+dictionary with these keys:
+
+  - `key` //Required string.// Internal identifier for the subtype, like
+    "task", "feature", or "bug".
+  - `name` //Required string.// Human-readable name for this subtype, like
+    "Task", "Feature Request" or "Bug Report".
+  - `tag` //Optional string.// Tag text for this subtype.
+  - `color` //Optional string.// Display color for this subtype.
+  - `icon` //Optional string.// Icon for the subtype.
+
+Each subtype must have a unique key, and you must define a subtype with
+the key "%s", which is used as a default subtype.
+
+The tag text (`tag`) is used to set the text shown in the subtype tag on list
+views and workboards. If you do not configure it, the default subtype will have
+no subtype tag and other subtypes will use their name as tag text.
+EOTEXT
+      ,
+      $subtype_default_key));
+
+    $priorities_description = $this->deformat(pht(<<<EOTEXT
+Allows you to edit or override the default priorities available in Maniphest,
+like "High", "Normal" and "Low". The configuration should contain a map of
+numeric priority values (where larger numbers correspond to higher priorities)
+to priority specifications (see defaults below for examples).
+
+The keys you can define for a priority are:
+
+  - `name` //Required string.// Name of the priority.
+  - `keywords` //Required list<string>.// List of unique keywords which identify
+    this priority, like "high" or "low". Each priority must have at least one
+    keyword and two priorities may not share the same keyword.
+  - `short` //Optional string.// Alternate shorter name, used in UIs where
+    there is less space available.
+  - `color` //Optional string.// Color for this priority, like "red" or
+    "blue".
+  - `disabled` //Optional bool.// Set to true to prevent users from choosing
+    this priority when creating or editing tasks. Existing tasks will not be
+    affected, and can be batch edited to a different priority or left to
+    eventually die out.
+
+You can choose the default priority for newly created tasks with
+"maniphest.default-priority".
+EOTEXT
+      ));
+
+
     return array(
       $this->newOption('maniphest.custom-field-definitions', 'wild', array())
         ->setSummary(pht('Custom Maniphest fields.'))
@@ -244,35 +384,16 @@ EOTEXT
             'Array of custom fields for Maniphest tasks. For details on '.
             'adding custom fields to Maniphest, see "Configuring Custom '.
             'Fields" in the documentation.'))
-        ->addExample(
-          '{"mycompany:estimated-hours": {"name": "Estimated Hours", '.
-          '"type": "int", "caption": "Estimated number of hours this will '.
-          'take."}}',
-          pht('Valid Setting')),
+        ->addExample($fields_json, pht('Valid setting')),
       $this->newOption('maniphest.fields', $custom_field_type, $default_fields)
         ->setCustomData(id(new ManiphestTask())->getCustomFieldBaseClass())
         ->setDescription(pht('Select and reorder task fields.')),
-      $this->newOption('maniphest.priorities', 'wild', $priority_defaults)
+      $this->newOption(
+        'maniphest.priorities',
+        $priority_type,
+        $priority_defaults)
         ->setSummary(pht('Configure Maniphest priority names.'))
-        ->setDescription(
-          pht(
-            'Allows you to edit or override the default priorities available '.
-            'in Maniphest, like "High", "Normal" and "Low". The configuration '.
-            'should contain a map of priority constants to priority '.
-            'specifications (see defaults below for examples).'.
-            "\n\n".
-            'The keys you can define for a priority are:'.
-            "\n\n".
-            '  - `name` Name of the priority.'."\n".
-            '  - `short` Alternate shorter name, used in UIs where there is '.
-            '    not much space available.'."\n".
-            '  - `color` A color for this priority, like "red" or "blue".'.
-            '  - `keywords` An optional list of keywords which can '.
-            '     be used to select this priority when using `!priority` '.
-            '     commands in email.'.
-            "\n\n".
-            'You can choose which priority is the default for newly created '.
-            'tasks with `maniphest.default-priority`.')),
+        ->setDescription($priorities_description),
       $this->newOption('maniphest.statuses', $status_type, $status_defaults)
         ->setSummary(pht('Configure Maniphest task statuses.'))
         ->setDescription($status_description)
@@ -283,85 +404,23 @@ EOTEXT
           pht(
             'Choose a default priority for newly created tasks. You can '.
             'review and adjust available priorities by using the '.
-            '{{maniphest.priorities}} configuration option. The default value '.
-            '(`90`) corresponds to the default "Needs Triage" priority.')),
+            '%s configuration option. The default value (`90`) '.
+            'corresponds to the default "Needs Triage" priority.',
+            'maniphest.priorities')),
       $this->newOption(
         'metamta.maniphest.subject-prefix',
         'string',
         '[Maniphest]')
         ->setDescription(pht('Subject prefix for Maniphest mail.')),
-      $this->newOption(
-        'metamta.maniphest.public-create-email',
-        'string',
-        null)
-        ->setLocked(true)
-        ->setLockedMessage(pht(
-          'This configuration is deprecated. See description for details.'))
-        ->setSummary(pht('DEPRECATED - Allow filing bugs via email.'))
-        ->setDescription(
-          pht(
-            'This config has been deprecated in favor of [[ '.
-            '/applications/view/PhabricatorManiphestApplication/ | '.
-            'application settings ]], which allow for multiple email '.
-            'addresses and other functionality.'."\n\n".
-            'You can configure an email address like '.
-            '"bugs@phabricator.example.com" which will automatically create '.
-            'Maniphest tasks when users send email to it. This relies on the '.
-            '"From" address to authenticate users, so it is is not completely '.
-            'secure. To set this up, enter a complete email address like '.
-            '"bugs@phabricator.example.com" and then configure mail to that '.
-            'address so it routed to Phabricator (if you\'ve already '.
-            'configured reply handlers, you\'re probably already done). See '.
-            '"Configuring Inbound Email" in the documentation for more '.
-            'information.')),
-      $this->newOption(
-        'metamta.maniphest.default-public-author',
-        'string',
-        null)
-        ->setLocked(true)
-        ->setLockedMessage(pht(
-          'This configuration is deprecated. See description for details.'))
-        ->setSummary(pht(
-          'DEPRECATED - Username anonymous bugs are filed under.'))
-        ->setDescription(
-          pht(
-            'This config has been deprecated in favor of [[ '.
-            '/applications/view/PhabricatorManiphestApplication/ | '.
-            'application settings ]], which allow for multiple email '.
-            'addresses each with its own default author, and other '.
-            'functionality.'."\n\n".
-            'If you enable `metamta.maniphest.public-create-email` and create '.
-            'an email address like "bugs@phabricator.example.com", it will '.
-            'default to rejecting mail which doesn\'t come from a known user. '.
-            'However, you might want to let anyone send email to this '.
-            'address; to do so, set a default author here (a Phabricator '.
-            'username). A typical use of this might be to create a "System '.
-            'Agent" user called "bugs" and use that name here. If you specify '.
-            'a valid username, mail will always be accepted and used to '.
-            'create a task, even if the sender is not a system user. The '.
-            'original email address will be stored in an `From Email` field '.
-            'on the task.')),
-      $this->newOption(
-        'maniphest.priorities.unbreak-now',
-        'int',
-        100)
-        ->setSummary(pht('Priority used to populate "Unbreak Now" on home.'))
-        ->setDescription(
-          pht(
-            'Temporary setting. If set, this priority is used to populate the '.
-            '"Unbreak Now" panel on the home page. You should adjust this if '.
-            'you adjust priorities using `maniphest.priorities`.')),
-      $this->newOption(
-        'maniphest.priorities.needs-triage',
-        'int',
-        90)
-        ->setSummary(pht('Priority used to populate "Needs Triage" on home.'))
-        ->setDescription(
-          pht(
-            'Temporary setting. If set, this priority is used to populate the '.
-            '"Needs Triage" panel on the home page. You should adjust this if '.
-            'you adjust priorities using `maniphest.priorities`.')),
-
+      $this->newOption('maniphest.points', $points_type, array())
+        ->setSummary(pht('Configure point values for tasks.'))
+        ->setDescription($points_description)
+        ->addExample($points_json_1, pht('Points Config'))
+        ->addExample($points_json_2, pht('Hours Config')),
+      $this->newOption('maniphest.subtypes', $subtype_type, $subtype_default)
+        ->setSummary(pht('Define task subtypes.'))
+        ->setDescription($subtype_description)
+        ->addExample($subtype_example, pht('Simple Subtypes')),
     );
   }
 

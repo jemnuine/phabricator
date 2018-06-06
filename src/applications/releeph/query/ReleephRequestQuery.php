@@ -147,7 +147,7 @@ final class ReleephRequestQuery
     return $requests;
   }
 
-  private function buildWhereClause(AphrontDatabaseConnection $conn_r) {
+  protected function buildWhereClause(AphrontDatabaseConnection $conn_r) {
     $where = array();
 
     if ($this->ids !== null) {
@@ -229,14 +229,14 @@ final class ReleephRequestQuery
         );
       case self::STATUS_NEEDS_REVERT:
         return array(
-          ReleephRequestStatus::NEEDS_REVERT,
+          ReleephRequestStatus::STATUS_NEEDS_REVERT,
         );
       case self::STATUS_REVERTED:
         return array(
-          ReleephRequestStatus::REVERTED,
+          ReleephRequestStatus::STATUS_REVERTED,
         );
       default:
-        throw new Exception("Unknown status '{$this->status}'!");
+        throw new Exception(pht("Unknown status '%s'!", $this->status));
     }
   }
 

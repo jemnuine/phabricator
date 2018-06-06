@@ -3,9 +3,23 @@
 final class PhabricatorRepositoryRefCursorQuery
   extends PhabricatorCursorPagedPolicyAwareQuery {
 
+  private $ids;
+  private $phids;
   private $repositoryPHIDs;
   private $refTypes;
   private $refNames;
+  private $datasourceQuery;
+  private $needPositions;
+
+  public function withIDs(array $ids) {
+    $this->ids = $ids;
+    return $this;
+  }
+
+  public function withPHIDs(array $phids) {
+    $this->phids = $phids;
+    return $this;
+  }
 
   public function withRepositoryPHIDs(array $phids) {
     $this->repositoryPHIDs = $phids;
@@ -22,19 +36,22 @@ final class PhabricatorRepositoryRefCursorQuery
     return $this;
   }
 
+  public function withDatasourceQuery($query) {
+    $this->datasourceQuery = $query;
+    return $this;
+  }
+
+  public function needPositions($need) {
+    $this->needPositions = $need;
+    return $this;
+  }
+
+  public function newResultObject() {
+    return new PhabricatorRepositoryRefCursor();
+  }
+
   protected function loadPage() {
-    $table = new PhabricatorRepositoryRefCursor();
-    $conn_r = $table->establishConnection('r');
-
-    $data = queryfx_all(
-      $conn_r,
-      'SELECT * FROM %T r %Q %Q %Q',
-      $table->getTableName(),
-      $this->buildWhereClause($conn_r),
-      $this->buildOrderClause($conn_r),
-      $this->buildLimitClause($conn_r));
-
-    return $table->loadAllFromArray($data);
+    return $this->loadStandardPage($this->newResultObject());
   }
 
   protected function willFilterPage(array $refs) {
@@ -50,28 +67,59 @@ final class PhabricatorRepositoryRefCursorQuery
     foreach ($refs as $key => $ref) {
       $repository = idx($repositories, $ref->getRepositoryPHID());
       if (!$repository) {
+        $this->didRejectResult($ref);
         unset($refs[$key]);
         continue;
       }
       $ref->attachRepository($repository);
     }
 
+    if (!$refs) {
+      return $refs;
+    }
+
+    if ($this->needPositions) {
+      $positions = id(new PhabricatorRepositoryRefPosition())->loadAllWhere(
+        'cursorID IN (%Ld)',
+        mpull($refs, 'getID'));
+      $positions = mgroup($positions, 'getCursorID');
+
+      foreach ($refs as $key => $ref) {
+        $ref_positions = idx($positions, $ref->getID(), array());
+        $ref->attachPositions($ref_positions);
+      }
+    }
+
     return $refs;
   }
 
-  private function buildWhereClause(AphrontDatabaseConnection $conn_r) {
-    $where = array();
+  protected function buildWhereClauseParts(AphrontDatabaseConnection $conn) {
+    $where = parent::buildWhereClauseParts($conn);
+
+    if ($this->ids !== null) {
+      $where[] = qsprintf(
+        $conn,
+        'id IN (%Ld)',
+        $this->ids);
+    }
+
+    if ($this->phids !== null) {
+      $where[] = qsprintf(
+        $conn,
+        'phid IN (%Ls)',
+        $this->phids);
+    }
 
     if ($this->repositoryPHIDs !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'repositoryPHID IN (%Ls)',
         $this->repositoryPHIDs);
     }
 
     if ($this->refTypes !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'refType IN (%Ls)',
         $this->refTypes);
     }
@@ -83,14 +131,19 @@ final class PhabricatorRepositoryRefCursorQuery
       }
 
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'refNameHash IN (%Ls)',
         $name_hashes);
     }
 
-    $where[] = $this->buildPagingClause($conn_r);
+    if (strlen($this->datasourceQuery)) {
+      $where[] = qsprintf(
+        $conn,
+        'refNameRaw LIKE %>',
+        $this->datasourceQuery);
+    }
 
-    return $this->formatWhereClause($where);
+    return $where;
   }
 
   public function getQueryApplicationClass() {

@@ -20,9 +20,9 @@ input[type="tel"],
 input[type="color"],
 div.jx-tokenizer-container {
   display: inline-block;
-  height: 28px;
+  height: 30px;
   line-height: 18px;
-  color: #333;
+  color: inherit;
   vertical-align: middle;
   font: {$basefont};
   -webkit-font-smoothing: antialiased;
@@ -45,12 +45,9 @@ input[type="tel"],
 input[type="color"],
 div.jx-tokenizer-container {
   padding: 4px 6px;
-  background-color: #ffffff;
-  border: 1px solid {$blueborder};
-
-  -webkit-box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075);
-  -moz-box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075);
-  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075);
+  background-color: {$page.content};
+  border: 1px solid {$greyborder};
+  border-radius: 3px;
 
   -webkit-transition: border linear .05s, box-shadow linear .05s;
   -moz-transition: border linear .05s, box-shadow linear .05s;
@@ -63,7 +60,6 @@ div.jx-tokenizer-container {
 
   /* iOS Safari */
   -webkit-appearance: none;
-  border-radius: 0;
 }
 
 textarea:focus,
@@ -87,13 +83,13 @@ div.jx-tokenizer-container-focused {
   /* IE6-9 */
 
   -webkit-box-shadow:
-    inset 0 1px 1px rgba(0,0,0,.075),
+    inset 0 1px 1px rgba({$alphablack},.075),
     0 0 8px rgba(82,168,236,.6);
   -moz-box-shadow:
-    inset 0 1px 1px rgba(0,0,0,.075),
+    inset 0 1px 1px rgba({$alphablack},.075),
     0 0 8px rgba(82,168,236,.6);
   box-shadow:
-    inset 0 1px 1px rgba(0,0,0,.075),
+    inset 0 1px 1px rgba({$alphablack},.075),
     0 0 8px rgba(82,168,236,.6);
 }
 input[type="radio"],
@@ -105,10 +101,18 @@ input[type="checkbox"] {
 }
 
 select {
-  height: 24px;
-  line-height: 24px;
-  border: 1px solid #a1a5a9;
-  background-color: #ffffff;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+
+  background: {$page.content} url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAUCAMAAACzvE1FAAAADFBMVEUzMzMzMzMzMzMzMzMKAG/3AAAAA3RSTlMAf4C/aSLHAAAAPElEQVR42q3NMQ4AIAgEQTn//2cLdRKppSGzBYwzVXvznNWs8C58CiussPJj8h6NwgorrKRdTvuV9v16Afn0AYFOB7aYAAAAAElFTkSuQmCC") no-repeat right 8px center;
+  background-size: 8px 10px;
+  border-radius: 3px;
+  border: 1px solid {$greyborder};
+  height: 30px;
+  padding: 0 24px 0 8px;
+  margin: 0;
+  min-width: 180px;
 }
 
 select[multiple],
@@ -140,7 +144,28 @@ textarea::-webkit-input-placeholder {
   color: {$lightgreytext};
 }
 
-select[disabled="disabled"],
-input[disabled="disabled"] {
+select[disabled],
+input[disabled],
+textarea[disabled],
+.disabled-control {
   opacity: 0.5;
+}
+
+.aphront-space-select-control-knob {
+  margin: 0 8px 0 0;
+  float: left;
+}
+
+.aphront-form-control-policy .policy-control {
+  float: left;
+  margin-right: 8px;
+}
+
+.device .aphront-space-select-control-knob {
+  margin-bottom: 8px;
+  float: none;
+}
+
+.device .aphront-form-control-policy .policy-control {
+  margin: 0;
 }

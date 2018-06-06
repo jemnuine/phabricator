@@ -10,16 +10,12 @@ final class PhrictionDocumentQuery
   private $slugPrefix;
   private $statuses;
 
+  private $parentPaths;
+  private $ancestorPaths;
+
   private $needContent;
 
-  private $status       = 'status-any';
-  const STATUS_ANY      = 'status-any';
-  const STATUS_OPEN     = 'status-open';
-  const STATUS_NONSTUB  = 'status-nonstub';
-
-  const ORDER_CREATED   = 'order-created';
-  const ORDER_UPDATED   = 'order-updated';
-  const ORDER_HIERARCHY = 'order-hierarchy';
+  const ORDER_HIERARCHY = 'hierarchy';
 
   public function withIDs(array $ids) {
     $this->ids = $ids;
@@ -41,7 +37,7 @@ final class PhrictionDocumentQuery
     return $this;
   }
 
-  public function  withSlugPrefix($slug_prefix) {
+  public function withSlugPrefix($slug_prefix) {
     $this->slugPrefix = $slug_prefix;
     return $this;
   }
@@ -51,8 +47,13 @@ final class PhrictionDocumentQuery
     return $this;
   }
 
-  public function withStatus($status) {
-    $this->status = $status;
+  public function withParentPaths(array $paths) {
+    $this->parentPaths = $paths;
+    return $this;
+  }
+
+  public function withAncestorPaths(array $paths) {
+    $this->ancestorPaths = $paths;
     return $this;
   }
 
@@ -61,38 +62,15 @@ final class PhrictionDocumentQuery
     return $this;
   }
 
-  public function setOrder($order) {
-    switch ($order) {
-      case self::ORDER_CREATED:
-        $this->setOrderVector(array('id'));
-        break;
-      case self::ORDER_UPDATED:
-        $this->setOrderVector(array('updated'));
-        break;
-      case self::ORDER_HIERARCHY:
-        $this->setOrderVector(array('depth', 'title', 'updated'));
-        break;
-      default:
-        throw new Exception(pht('Unknown order "%s".', $order));
-    }
-
-    return $this;
+  protected function loadPage() {
+    return $this->loadStandardPage($this->newResultObject());
   }
 
-  protected function loadPage() {
-    $table = new PhrictionDocument();
-    $conn_r = $table->establishConnection('r');
+  public function newResultObject() {
+    return new PhrictionDocument();
+  }
 
-    $rows = queryfx_all(
-      $conn_r,
-      'SELECT d.* FROM %T d %Q %Q %Q %Q',
-      $table->getTableName(),
-      $this->buildJoinClause($conn_r),
-      $this->buildWhereClause($conn_r),
-      $this->buildOrderClause($conn_r),
-      $this->buildLimitClause($conn_r));
-
-    $documents = $table->loadAllFromArray($rows);
+  protected function willFilterPage(array $documents) {
 
     if ($documents) {
       $ancestor_slugs = array();
@@ -104,6 +82,8 @@ final class PhrictionDocumentQuery
       }
 
       if ($ancestor_slugs) {
+        $table = new PhrictionDocument();
+        $conn_r = $table->establishConnection('r');
         $ancestors = queryfx_all(
           $conn_r,
           'SELECT * FROM %T WHERE slug IN (%Ls)',
@@ -122,11 +102,6 @@ final class PhrictionDocumentQuery
         }
       }
     }
-
-    return $documents;
-  }
-
-  protected function willFilterPage(array $documents) {
     // To view a Phriction document, you must also be able to view all of the
     // ancestor documents. Filter out documents which have ancestors that are
     // not visible.
@@ -173,9 +148,12 @@ final class PhrictionDocumentQuery
     }
 
     if ($this->needContent) {
-      $contents = id(new PhrictionContent())->loadAllWhere(
-        'id IN (%Ld)',
-        mpull($documents, 'getContentID'));
+      $contents = id(new PhrictionContentQuery())
+        ->setViewer($this->getViewer())
+        ->setParentQuery($this)
+        ->withIDs(mpull($documents, 'getContentID'))
+        ->execute();
+      $contents = mpull($contents, null, 'getID');
 
       foreach ($documents as $key => $document) {
         $content_id = $document->getContentID();
@@ -190,93 +168,163 @@ final class PhrictionDocumentQuery
     return $documents;
   }
 
-  private function buildJoinClause(AphrontDatabaseConnection $conn) {
-    $join = '';
+  protected function buildJoinClauseParts(AphrontDatabaseConnection $conn) {
+    $joins = parent::buildJoinClauseParts($conn);
 
     if ($this->getOrderVector()->containsKey('updated')) {
       $content_dao = new PhrictionContent();
-      $join = qsprintf(
+      $joins[] = qsprintf(
         $conn,
         'JOIN %T c ON d.contentID = c.id',
         $content_dao->getTableName());
     }
 
-    return $join;
+    return $joins;
   }
-  protected function buildWhereClause(AphrontDatabaseConnection $conn) {
-    $where = array();
 
-    if ($this->ids) {
+  protected function buildWhereClauseParts(AphrontDatabaseConnection $conn) {
+    $where = parent::buildWhereClauseParts($conn);
+
+    if ($this->ids !== null) {
       $where[] = qsprintf(
         $conn,
         'd.id IN (%Ld)',
         $this->ids);
     }
 
-    if ($this->phids) {
+    if ($this->phids !== null) {
       $where[] = qsprintf(
         $conn,
         'd.phid IN (%Ls)',
         $this->phids);
     }
 
-    if ($this->slugs) {
+    if ($this->slugs !== null) {
       $where[] = qsprintf(
         $conn,
         'd.slug IN (%Ls)',
         $this->slugs);
     }
 
-    if ($this->statuses) {
+    if ($this->statuses !== null) {
       $where[] = qsprintf(
         $conn,
-        'd.status IN (%Ld)',
+        'd.status IN (%Ls)',
         $this->statuses);
     }
 
-    if ($this->slugPrefix) {
+    if ($this->slugPrefix !== null) {
       $where[] = qsprintf(
         $conn,
         'd.slug LIKE %>',
         $this->slugPrefix);
     }
 
-    if ($this->depths) {
+    if ($this->depths !== null) {
       $where[] = qsprintf(
         $conn,
         'd.depth IN (%Ld)',
         $this->depths);
     }
 
-    switch ($this->status) {
-      case self::STATUS_OPEN:
-        $where[] = qsprintf(
-          $conn,
-          'd.status NOT IN (%Ld)',
-          array(
-            PhrictionDocumentStatus::STATUS_DELETED,
-            PhrictionDocumentStatus::STATUS_MOVED,
-            PhrictionDocumentStatus::STATUS_STUB,
-          ));
-        break;
-      case self::STATUS_NONSTUB:
-        $where[] = qsprintf(
-          $conn,
-          'd.status NOT IN (%Ld)',
-          array(
-            PhrictionDocumentStatus::STATUS_MOVED,
-            PhrictionDocumentStatus::STATUS_STUB,
-          ));
-        break;
-      case self::STATUS_ANY:
-        break;
-      default:
-        throw new Exception("Unknown status '{$this->status}'!");
+    if ($this->parentPaths !== null || $this->ancestorPaths !== null) {
+      $sets = array(
+        array(
+          'paths' => $this->parentPaths,
+          'parents' => true,
+        ),
+        array(
+          'paths' => $this->ancestorPaths,
+          'parents' => false,
+        ),
+      );
+
+      $paths = array();
+      foreach ($sets as $set) {
+        $set_paths = $set['paths'];
+        if ($set_paths === null) {
+          continue;
+        }
+
+        if (!$set_paths) {
+          throw new PhabricatorEmptyQueryException(
+            pht('No parent/ancestor paths specified.'));
+        }
+
+        $is_parents = $set['parents'];
+        foreach ($set_paths as $path) {
+          $path_normal = PhabricatorSlug::normalize($path);
+          if ($path !== $path_normal) {
+            throw new Exception(
+              pht(
+                'Document path "%s" is not a valid path. The normalized '.
+                'form of this path is "%s".',
+                $path,
+                $path_normal));
+          }
+
+          $depth = PhabricatorSlug::getDepth($path_normal);
+          if ($is_parents) {
+            $min_depth = $depth + 1;
+            $max_depth = $depth + 1;
+          } else {
+            $min_depth = $depth + 1;
+            $max_depth = null;
+          }
+
+          $paths[] = array(
+            $path_normal,
+            $min_depth,
+            $max_depth,
+          );
+        }
+      }
+
+      $path_clauses = array();
+      foreach ($paths as $path) {
+        $parts = array();
+        list($prefix, $min, $max) = $path;
+
+        // If we're getting children or ancestors of the root document, they
+        // aren't actually stored with the leading "/" in the database, so
+        // just skip this part of the clause.
+        if ($prefix !== '/') {
+          $parts[] = qsprintf(
+            $conn,
+            'd.slug LIKE %>',
+            $prefix);
+        }
+
+        if ($min !== null) {
+          $parts[] = qsprintf(
+            $conn,
+            'd.depth >= %d',
+            $min);
+        }
+
+        if ($max !== null) {
+          $parts[] = qsprintf(
+            $conn,
+            'd.depth <= %d',
+            $max);
+        }
+
+        $path_clauses[] = '('.implode(') AND (', $parts).')';
+      }
+
+      $where[] = '('.implode(') OR (', $path_clauses).')';
     }
 
-    $where[] = $this->buildPagingClause($conn);
+    return $where;
+  }
 
-    return $this->formatWhereClause($where);
+  public function getBuiltinOrders() {
+    return parent::getBuiltinOrders() + array(
+      self::ORDER_HIERARCHY => array(
+        'vector' => array('depth', 'title', 'updated'),
+        'name' => pht('Hierarchy'),
+      ),
+    );
   }
 
   public function getOrderableColumns() {
@@ -331,6 +379,9 @@ final class PhrictionDocumentQuery
     }
   }
 
+  protected function getPrimaryTableAlias() {
+    return 'd';
+  }
 
   public function getQueryApplicationClass() {
     return 'PhabricatorPhrictionApplication';

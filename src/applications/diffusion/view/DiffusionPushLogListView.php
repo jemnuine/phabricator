@@ -3,7 +3,6 @@
 final class DiffusionPushLogListView extends AphrontView {
 
   private $logs;
-  private $handles;
 
   public function setLogs(array $logs) {
     assert_instances_of($logs, 'PhabricatorRepositoryPushLog');
@@ -11,56 +10,75 @@ final class DiffusionPushLogListView extends AphrontView {
     return $this;
   }
 
-  public function setHandles(array $handles) {
-    $this->handles = $handles;
-    return $this;
-  }
-
   public function render() {
     $logs = $this->logs;
-    $viewer = $this->getUser();
-    $handles = $this->handles;
+    $viewer = $this->getViewer();
 
-    // Figure out which repositories are editable. We only let you see remote
-    // IPs if you have edit capability on a repository.
-    $editable_repos = array();
-    if ($logs) {
-      $editable_repos = id(new PhabricatorRepositoryQuery())
-        ->setViewer($viewer)
-        ->requireCapabilities(
-          array(
-            PhabricatorPolicyCapability::CAN_VIEW,
-            PhabricatorPolicyCapability::CAN_EDIT,
-          ))
-        ->withPHIDs(mpull($logs, 'getRepositoryPHID'))
-        ->execute();
-      $editable_repos = mpull($editable_repos, null, 'getPHID');
+    $handle_phids = array();
+    foreach ($logs as $log) {
+      $handle_phids[] = $log->getPusherPHID();
+      $device_phid = $log->getDevicePHID();
+      if ($device_phid) {
+        $handle_phids[] = $device_phid;
+      }
     }
 
-    $rows = array();
-    foreach ($logs as $log) {
+    $handles = $viewer->loadHandles($handle_phids);
 
-      // Reveal this if it's valid and the user can edit the repository.
-      $remote_addr = '-';
-      if (isset($editable_repos[$log->getRepositoryPHID()])) {
-        $remote_long = $log->getPushEvent()->getRemoteAddress();
-        if ($remote_long) {
-          $remote_addr = long2ip($remote_long);
-        }
+    // Only administrators can view remote addresses.
+    $remotes_visible = $viewer->getIsAdmin();
+
+    $flag_map = PhabricatorRepositoryPushLog::getFlagDisplayNames();
+    $reject_map = PhabricatorRepositoryPushLog::getRejectCodeDisplayNames();
+
+    $rows = array();
+    $any_host = false;
+    foreach ($logs as $log) {
+      $repository = $log->getRepository();
+
+      if ($remotes_visible) {
+        $remote_address = $log->getPushEvent()->getRemoteAddress();
+      } else {
+        $remote_address = null;
       }
 
       $event_id = $log->getPushEvent()->getID();
 
-      $callsign = $log->getRepository()->getCallsign();
       $old_ref_link = null;
       if ($log->getRefOld() != DiffusionCommitHookEngine::EMPTY_HASH) {
         $old_ref_link = phutil_tag(
           'a',
           array(
-            'href' => '/r'.$callsign.$log->getRefOld(),
+            'href' => $repository->getCommitURI($log->getRefOld()),
           ),
           $log->getRefOldShort());
       }
+
+      $device_phid = $log->getDevicePHID();
+      if ($device_phid) {
+        $device = $viewer->renderHandle($device_phid);
+        $any_host = true;
+      } else {
+        $device = null;
+      }
+
+      $flags = $log->getChangeFlags();
+      $flag_names = array();
+      foreach ($flag_map as $flag_key => $flag_name) {
+        if (($flags & $flag_key) === $flag_key) {
+          $flag_names[] = $flag_name;
+        }
+      }
+      $flag_names = phutil_implode_html(
+        phutil_tag('br'),
+        $flag_names);
+
+      $reject_code = $log->getPushEvent()->getRejectCode();
+      $reject_label = idx(
+        $reject_map,
+        $reject_code,
+        pht('Unknown ("%s")', $reject_code));
+
       $rows[] = array(
         phutil_tag(
           'a',
@@ -71,26 +89,25 @@ final class DiffusionPushLogListView extends AphrontView {
         phutil_tag(
           'a',
           array(
-            'href' => '/diffusion/'.$callsign.'/',
+            'href' => $repository->getURI(),
           ),
-          $callsign),
-        $handles[$log->getPusherPHID()]->renderLink(),
-        $remote_addr,
+          $repository->getDisplayName()),
+        $viewer->renderHandle($log->getPusherPHID()),
+        $remote_address,
         $log->getPushEvent()->getRemoteProtocol(),
+        $device,
         $log->getRefType(),
         $log->getRefName(),
         $old_ref_link,
         phutil_tag(
           'a',
           array(
-            'href' => '/r'.$callsign.$log->getRefNew(),
+            'href' => $repository->getCommitURI($log->getRefNew()),
           ),
           $log->getRefNewShort()),
-
-        // TODO: Make these human-readable.
-        $log->getChangeFlags(),
-        $log->getPushEvent()->getRejectCode(),
-        phabricator_datetime($log->getEpoch(), $viewer),
+        $flag_names,
+        $reject_label,
+        $viewer->formatShortDateTime($log->getEpoch()),
       );
     }
 
@@ -102,12 +119,13 @@ final class DiffusionPushLogListView extends AphrontView {
           pht('Pusher'),
           pht('From'),
           pht('Via'),
+          pht('Host'),
           pht('Type'),
           pht('Name'),
           pht('Old'),
           pht('New'),
           pht('Flags'),
-          pht('Code'),
+          pht('Result'),
           pht('Date'),
         ))
       ->setColumnClasses(
@@ -118,10 +136,22 @@ final class DiffusionPushLogListView extends AphrontView {
           '',
           '',
           '',
+          '',
           'wide',
           'n',
           'n',
-          'date',
+          '',
+          '',
+          'right',
+        ))
+      ->setColumnVisibility(
+        array(
+          true,
+          true,
+          true,
+          $remotes_visible,
+          true,
+          $any_host,
         ));
 
     return $table;

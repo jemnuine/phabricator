@@ -15,9 +15,8 @@ final class PhabricatorAuthFinishController
     return true;
   }
 
-  public function processRequest() {
-    $request = $this->getRequest();
-    $viewer = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $this->getViewer();
 
     // If the user already has a full session, just kick them out of here.
     $has_partial_session = $viewer->hasSession() &&
@@ -55,7 +54,7 @@ final class PhabricatorAuthFinishController
         ->addHiddenInput(AphrontRequest::TYPE_HISEC, true)
         ->appendParagraph(
           pht(
-            'Welcome, %s. To complete the login process, provide your '.
+            'Welcome, %s. To complete the process of logging in, provide your '.
             'multi-factor credentials.',
             phutil_tag('strong', array(), $viewer->getUsername())))
         ->appendChild($form->buildLayoutView())

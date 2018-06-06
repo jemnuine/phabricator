@@ -120,6 +120,10 @@ final class LegalpadDocument extends LegalpadDAO
     return 'L'.$this->getID();
   }
 
+  public function getViewURI() {
+    return '/'.$this->getMonogram();
+  }
+
   public function getUserSignature($phid) {
     return $this->assertAttachedKey($this->userSignatures, $phid);
   }
@@ -163,14 +167,6 @@ final class LegalpadDocument extends LegalpadDAO
     return ($this->creatorPHID == $phid);
   }
 
-  public function shouldShowSubscribersProperty() {
-    return true;
-  }
-
-  public function shouldAllowSubscription($phid) {
-    return true;
-  }
-
 
 /* -(  PhabricatorPolicyInterface  )----------------------------------------- */
 
@@ -202,8 +198,7 @@ final class LegalpadDocument extends LegalpadDAO
   }
 
   public function describeAutomaticCapability($capability) {
-    return pht(
-      'The author of a document can always view and edit it.');
+    return pht('The author of a document can always view and edit it.');
   }
 
 

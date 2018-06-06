@@ -3,114 +3,89 @@
 final class PhabricatorMacroViewController
   extends PhabricatorMacroController {
 
-  private $id;
-
-  public function willProcessRequest(array $data) {
-    $this->id = $data['id'];
-  }
-
   public function shouldAllowPublic() {
     return true;
   }
 
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $id = $request->getURIData('id');
 
     $macro = id(new PhabricatorMacroQuery())
-      ->setViewer($user)
-      ->withIDs(array($this->id))
+      ->setViewer($viewer)
+      ->withIDs(array($id))
       ->needFiles(true)
       ->executeOne();
     if (!$macro) {
       return new Aphront404Response();
     }
 
-    $file = $macro->getFile();
-
     $title_short = pht('Macro "%s"', $macro->getName());
     $title_long  = pht('Image Macro "%s"', $macro->getName());
 
-    $actions = $this->buildActionView($macro);
+    $curtain = $this->buildCurtain($macro);
+    $subheader = $this->buildSubheaderView($macro);
+    $file = $this->buildFileView($macro);
+    $details = $this->buildPropertySectionView($macro);
 
     $crumbs = $this->buildApplicationCrumbs();
-    $crumbs->addTextCrumb(
-      $title_short,
-      $this->getApplicationURI('/view/'.$macro->getID().'/'));
-
-    $properties = $this->buildPropertyView($macro, $actions);
-    if ($file) {
-      $file_view = new PHUIPropertyListView();
-      $file_view->addImageContent(
-        phutil_tag(
-          'img',
-          array(
-            'src'     => $file->getViewURI(),
-            'class'   => 'phabricator-image-macro-hero',
-          )));
-    }
+    $crumbs->addTextCrumb($macro->getName());
+    $crumbs->setBorder(true);
 
     $timeline = $this->buildTransactionTimeline(
       $macro,
       new PhabricatorMacroTransactionQuery());
 
+    $comment_form = $this->buildCommentForm($macro, $timeline);
+
     $header = id(new PHUIHeaderView())
-      ->setUser($user)
+      ->setUser($viewer)
       ->setPolicyObject($macro)
-      ->setHeader($title_long);
+      ->setHeader($macro->getName())
+      ->setHeaderIcon('fa-file-image-o');
 
     if (!$macro->getIsDisabled()) {
       $header->setStatus('fa-check', 'bluegrey', pht('Active'));
     } else {
-      $header->setStatus('fa-ban', 'red', pht('Archived'));
+      $header->setStatus('fa-ban', 'indigo', pht('Archived'));
     }
 
-    $is_serious = PhabricatorEnv::getEnvConfig('phabricator.serious-business');
-
-    $comment_header = $is_serious
-      ? pht('Add Comment')
-      : pht('Grovel in Awe');
-
-    $draft = PhabricatorDraft::newFromUserAndKey($user, $macro->getPHID());
-
-    $add_comment_form = id(new PhabricatorApplicationTransactionCommentView())
-      ->setUser($user)
-      ->setObjectPHID($macro->getPHID())
-      ->setDraft($draft)
-      ->setHeaderText($comment_header)
-      ->setAction($this->getApplicationURI('/comment/'.$macro->getID().'/'))
-      ->setSubmitButtonName(pht('Add Comment'));
-
-    $object_box = id(new PHUIObjectBoxView())
+    $view = id(new PHUITwoColumnView())
       ->setHeader($header)
-      ->addPropertyList($properties);
-
-    if ($file_view) {
-      $object_box->addPropertyList($file_view);
-    }
-
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
-        $object_box,
+      ->setSubheader($subheader)
+      ->setCurtain($curtain)
+      ->setMainColumn(array(
         $timeline,
-        $add_comment_form,
-      ),
-      array(
-        'title' => $title_short,
-      ));
+        $comment_form,
+      ))
+      ->addPropertySection(pht('Macro'), $file)
+      ->addPropertySection(pht('Details'), $details);
+
+    return $this->newPage()
+      ->setTitle($title_short)
+      ->setCrumbs($crumbs)
+      ->setPageObjectPHIDs(array($macro->getPHID()))
+      ->appendChild($view);
   }
 
-  private function buildActionView(PhabricatorFileImageMacro $macro) {
+  private function buildCommentForm(
+    PhabricatorFileImageMacro $macro, $timeline) {
+    $viewer = $this->getViewer();
+
+    return id(new PhabricatorMacroEditEngine())
+      ->setViewer($viewer)
+      ->buildEditEngineCommentView($macro)
+      ->setTransactionTimeline($timeline);
+  }
+
+  private function buildCurtain(
+    PhabricatorFileImageMacro $macro) {
     $can_manage = $this->hasApplicationCapability(
       PhabricatorMacroManageCapability::CAPABILITY);
 
-    $request = $this->getRequest();
-    $view = id(new PhabricatorActionListView())
-      ->setUser($request->getUser())
-      ->setObject($macro)
-      ->setObjectURI($request->getRequestURI())
-      ->addAction(
+    $curtain = $this->newCurtainView($macro);
+
+    $curtain->addAction(
         id(new PhabricatorActionView())
         ->setName(pht('Edit Macro'))
         ->setHref($this->getApplicationURI('/edit/'.$macro->getID().'/'))
@@ -118,7 +93,7 @@ final class PhabricatorMacroViewController
         ->setWorkflow(!$can_manage)
         ->setIcon('fa-pencil'));
 
-    $view->addAction(
+    $curtain->addAction(
       id(new PhabricatorActionView())
         ->setName(pht('Edit Audio'))
         ->setHref($this->getApplicationURI('/audio/'.$macro->getID().'/'))
@@ -127,7 +102,7 @@ final class PhabricatorMacroViewController
         ->setIcon('fa-music'));
 
     if ($macro->getIsDisabled()) {
-      $view->addAction(
+      $curtain->addAction(
         id(new PhabricatorActionView())
           ->setName(pht('Activate Macro'))
           ->setHref($this->getApplicationURI('/disable/'.$macro->getID().'/'))
@@ -135,7 +110,7 @@ final class PhabricatorMacroViewController
           ->setDisabled(!$can_manage)
           ->setIcon('fa-check'));
     } else {
-      $view->addAction(
+      $curtain->addAction(
         id(new PhabricatorActionView())
           ->setName(pht('Archive Macro'))
           ->setHref($this->getApplicationURI('/disable/'.$macro->getID().'/'))
@@ -144,18 +119,37 @@ final class PhabricatorMacroViewController
           ->setIcon('fa-ban'));
     }
 
-    return $view;
+    return $curtain;
   }
 
-  private function buildPropertyView(
-    PhabricatorFileImageMacro $macro,
-    PhabricatorActionListView $actions) {
+  private function buildSubheaderView(
+    PhabricatorFileImageMacro $macro) {
+    $viewer = $this->getViewer();
+
+    $author_phid = $macro->getAuthorPHID();
+
+    $author = $viewer->renderHandle($author_phid)->render();
+    $date = phabricator_datetime($macro->getDateCreated(), $viewer);
+    $author = phutil_tag('strong', array(), $author);
+
+    $handles = $viewer->loadHandles(array($author_phid));
+    $image_uri = $handles[$author_phid]->getImageURI();
+    $image_href = $handles[$author_phid]->getURI();
+
+    $content = pht('Masterfully imagined by %s on %s.', $author, $date);
+
+    return id(new PHUIHeadThingView())
+      ->setImage($image_uri)
+      ->setImageHref($image_href)
+      ->setContent($content);
+  }
+
+  private function buildPropertySectionView(
+    PhabricatorFileImageMacro $macro) {
     $viewer = $this->getViewer();
 
     $view = id(new PHUIPropertyListView())
-      ->setUser($this->getRequest()->getUser())
-      ->setObject($macro)
-      ->setActionList($actions);
+      ->setUser($viewer);
 
     switch ($macro->getAudioBehavior()) {
       case PhabricatorFileImageMacro::AUDIO_BEHAVIOR_ONCE:
@@ -173,9 +167,32 @@ final class PhabricatorMacroViewController
         $viewer->renderHandle($audio_phid));
     }
 
-    $view->invokeWillRenderEvent();
+    if ($view->hasAnyProperties()) {
+      return $view;
+    }
 
-    return $view;
+    return null;
+  }
+
+  private function buildFileView(
+    PhabricatorFileImageMacro $macro) {
+    $viewer = $this->getViewer();
+
+    $view = id(new PHUIPropertyListView())
+      ->setUser($viewer);
+
+    $file = $macro->getFile();
+    if ($file) {
+      $view->addImageContent(
+        phutil_tag(
+          'img',
+          array(
+            'src'     => $file->getViewURI(),
+            'class'   => 'phabricator-image-macro-hero',
+          )));
+      return $view;
+    }
+    return null;
   }
 
 }

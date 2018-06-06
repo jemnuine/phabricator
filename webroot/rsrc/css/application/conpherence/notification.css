@@ -2,14 +2,13 @@
  * @provides conpherence-notification-css
  */
 
-/* kill styles on phabricator-notification */
-.conpherence-notification {
+.phabricator-notification.conpherence-notification {
   padding: 0;
 }
 
 .phabricator-notification .conpherence-menu-item-view {
   display: block;
-  height: 46px;
+  height: 48px;
   overflow: hidden;
   position: relative;
   text-decoration: none;
@@ -24,19 +23,20 @@
   left: 8px;
   display: block;
   position: absolute;
-  width: 30px;
-  height: 30px;
-  background-size: 30px;
+  width: 32px;
+  height: 32px;
+  background-size: 100%;
+  border-radius: 3px;
 }
 
 .phabricator-notification .conpherence-menu-item-view
 .conpherence-menu-item-title {
   display: block;
   margin-top: 8px;
-  margin-left: 46px;
+  margin-left: 48px;
   text-align: left;
   font-weight: bold;
-  font-size: 13px;
+  font-size: {$normalfontsize};
   color: {$darkgreytext};
   width: 314px;
   text-overflow: ellipsis;
@@ -48,9 +48,8 @@
 .conpherence-menu-item-subtitle {
   display: block;
   color: {$lightgreytext};
-  font-size: 11px;
-  margin-top: 2px;
-  margin-left: 46px;
+  font-size: {$smallestfontsize};
+  margin-left: 48px;
   width: 290px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -67,5 +66,21 @@
   color: #fff;
   font-weight: bold;
   padding: 0 5px 1px;
-  font-size: 11px;
+  font-size: {$smallestfontsize};
+}
+
+.phabricator-notification .no-room-notification {
+  color: {$lightgreytext};
+  display: block;
+}
+
+.phabricator-notification-header .persistent-option {
+  white-space: nowrap;
+  float: right;
+}
+
+.phabricator-notification-header .persistent-option span {
+  margin-left: 4px;
+  font-weight: normal;
+  color: {$greytext};
 }

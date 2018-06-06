@@ -14,8 +14,12 @@ final class PhabricatorFeedApplication extends PhabricatorApplication {
     return pht('Review Recent Activity');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-newspaper-o';
+  }
+
+  public function getApplicationGroup() {
+    return self::GROUP_UTILITIES;
   }
 
   public function canUninstall() {
@@ -25,7 +29,6 @@ final class PhabricatorFeedApplication extends PhabricatorApplication {
   public function getRoutes() {
     return array(
       '/feed/' => array(
-        'public/' => 'PhabricatorFeedPublicStreamController',
         '(?P<id>\d+)/' => 'PhabricatorFeedDetailController',
         '(?:query/(?P<queryKey>[^/]+)/)?' => 'PhabricatorFeedListController',
       ),

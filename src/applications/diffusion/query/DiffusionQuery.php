@@ -32,7 +32,7 @@ abstract class DiffusionQuery extends PhabricatorQuery {
 
     $name = idx($map, $repository->getVersionControlSystem());
     if (!$name) {
-      throw new Exception('Unsupported VCS!');
+      throw new Exception(pht('Unsupported VCS!'));
     }
 
     $class = str_replace('Diffusion', 'Diffusion'.$name, $base_class);
@@ -48,12 +48,13 @@ abstract class DiffusionQuery extends PhabricatorQuery {
     PhabricatorUser $user,
     DiffusionRequest $drequest,
     $method,
-    array $params = array()) {
+    array $params = array(),
+    $return_future = false) {
 
     $repository = $drequest->getRepository();
 
     $core_params = array(
-      'callsign' => $repository->getCallsign(),
+      'repository' => $repository->getPHID(),
     );
 
     if ($drequest->getBranch() !== null) {
@@ -76,12 +77,19 @@ abstract class DiffusionQuery extends PhabricatorQuery {
       $user,
       $drequest->getIsClusterRequest());
     if (!$client) {
-      return id(new ConduitCall($method, $params))
+      $result = id(new ConduitCall($method, $params))
         ->setUser($user)
         ->execute();
+      $future = new ImmediateFuture($result);
     } else {
-      return $client->callMethodSynchronous($method, $params);
+      $future = $client->callMethod($method, $params);
     }
+
+    if (!$return_future) {
+      return $future->resolve();
+    }
+
+    return $future;
   }
 
   public function execute() {

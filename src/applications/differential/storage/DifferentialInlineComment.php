@@ -1,10 +1,12 @@
 <?php
 
 final class DifferentialInlineComment
+  extends Phobject
   implements PhabricatorInlineCommentInterface {
 
   private $proxy;
   private $syntheticAuthor;
+  private $isGhost;
 
   public function __construct() {
     $this->proxy = new DifferentialTransactionComment();
@@ -16,13 +18,13 @@ final class DifferentialInlineComment
 
   public function getTransactionCommentForSave() {
     $content_source = PhabricatorContentSource::newForSource(
-      PhabricatorContentSource::SOURCE_LEGACY,
-      array());
+      PhabricatorOldWorldContentSource::SOURCECONST);
 
     $this->proxy
       ->setViewPolicy('public')
       ->setEditPolicy($this->getAuthorPHID())
       ->setContentSource($content_source)
+      ->attachIsHidden(false)
       ->setCommentVersion(1);
 
     return $this->proxy;
@@ -46,6 +48,20 @@ final class DifferentialInlineComment
     $this->proxy->delete();
 
     return $this;
+  }
+
+  public function supportsHiding() {
+    if ($this->getSyntheticAuthor()) {
+      return false;
+    }
+    return true;
+  }
+
+  public function isHidden() {
+    if (!$this->supportsHiding()) {
+      return false;
+    }
+    return $this->proxy->getIsHidden();
   }
 
   public function getID() {
@@ -225,13 +241,34 @@ final class DifferentialInlineComment
     return $this->proxy->getFixedState();
   }
 
+  public function setIsGhost($is_ghost) {
+    $this->isGhost = $is_ghost;
+    return $this;
+  }
+
+  public function getIsGhost() {
+    return $this->isGhost;
+  }
+
+  public function makeEphemeral() {
+    $this->proxy->makeEphemeral();
+    return $this;
+  }
+
+  public function getDateModified() {
+    return $this->proxy->getDateModified();
+  }
+
+  public function getDateCreated() {
+    return $this->proxy->getDateCreated();
+  }
 
 /* -(  PhabricatorMarkupInterface Implementation  )-------------------------- */
 
 
   public function getMarkupFieldKey($field) {
-    // We can't use ID because synthetic comments don't have it.
-    return 'DI:'.PhabricatorHash::digest($this->getContent());
+    $content = $this->getMarkupText($field);
+    return PhabricatorMarkupEngine::digestRemarkupContent($this, $content);
   }
 
   public function newMarkupEngine($field) {

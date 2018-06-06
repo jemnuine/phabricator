@@ -12,20 +12,79 @@ var WebSocket = require('ws');
 JX.install('AphlictClientServer', {
 
   construct: function(server) {
-    this.setLogger(new JX.AphlictLog());
+    server.on('request', JX.bind(this, this._onrequest));
+
     this._server = server;
     this._lists = {};
+    this._adminServers = [];
+  },
+
+  properties: {
+    logger: null,
+    adminServers: null
   },
 
   members: {
     _server: null,
     _lists: null,
 
-    getListenerList: function(path) {
-      if (!this._lists[path]) {
-        this._lists[path] = new JX.AphlictListenerList(path);
+    getListenerList: function(instance) {
+      if (!this._lists[instance]) {
+        this._lists[instance] = new JX.AphlictListenerList(instance);
       }
-      return this._lists[path];
+      return this._lists[instance];
+    },
+
+    getHistory: function(age) {
+      var results = [];
+
+      var servers = this.getAdminServers();
+      for (var ii = 0; ii < servers.length; ii++) {
+        var messages = servers[ii].getHistory(age);
+        for (var jj = 0; jj < messages.length; jj++) {
+          results.push(messages[jj]);
+        }
+      }
+
+      return results;
+    },
+
+    log: function() {
+      var logger = this.getLogger();
+      if (!logger) {
+        return;
+      }
+
+      logger.log.apply(logger, arguments);
+
+      return this;
+    },
+
+    _onrequest: function(request, response) {
+      // The websocket code upgrades connections before they get here, so
+      // this only handles normal HTTP connections. We just fail them with
+      // a 501 response.
+      response.writeHead(501);
+      response.end('HTTP/501 Use Websockets\n');
+    },
+
+    _parseInstanceFromPath: function(path) {
+      // If there's no "~" marker in the path, it's not an instance name.
+      // Users sometimes configure nginx or Apache to proxy based on the
+      // path.
+      if (path.indexOf('~') === -1) {
+        return 'default';
+      }
+
+      var instance = path.split('~')[1];
+
+      // Remove any "/" characters.
+      instance = instance.replace(/\//g, '');
+      if (!instance.length) {
+        return 'default';
+      }
+
+      return instance;
     },
 
     listen: function() {
@@ -33,12 +92,20 @@ JX.install('AphlictClientServer', {
       var server = this._server.listen.apply(this._server, arguments);
       var wss = new WebSocket.Server({server: server});
 
-      wss.on('connection', function(ws) {
-        var path = url.parse(ws.upgradeReq.url).pathname;
-        var listener = self.getListenerList(path).addListener(ws);
+      // This function checks for upgradeReq which is only available in
+      // ws2 by default, not ws3. See T12755 for more information.
+      wss.on('connection', function(ws, request) {
+        if ('upgradeReq' in ws) {
+          request = ws.upgradeReq;
+        }
+
+        var path = url.parse(request.url).pathname;
+        var instance = self._parseInstanceFromPath(path);
+
+        var listener = self.getListenerList(instance).addListener(ws);
 
         function log() {
-          self.getLogger().log(
+          self.log(
             util.format('<%s>', listener.getDescription()) +
             ' ' +
             util.format.apply(null, arguments));
@@ -72,6 +139,38 @@ JX.install('AphlictClientServer', {
               listener.unsubscribe(message.data);
               break;
 
+            case 'replay':
+              var age = message.data.age || 60000;
+              var min_age = (new Date().getTime() - age);
+
+              var old_messages = self.getHistory(min_age);
+              for (var ii = 0; ii < old_messages.length; ii++) {
+                var old_message = old_messages[ii];
+
+                if (!listener.isSubscribedToAny(old_message.subscribers)) {
+                  continue;
+                }
+
+                try {
+                  listener.writeMessage(old_message);
+                } catch (error) {
+                  break;
+                }
+              }
+              break;
+
+            case 'ping':
+              var pong = {
+                type: 'pong'
+              };
+
+              try {
+                listener.writeMessage(pong);
+              } catch (error) {
+                // Ignore any issues here, we'll clean up elsewhere.
+              }
+              break;
+
             default:
               log(
                 'Unrecognized command "%s".',
@@ -80,27 +179,12 @@ JX.install('AphlictClientServer', {
         });
 
         ws.on('close', function() {
-          self.getListenerList(path).removeListener(listener);
+          self.getListenerList(instance).removeListener(listener);
           log('Disconnected.');
         });
-
-        wss.on('close', function() {
-          self.getListenerList(path).removeListener(listener);
-          log('Disconnected.');
-        });
-
-        wss.on('error', function(err) {
-          log('Error: %s', err.message);
-        });
-
       });
 
-    },
-
-  },
-
-  properties: {
-    logger: null,
+    }
   }
 
 });

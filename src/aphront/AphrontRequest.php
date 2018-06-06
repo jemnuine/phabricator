@@ -5,7 +5,7 @@
  * @task cookie   Managing Cookies
  * @task cluster  Working With a Phabricator Cluster
  */
-final class AphrontRequest {
+final class AphrontRequest extends Phobject {
 
   // NOTE: These magic request-type parameters are automatically included in
   // certain requests (e.g., by phabricator_form(), JX.Request,
@@ -26,46 +26,101 @@ final class AphrontRequest {
   private $requestData;
   private $user;
   private $applicationConfiguration;
-  private $uriData;
+  private $site;
+  private $controller;
+  private $uriData = array();
+  private $cookiePrefix;
 
-  final public function __construct($host, $path) {
+  public function __construct($host, $path) {
     $this->host = $host;
     $this->path = $path;
   }
 
-  final public function setURIMap(array $uri_data) {
+  public function setURIMap(array $uri_data) {
     $this->uriData = $uri_data;
     return $this;
   }
 
-  final public function getURIMap() {
+  public function getURIMap() {
     return $this->uriData;
   }
 
-  final public function getURIData($key, $default = null) {
+  public function getURIData($key, $default = null) {
     return idx($this->uriData, $key, $default);
   }
 
-  final public function setApplicationConfiguration(
+  /**
+   * Read line range parameter data from the request.
+   *
+   * Applications like Paste, Diffusion, and Harbormaster use "$12-14" in the
+   * URI to allow users to link to particular lines.
+   *
+   * @param string URI data key to pull line range information from.
+   * @param int|null Maximum length of the range.
+   * @return null|pair<int, int> Null, or beginning and end of the range.
+   */
+  public function getURILineRange($key, $limit) {
+    $range = $this->getURIData($key);
+    return self::parseURILineRange($range, $limit);
+  }
+
+  public static function parseURILineRange($range, $limit) {
+    if (!strlen($range)) {
+      return null;
+    }
+
+    $range = explode('-', $range, 2);
+
+    foreach ($range as $key => $value) {
+      $value = (int)$value;
+      if (!$value) {
+        // If either value is "0", discard the range.
+        return null;
+      }
+      $range[$key] = $value;
+    }
+
+    // If the range is like "$10", treat it like "$10-10".
+    if (count($range) == 1) {
+      $range[] = head($range);
+    }
+
+    // If the range is "$7-5", treat it like "$5-7".
+    if ($range[1] < $range[0]) {
+      $range = array_reverse($range);
+    }
+
+    // If the user specified something like "$1-999999999" and we have a limit,
+    // clamp it to a more reasonable range.
+    if ($limit !== null) {
+      if ($range[1] - $range[0] > $limit) {
+        $range[1] = $range[0] + $limit;
+      }
+    }
+
+    return $range;
+  }
+
+  public function setApplicationConfiguration(
     $application_configuration) {
     $this->applicationConfiguration = $application_configuration;
     return $this;
   }
 
-  final public function getApplicationConfiguration() {
+  public function getApplicationConfiguration() {
     return $this->applicationConfiguration;
   }
 
-  final public function setPath($path) {
+  public function setPath($path) {
     $this->path = $path;
     return $this;
   }
 
-  final public function getPath() {
+  public function getPath() {
     return $this->path;
   }
 
-  final public function getHost() {
+  public function getHost() {
     // The "Host" header may include a port number, or may be a malicious
     // header in the form "realdomain.com:ignored@evil.com". Invoke the full
     // parser to extract the real domain correctly. See here for coverage of
@@ -76,6 +131,24 @@ final class AphrontRequest {
     return $uri->getDomain();
   }
 
+  public function setSite(AphrontSite $site) {
+    $this->site = $site;
+    return $this;
+  }
+
+  public function getSite() {
+    return $this->site;
+  }
+
+  public function setController(AphrontController $controller) {
+    $this->controller = $controller;
+    return $this;
+  }
+
+  public function getController() {
+    return $this->controller;
+  }
+
 
 /* -(  Accessing Request Data  )--------------------------------------------- */
 
@@ -83,7 +156,7 @@ final class AphrontRequest {
   /**
    * @task data
    */
-  final public function setRequestData(array $request_data) {
+  public function setRequestData(array $request_data) {
     $this->requestData = $request_data;
     return $this;
   }
@@ -92,7 +165,7 @@ final class AphrontRequest {
   /**
    * @task data
    */
-  final public function getRequestData() {
+  public function getRequestData() {
     return $this->requestData;
   }
 
@@ -100,8 +173,13 @@ final class AphrontRequest {
   /**
    * @task data
    */
-  final public function getInt($name, $default = null) {
+  public function getInt($name, $default = null) {
     if (isset($this->requestData[$name])) {
+      // Converting from array to int is "undefined". Don't rely on whatever
+      // PHP decides to do.
+      if (is_array($this->requestData[$name])) {
+        return $default;
+      }
       return (int)$this->requestData[$name];
     } else {
       return $default;
@@ -112,7 +190,7 @@ final class AphrontRequest {
   /**
    * @task data
    */
-  final public function getBool($name, $default = null) {
+  public function getBool($name, $default = null) {
     if (isset($this->requestData[$name])) {
       if ($this->requestData[$name] === 'true') {
         return true;
@@ -130,7 +208,7 @@ final class AphrontRequest {
   /**
    * @task data
    */
-  final public function getStr($name, $default = null) {
+  public function getStr($name, $default = null) {
     if (isset($this->requestData[$name])) {
       $str = (string)$this->requestData[$name];
       // Normalize newline craziness.
@@ -148,7 +226,7 @@ final class AphrontRequest {
   /**
    * @task data
    */
-  final public function getArr($name, $default = array()) {
+  public function getArr($name, $default = array()) {
     if (isset($this->requestData[$name]) &&
         is_array($this->requestData[$name])) {
       return $this->requestData[$name];
@@ -161,7 +239,7 @@ final class AphrontRequest {
   /**
    * @task data
    */
-  final public function getStrList($name, $default = array()) {
+  public function getStrList($name, $default = array()) {
     if (!isset($this->requestData[$name])) {
       return $default;
     }
@@ -174,36 +252,36 @@ final class AphrontRequest {
   /**
    * @task data
    */
-  final public function getExists($name) {
+  public function getExists($name) {
     return array_key_exists($name, $this->requestData);
   }
 
-  final public function getFileExists($name) {
+  public function getFileExists($name) {
     return isset($_FILES[$name]) &&
            (idx($_FILES[$name], 'error') !== UPLOAD_ERR_NO_FILE);
   }
 
-  final public function isHTTPGet() {
+  public function isHTTPGet() {
     return ($_SERVER['REQUEST_METHOD'] == 'GET');
   }
 
-  final public function isHTTPPost() {
+  public function isHTTPPost() {
     return ($_SERVER['REQUEST_METHOD'] == 'POST');
   }
 
-  final public function isAjax() {
+  public function isAjax() {
     return $this->getExists(self::TYPE_AJAX) && !$this->isQuicksand();
   }
 
-  final public function isWorkflow() {
+  public function isWorkflow() {
     return $this->getExists(self::TYPE_WORKFLOW) && !$this->isQuicksand();
   }
 
-  final public function isQuicksand() {
+  public function isQuicksand() {
     return $this->getExists(self::TYPE_QUICKSAND);
   }
 
-  final public function isConduit() {
+  public function isConduit() {
     return $this->getExists(self::TYPE_CONDUIT);
   }
 
@@ -215,7 +293,11 @@ final class AphrontRequest {
     return 'X-Phabricator-Csrf';
   }
 
-  final public function validateCSRF() {
+  public static function getViaHeaderName() {
+    return 'X-Phabricator-Via';
+  }
+
+  public function validateCSRF() {
     $token_name = self::getCSRFTokenName();
     $token = $this->getStr($token_name);
 
@@ -231,57 +313,65 @@ final class AphrontRequest {
       // Add some diagnostic details so we can figure out if some CSRF issues
       // are JS problems or people accessing Ajax URIs directly with their
       // browsers.
-      $more_info = array();
+      $info = array();
+
+      $info[] = pht(
+        'You are trying to save some data to Phabricator, but the request '.
+        'your browser made included an incorrect token. Reload the page '.
+        'and try again. You may need to clear your cookies.');
 
       if ($this->isAjax()) {
-        $more_info[] = pht('This was an Ajax request.');
+        $info[] = pht('This was an Ajax request.');
       } else {
-        $more_info[] = pht('This was a Web request.');
+        $info[] = pht('This was a Web request.');
       }
 
       if ($token) {
-        $more_info[] = pht('This request had an invalid CSRF token.');
+        $info[] = pht('This request had an invalid CSRF token.');
       } else {
-        $more_info[] = pht('This request had no CSRF token.');
+        $info[] = pht('This request had no CSRF token.');
       }
 
       // Give a more detailed explanation of how to avoid the exception
       // in developer mode.
       if (PhabricatorEnv::getEnvConfig('phabricator.developer-mode')) {
         // TODO: Clean this up, see T1921.
-        $more_info[] =
-          "To avoid this error, use phabricator_form() to construct forms. ".
-          "If you are already using phabricator_form(), make sure the form ".
-          "'action' uses a relative URI (i.e., begins with a '/'). Forms ".
-          "using absolute URIs do not include CSRF tokens, to prevent ".
-          "leaking tokens to external sites.\n\n".
-          "If this page performs writes which do not require CSRF ".
-          "protection (usually, filling caches or logging), you can use ".
-          "AphrontWriteGuard::beginScopedUnguardedWrites() to temporarily ".
-          "bypass CSRF protection while writing. You should use this only ".
-          "for writes which can not be protected with normal CSRF ".
+        $info[] = pht(
+          "To avoid this error, use %s to construct forms. If you are already ".
+          "using %s, make sure the form 'action' uses a relative URI (i.e., ".
+          "begins with a '%s'). Forms using absolute URIs do not include CSRF ".
+          "tokens, to prevent leaking tokens to external sites.\n\n".
+          "If this page performs writes which do not require CSRF protection ".
+          "(usually, filling caches or logging), you can use %s to ".
+          "temporarily bypass CSRF protection while writing. You should use ".
+          "this only for writes which can not be protected with normal CSRF ".
           "mechanisms.\n\n".
-          "Some UI elements (like PhabricatorActionListView) also have ".
-          "methods which will allow you to render links as forms (like ".
-          "setRenderAsForm(true)).";
+          "Some UI elements (like %s) also have methods which will allow you ".
+          "to render links as forms (like %s).",
+          'phabricator_form()',
+          'phabricator_form()',
+          '/',
+          'AphrontWriteGuard::beginScopedUnguardedWrites()',
+          'PhabricatorActionListView',
+          'setRenderAsForm(true)');
       }
+
+      $message = implode("\n", $info);
 
       // This should only be able to happen if you load a form, pull your
       // internet for 6 hours, and then reconnect and immediately submit,
       // but give the user some indication of what happened since the workflow
       // is incredibly confusing otherwise.
-      throw new AphrontCSRFException(
-        pht(
-          "You are trying to save some data to Phabricator, but the request ".
-          "your browser made included an incorrect token. Reload the page ".
-          "and try again. You may need to clear your cookies.\n\n%s",
-          implode("\n", $more_info)));
+      throw new AphrontMalformedRequestException(
+        pht('Invalid Request (CSRF)'),
+        $message,
+        true);
     }
 
     return true;
   }
 
-  final public function isFormPost() {
+  public function isFormPost() {
     $post = $this->getExists(self::TYPE_FORM) &&
             !$this->getExists(self::TYPE_HISEC) &&
             $this->isHTTPPost();
@@ -293,7 +383,7 @@ final class AphrontRequest {
     return $this->validateCSRF();
   }
 
-  final public function isFormOrHisecPost() {
+  public function isFormOrHisecPost() {
     $post = $this->getExists(self::TYPE_FORM) &&
             $this->isHTTPPost();
 
@@ -305,12 +395,12 @@ final class AphrontRequest {
   }
 
 
-  final public function setCookiePrefix($prefix) {
+  public function setCookiePrefix($prefix) {
     $this->cookiePrefix = $prefix;
     return $this;
   }
 
-  final private function getPrefixedCookieName($name) {
+  private function getPrefixedCookieName($name) {
     if (strlen($this->cookiePrefix)) {
       return $this->cookiePrefix.'_'.$name;
     } else {
@@ -318,7 +408,7 @@ final class AphrontRequest {
     }
   }
 
-  final public function getCookie($name, $default = null) {
+  public function getCookie($name, $default = null) {
     $name = $this->getPrefixedCookieName($name);
     $value = idx($_COOKIE, $name, $default);
 
@@ -337,7 +427,7 @@ final class AphrontRequest {
     return $value;
   }
 
-  final public function clearCookie($name) {
+  public function clearCookie($name) {
     $this->setCookieWithExpiration($name, '', time() - (60 * 60 * 24 * 30));
     unset($_COOKIE[$name]);
   }
@@ -390,7 +480,7 @@ final class AphrontRequest {
    *
    * @task cookie
    */
-  final public function canSetCookies() {
+  public function canSetCookies() {
     return (bool)$this->getCookieDomainURI();
   }
 
@@ -405,7 +495,7 @@ final class AphrontRequest {
    * @return this
    * @task cookie
    */
-  final public function setCookie($name, $value) {
+  public function setCookie($name, $value) {
     $far_future = time() + (60 * 60 * 24 * 365 * 5);
     return $this->setCookieWithExpiration($name, $value, $far_future);
   }
@@ -421,7 +511,7 @@ final class AphrontRequest {
    * @return this
    * @task cookie
    */
-  final public function setTemporaryCookie($name, $value) {
+  public function setTemporaryCookie($name, $value) {
     return $this->setCookieWithExpiration($name, $value, 0);
   }
 
@@ -435,7 +525,7 @@ final class AphrontRequest {
    * @return this
    * @task cookie
    */
-  final private function setCookieWithExpiration(
+  private function setCookieWithExpiration(
     $name,
     $value,
     $expire) {
@@ -447,15 +537,17 @@ final class AphrontRequest {
       $configured_as = PhabricatorEnv::getEnvConfig('phabricator.base-uri');
       $accessed_as = $this->getHost();
 
-      throw new Exception(
+      throw new AphrontMalformedRequestException(
+        pht('Bad Host Header'),
         pht(
           'This Phabricator install is configured as "%s", but you are '.
           'using the domain name "%s" to access a page which is trying to '.
-          'set a cookie. Acccess Phabricator on the configured primary '.
+          'set a cookie. Access Phabricator on the configured primary '.
           'domain or a configured alternate domain. Phabricator will not '.
           'set cookies on other domains for security reasons.',
           $configured_as,
-          $accessed_as));
+          $accessed_as),
+        true);
     }
 
     $base_domain = $base_domain_uri->getDomain();
@@ -485,32 +577,69 @@ final class AphrontRequest {
     return $this;
   }
 
-  final public function setUser($user) {
+  public function setUser($user) {
     $this->user = $user;
     return $this;
   }
 
-  final public function getUser() {
+  public function getUser() {
     return $this->user;
   }
 
-  final public function getViewer() {
+  public function getViewer() {
     return $this->user;
   }
 
-  final public function getRequestURI() {
+  public function getRequestURI() {
     $get = $_GET;
     unset($get['__path__']);
     $path = phutil_escape_uri($this->getPath());
     return id(new PhutilURI($path))->setQueryParams($get);
   }
 
-  final public function isDialogFormPost() {
+  public function getAbsoluteRequestURI() {
+    $uri = $this->getRequestURI();
+    $uri->setDomain($this->getHost());
+
+    if ($this->isHTTPS()) {
+      $protocol = 'https';
+    } else {
+      $protocol = 'http';
+    }
+
+    $uri->setProtocol($protocol);
+
+    // If the request used a nonstandard port, preserve it while building the
+    // absolute URI.
+
+    // First, get the default port for the request protocol.
+    $default_port = id(new PhutilURI($protocol.'://example.com/'))
+      ->getPortWithProtocolDefault();
+
+    // NOTE: See note in getHost() about malicious "Host" headers. This
+    // construction defuses some obscure potential attacks.
+    $port = id(new PhutilURI($protocol.'://'.$this->host))
+      ->getPort();
+
+    if (($port !== null) && ($port !== $default_port)) {
+      $uri->setPort($port);
+    }
+
+    return $uri;
+  }
+
+  public function isDialogFormPost() {
     return $this->isFormPost() && $this->getStr('__dialog__');
   }
 
-  final public function getRemoteAddr() {
-    return $_SERVER['REMOTE_ADDR'];
+  public function getRemoteAddress() {
+    $address = PhabricatorEnv::getRemoteAddress();
+
+    if (!$address) {
+      return null;
+    }
+
+    return $address->getAddress();
   }
 
   public function isHTTPS() {
@@ -539,8 +668,9 @@ final class AphrontRequest {
    *
    * @return  dict<string, string>  Original request parameters.
    */
-  public function getPassthroughRequestParameters() {
-    return self::flattenData($this->getPassthroughRequestData());
+  public function getPassthroughRequestParameters($include_quicksand = false) {
+    return self::flattenData(
+      $this->getPassthroughRequestData($include_quicksand));
   }
 
   /**
@@ -548,11 +678,14 @@ final class AphrontRequest {
    *
    * @return dict<string, wild> Request data, with magic filtered out.
    */
-  public function getPassthroughRequestData() {
+  public function getPassthroughRequestData($include_quicksand = false) {
     $data = $this->getRequestData();
 
     // Remove magic parameters like __dialog__ and __ajax__.
     foreach ($data as $key => $value) {
+      if ($include_quicksand && $key == self::TYPE_QUICKSAND) {
+        continue;
+      }
       if (!strncmp($key, '__', 2)) {
         unset($data[$key]);
       }
@@ -646,7 +779,7 @@ final class AphrontRequest {
    * safe.
    */
   public function isProxiedClusterRequest() {
-    return (bool)AphrontRequest::getHTTPHeader('X-Phabricator-Cluster');
+    return (bool)self::getHTTPHeader('X-Phabricator-Cluster');
   }
 
 
@@ -713,13 +846,26 @@ final class AphrontRequest {
     // NOTE: apache_request_headers() might provide a nicer way to do this,
     // but isn't available under FCGI until PHP 5.4.0.
     foreach ($_SERVER as $key => $value) {
-      if (preg_match('/^HTTP_/', $key)) {
-        // Unmangle the header as best we can.
-        $key = str_replace('_', ' ', $key);
-        $key = strtolower($key);
-        $key = ucwords($key);
-        $key = str_replace(' ', '-', $key);
+      if (!preg_match('/^HTTP_/', $key)) {
+        continue;
+      }
 
+      // Unmangle the header as best we can.
+      $key = substr($key, strlen('HTTP_'));
+      $key = str_replace('_', ' ', $key);
+      $key = strtolower($key);
+      $key = ucwords($key);
+      $key = str_replace(' ', '-', $key);
+
+      // By default, do not forward headers.
+      $should_forward = false;
+
+      // Forward "X-Hgarg-..." headers.
+      if (preg_match('/^X-Hgarg-/', $key)) {
+        $should_forward = true;
+      }
+
+      if ($should_forward) {
         $headers[] = array($key, $value);
         $seen[$key] = true;
       }

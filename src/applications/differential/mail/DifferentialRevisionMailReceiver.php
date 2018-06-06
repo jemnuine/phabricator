@@ -4,8 +4,8 @@ final class DifferentialRevisionMailReceiver
   extends PhabricatorObjectMailReceiver {
 
   public function isEnabled() {
-    $app_class = 'PhabricatorDifferentialApplication';
-    return PhabricatorApplication::isClassInstalled($app_class);
+    return PhabricatorApplication::isClassInstalled(
+      'PhabricatorDifferentialApplication');
   }
 
   protected function getObjectPattern() {
@@ -18,7 +18,7 @@ final class DifferentialRevisionMailReceiver
     return id(new DifferentialRevisionQuery())
       ->setViewer($viewer)
       ->withIDs(array($id))
-      ->needReviewerStatus(true)
+      ->needReviewers(true)
       ->needReviewerAuthority(true)
       ->needActiveDiffs(true)
       ->executeOne();

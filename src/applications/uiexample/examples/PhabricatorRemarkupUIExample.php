@@ -11,6 +11,10 @@ final class PhabricatorRemarkupUIExample extends PhabricatorUIExample {
       'Demonstrates the visual appearance of various Remarkup elements.');
   }
 
+  public function getCategory() {
+    return pht('Technical');
+  }
+
   public function renderExample() {
     $viewer = $this->getRequest()->getUser();
 
@@ -40,10 +44,7 @@ IMPORTANT: This is not really important.
 EOCONTENT
 );
 
-    $remarkup = PhabricatorMarkupEngine::renderOneObject(
-      id(new PhabricatorMarkupOneOff())->setContent($content),
-      'default',
-      $viewer);
+    $remarkup = new PHUIRemarkupView($viewer, $content);
 
     $frame = id(new PHUIBoxView())
       ->addPadding(PHUI::PADDING_LARGE)

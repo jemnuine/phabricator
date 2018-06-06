@@ -12,13 +12,16 @@ final class HarbormasterBuildStep extends HarbormasterDAO
   protected $className;
   protected $details = array();
   protected $sequence = 0;
+  protected $stepAutoKey;
 
   private $buildPlan = self::ATTACHABLE;
   private $customFields = self::ATTACHABLE;
   private $implementation;
 
   public static function initializeNewStep(PhabricatorUser $actor) {
-    return id(new HarbormasterBuildStep());
+    return id(new HarbormasterBuildStep())
+      ->setName('')
+      ->setDescription('');
   }
 
   protected function getConfiguration() {
@@ -35,12 +38,17 @@ final class HarbormasterBuildStep extends HarbormasterDAO
         // T6203/NULLABILITY
         // This should not be nullable. Current `null` values indicate steps
         // which predated editable names. These should be backfilled with
-        // default names, then the code for handling `null` shoudl be removed.
+        // default names, then the code for handling `null` should be removed.
         'name' => 'text255?',
+        'stepAutoKey' => 'text32?',
       ),
       self::CONFIG_KEY_SCHEMA => array(
         'key_plan' => array(
           'columns' => array('buildPlanPHID'),
+        ),
+        'key_stepautokey' => array(
+          'columns' => array('buildPlanPHID', 'stepAutoKey'),
+          'unique' => true,
         ),
       ),
     ) + parent::getConfiguration();
@@ -88,6 +96,23 @@ final class HarbormasterBuildStep extends HarbormasterDAO
     return $this->implementation;
   }
 
+  public function isAutostep() {
+    return ($this->getStepAutoKey() !== null);
+  }
+
+  public function willStartBuild(
+    PhabricatorUser $viewer,
+    HarbormasterBuildable $buildable,
+    HarbormasterBuild $build,
+    HarbormasterBuildPlan $plan) {
+    return $this->getStepImplementation()->willStartBuild(
+      $viewer,
+      $buildable,
+      $build,
+      $plan,
+      $this);
+  }
+
 
 /* -(  PhabricatorApplicationTransactionInterface  )------------------------- */
 
@@ -118,6 +143,7 @@ final class HarbormasterBuildStep extends HarbormasterDAO
   public function getCapabilities() {
     return array(
       PhabricatorPolicyCapability::CAN_VIEW,
+      PhabricatorPolicyCapability::CAN_EDIT,
     );
   }
 

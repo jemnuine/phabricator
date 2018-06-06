@@ -5,31 +5,12 @@ final class PhabricatorAuditEditor
 
   const MAX_FILES_SHOWN_IN_EMAIL = 1000;
 
-  private $auditReasonMap = array();
   private $affectedFiles;
   private $rawPatch;
+  private $auditorPHIDs = array();
 
-  private $didExpandInlineState;
-
-  public function addAuditReason($phid, $reason) {
-    if (!isset($this->auditReasonMap[$phid])) {
-      $this->auditReasonMap[$phid] = array();
-    }
-    $this->auditReasonMap[$phid][] = $reason;
-    return $this;
-  }
-
-  private function getAuditReasons($phid) {
-    if (isset($this->auditReasonMap[$phid])) {
-      return $this->auditReasonMap[$phid];
-    }
-    if ($this->getIsHeraldEditor()) {
-      $name = 'herald';
-    } else {
-      $name = $this->getActor()->getUsername();
-    }
-    return array('Added by '.$name.'.');
-  }
+  private $didExpandInlineState = false;
+  private $oldAuditStatus = null;
 
   public function setRawPatch($patch) {
     $this->rawPatch = $patch;
@@ -41,7 +22,7 @@ final class PhabricatorAuditEditor
   }
 
   public function getEditorApplicationClass() {
-    return 'PhabricatorAuditApplication';
+    return 'PhabricatorDiffusionApplication';
   }
 
   public function getEditorObjectsDescription() {
@@ -59,11 +40,30 @@ final class PhabricatorAuditEditor
 
     // TODO: These will get modernized eventually, but that can happen one
     // at a time later on.
-    $types[] = PhabricatorAuditActionConstants::ACTION;
     $types[] = PhabricatorAuditActionConstants::INLINE;
-    $types[] = PhabricatorAuditActionConstants::ADD_AUDITORS;
 
     return $types;
+  }
+
+  protected function expandTransactions(
+    PhabricatorLiskDAO $object,
+    array $xactions) {
+
+    foreach ($xactions as $xaction) {
+      switch ($xaction->getTransactionType()) {
+        case PhabricatorTransactions::TYPE_INLINESTATE:
+          $this->didExpandInlineState = true;
+          break;
+      }
+    }
+
+    $this->oldAuditStatus = $object->getAuditStatus();
+
+    $object->loadAndAttachAuditAuthority(
+      $this->getActor(),
+      $this->getActingAsPHID());
+
+    return parent::expandTransactions($object, $xactions);
   }
 
   protected function transactionHasEffect(
@@ -82,14 +82,9 @@ final class PhabricatorAuditEditor
     PhabricatorLiskDAO $object,
     PhabricatorApplicationTransaction $xaction) {
     switch ($xaction->getTransactionType()) {
-      case PhabricatorAuditActionConstants::ACTION:
       case PhabricatorAuditActionConstants::INLINE:
       case PhabricatorAuditTransaction::TYPE_COMMIT:
         return null;
-      case PhabricatorAuditActionConstants::ADD_AUDITORS:
-        // TODO: For now, just record the added PHIDs. Eventually, turn these
-        // into real edge transactions, probably?
-        return array();
     }
 
     return parent::getCustomTransactionOldValue($object, $xaction);
@@ -100,9 +95,7 @@ final class PhabricatorAuditEditor
     PhabricatorApplicationTransaction $xaction) {
 
     switch ($xaction->getTransactionType()) {
-      case PhabricatorAuditActionConstants::ACTION:
       case PhabricatorAuditActionConstants::INLINE:
-      case PhabricatorAuditActionConstants::ADD_AUDITORS:
       case PhabricatorAuditTransaction::TYPE_COMMIT:
         return $xaction->getNewValue();
     }
@@ -115,12 +108,7 @@ final class PhabricatorAuditEditor
     PhabricatorApplicationTransaction $xaction) {
 
     switch ($xaction->getTransactionType()) {
-      case PhabricatorTransactions::TYPE_COMMENT:
-      case PhabricatorTransactions::TYPE_SUBSCRIBERS:
-      case PhabricatorTransactions::TYPE_EDGE:
-      case PhabricatorAuditActionConstants::ACTION:
       case PhabricatorAuditActionConstants::INLINE:
-      case PhabricatorAuditActionConstants::ADD_AUDITORS:
       case PhabricatorAuditTransaction::TYPE_COMMIT:
         return;
     }
@@ -133,10 +121,6 @@ final class PhabricatorAuditEditor
     PhabricatorApplicationTransaction $xaction) {
 
     switch ($xaction->getTransactionType()) {
-      case PhabricatorTransactions::TYPE_COMMENT:
-      case PhabricatorTransactions::TYPE_SUBSCRIBERS:
-      case PhabricatorTransactions::TYPE_EDGE:
-      case PhabricatorAuditActionConstants::ACTION:
       case PhabricatorAuditTransaction::TYPE_COMMIT:
         return;
       case PhabricatorAuditActionConstants::INLINE:
@@ -144,46 +128,6 @@ final class PhabricatorAuditEditor
         if ($reply && !$reply->getHasReplies()) {
           $reply->setHasReplies(1)->save();
         }
-        return;
-      case PhabricatorAuditActionConstants::ADD_AUDITORS:
-        $new = $xaction->getNewValue();
-        if (!is_array($new)) {
-          $new = array();
-        }
-
-        $old = $xaction->getOldValue();
-        if (!is_array($old)) {
-          $old = array();
-        }
-
-        $add = array_diff_key($new, $old);
-
-        $actor = $this->requireActor();
-
-        $requests = $object->getAudits();
-        $requests = mpull($requests, null, 'getAuditorPHID');
-        foreach ($add as $phid) {
-          if (isset($requests[$phid])) {
-            continue;
-          }
-
-          if ($this->getIsHeraldEditor()) {
-            $audit_requested = $xaction->getMetadataValue('auditStatus');
-            $audit_reason_map = $xaction->getMetadataValue('auditReasonMap');
-            $audit_reason = $audit_reason_map[$phid];
-          } else {
-            $audit_requested = PhabricatorAuditStatusConstants::AUDIT_REQUESTED;
-            $audit_reason = $this->getAuditReasons($phid);
-          }
-          $requests[] = id (new PhabricatorRepositoryAuditRequest())
-            ->setCommitPHID($object->getPHID())
-            ->setAuditorPHID($phid)
-            ->setAuditStatus($audit_requested)
-            ->setAuditReasons($audit_reason)
-            ->save();
-        }
-
-        $object->attachAudits($requests);
         return;
     }
 
@@ -206,7 +150,7 @@ final class PhabricatorAuditEditor
             $state,
             $phid);
         }
-        return;
+        break;
     }
 
     return parent::applyBuiltinExternalTransaction($object, $xaction);
@@ -246,107 +190,46 @@ final class PhabricatorAuditEditor
         case PhabricatorAuditTransaction::TYPE_COMMIT:
           $import_status_flag = PhabricatorRepositoryCommit::IMPORTED_HERALD;
           break;
-        case PhabricatorAuditActionConstants::ACTION:
-          $new = $xaction->getNewValue();
-          switch ($new) {
-            case PhabricatorAuditActionConstants::CLOSE:
-              // "Close" means wipe out all the concerns.
-              $requests = $object->getAudits();
-              foreach ($requests as $request) {
-                if ($request->getAuditStatus() == $status_concerned) {
-                  $request
-                    ->setAuditStatus($status_closed)
-                    ->save();
-                }
-              }
-              break;
-            case PhabricatorAuditActionConstants::RESIGN:
-              $requests = $object->getAudits();
-              $requests = mpull($requests, null, 'getAuditorPHID');
-              $actor_request = idx($requests, $actor_phid);
-
-              // If the actor doesn't currently have a relationship to the
-              // commit, add one explicitly. For example, this allows members
-              // of a project to resign from a commit and have it drop out of
-              // their queue.
-
-              if (!$actor_request) {
-                $actor_request = id(new PhabricatorRepositoryAuditRequest())
-                  ->setCommitPHID($object->getPHID())
-                  ->setAuditorPHID($actor_phid);
-
-                $requests[] = $actor_request;
-                $object->attachAudits($requests);
-              }
-
-              $actor_request
-                ->setAuditStatus($status_resigned)
-                ->save();
-              break;
-            case PhabricatorAuditActionConstants::ACCEPT:
-            case PhabricatorAuditActionConstants::CONCERN:
-              if ($new == PhabricatorAuditActionConstants::ACCEPT) {
-                $new_status = $status_accepted;
-              } else {
-                $new_status = $status_concerned;
-              }
-
-              $requests = $object->getAudits();
-              $requests = mpull($requests, null, 'getAuditorPHID');
-
-              // Figure out which requests the actor has authority over: these
-              // are user requests where they are the auditor, and packages
-              // and projects they are a member of.
-
-              if ($actor_is_author) {
-                // When modifying your own commits, you act only on behalf of
-                // yourself, not your packages/projects -- the idea being that
-                // you can't accept your own commits.
-                $authority_phids = array($actor_phid);
-              } else {
-                $authority_phids =
-                  PhabricatorAuditCommentEditor::loadAuditPHIDsForUser(
-                    $this->requireActor());
-              }
-
-              $authority = array_select_keys(
-                $requests,
-                $authority_phids);
-
-              if (!$authority) {
-                // If the actor has no authority over any existing requests,
-                // create a new request for them.
-
-                $actor_request = id(new PhabricatorRepositoryAuditRequest())
-                  ->setCommitPHID($object->getPHID())
-                  ->setAuditorPHID($actor_phid)
-                  ->setAuditStatus($new_status)
-                  ->save();
-
-                $requests[$actor_phid] = $actor_request;
-                $object->attachAudits($requests);
-              } else {
-                // Otherwise, update the audit status of the existing requests.
-                foreach ($authority as $request) {
-                  $request
-                    ->setAuditStatus($new_status)
-                    ->save();
-                }
-              }
-              break;
-
-          }
-          break;
       }
     }
 
+    $old_status = $this->oldAuditStatus;
+
     $requests = $object->getAudits();
     $object->updateAuditStatus($requests);
+
+    $new_status = $object->getAuditStatus();
+
     $object->save();
 
     if ($import_status_flag) {
       $object->writeImportStatusFlag($import_status_flag);
     }
+
+    $partial_status = PhabricatorAuditCommitStatusConstants::PARTIALLY_AUDITED;
+
+    // If the commit has changed state after this edit, add an informational
+    // transaction about the state change.
+    if ($old_status != $new_status) {
+      if ($new_status == $partial_status) {
+        // This state isn't interesting enough to get a transaction. The
+        // best way we could lead the user forward is something like "This
+        // commit still requires additional audits." but that's redundant and
+        // probably not very useful.
+      } else {
+        $xaction = $object->getApplicationTransactionTemplate()
+          ->setTransactionType(DiffusionCommitStateTransaction::TRANSACTIONTYPE)
+          ->setOldValue($old_status)
+          ->setNewValue($new_status);
+
+        $xaction = $this->populateTransaction($object, $xaction);
+
+        $xaction->save();
+      }
+    }
+
+    // Collect auditor PHIDs for building mail.
+    $this->auditorPHIDs = mpull($object->getAudits(), 'getAuditorPHID');
 
     return $xactions;
   }
@@ -372,7 +255,6 @@ final class PhabricatorAuditEditor
     if (!$this->didExpandInlineState) {
       switch ($xaction->getTransactionType()) {
         case PhabricatorTransactions::TYPE_COMMENT:
-        case PhabricatorAuditActionConstants::ACTION:
           $this->didExpandInlineState = true;
 
           $actor_phid = $this->getActingAsPHID();
@@ -414,35 +296,38 @@ final class PhabricatorAuditEditor
   private function createAuditRequestTransactionFromCommitMessage(
     PhabricatorRepositoryCommit $commit) {
 
+    $actor = $this->getActor();
     $data = $commit->getCommitData();
     $message = $data->getCommitMessage();
 
-    $matches = null;
-    if (!preg_match('/^Auditors:\s*(.*)$/im', $message, $matches)) {
-      return array();
-    }
+    $result = DifferentialCommitMessageParser::newStandardParser($actor)
+      ->setRaiseMissingFieldErrors(false)
+      ->parseFields($message);
 
-    $phids = id(new PhabricatorObjectListQuery())
-      ->setViewer($this->getActor())
-      ->setAllowPartialResults(true)
-      ->setAllowedTypes(
-        array(
-          PhabricatorPeopleUserPHIDType::TYPECONST,
-          PhabricatorProjectProjectPHIDType::TYPECONST,
-        ))
-      ->setObjectList($matches[1])
-      ->execute();
+    $field_key = DifferentialAuditorsCommitMessageField::FIELDKEY;
+    $phids = idx($result, $field_key, null);
 
     if (!$phids) {
       return array();
     }
 
-    foreach ($phids as $phid) {
-      $this->addAuditReason($phid, 'Requested by Author');
+    // If a commit lists its author as an auditor, just pretend it does not.
+    foreach ($phids as $key => $phid) {
+      if ($phid == $commit->getAuthorPHID()) {
+        unset($phids[$key]);
+      }
     }
-    return id(new PhabricatorAuditTransaction())
-      ->setTransactionType(PhabricatorAuditActionConstants::ADD_AUDITORS)
-      ->setNewValue(array_fuse($phids));
+
+    if (!$phids) {
+      return array();
+    }
+
+    return $commit->getApplicationTransactionTemplate()
+      ->setTransactionType(DiffusionCommitAuditorsTransaction::TRANSACTIONTYPE)
+      ->setNewValue(
+        array(
+          '+' => array_fuse($phids),
+        ));
   }
 
   protected function sortTransactions(array $xactions) {
@@ -463,69 +348,6 @@ final class PhabricatorAuditEditor
     return array_values(array_merge($head, $tail));
   }
 
-  protected function validateTransaction(
-    PhabricatorLiskDAO $object,
-    $type,
-    array $xactions) {
-
-    $errors = parent::validateTransaction($object, $type, $xactions);
-
-    foreach ($xactions as $xaction) {
-      switch ($type) {
-        case PhabricatorAuditActionConstants::ACTION:
-          $error = $this->validateAuditAction(
-            $object,
-            $type,
-            $xaction,
-            $xaction->getNewValue());
-          if ($error) {
-            $errors[] = new PhabricatorApplicationTransactionValidationError(
-              $type,
-              pht('Invalid'),
-              $error,
-              $xaction);
-          }
-          break;
-      }
-    }
-
-    return $errors;
-  }
-
-  private function validateAuditAction(
-    PhabricatorLiskDAO $object,
-    $type,
-    PhabricatorAuditTransaction $xaction,
-    $action) {
-
-    $can_author_close_key = 'audit.can-author-close-audit';
-    $can_author_close = PhabricatorEnv::getEnvConfig($can_author_close_key);
-
-    $actor_is_author = ($object->getAuthorPHID()) &&
-      ($object->getAuthorPHID() == $this->getActingAsPHID());
-
-    switch ($action) {
-      case PhabricatorAuditActionConstants::CLOSE:
-        if (!$actor_is_author) {
-          return pht(
-            'You can not close this audit because you are not the author '.
-            'of the commit.');
-        }
-
-        if (!$can_author_close) {
-          return pht(
-            'You can not close this audit because "%s" is disabled in '.
-            'the Phabricator configuration.',
-            $can_author_close_key);
-        }
-
-        break;
-    }
-
-    return null;
-  }
-
-
   protected function supportsSearch() {
     return true;
   }
@@ -533,12 +355,20 @@ final class PhabricatorAuditEditor
   protected function expandCustomRemarkupBlockTransactions(
     PhabricatorLiskDAO $object,
     array $xactions,
-    $blocks,
+    array $changes,
     PhutilMarkupEngine $engine) {
 
-    // we are only really trying to find unmentionable phids here...
-    // don't bother with this outside initial commit (i.e. create)
-    // transaction
+    $actor = $this->getActor();
+    $result = array();
+
+    // Some interactions (like "Fixes Txxx" interacting with Maniphest) have
+    // already been processed, so we're only re-parsing them here to avoid
+    // generating an extra redundant mention. Other interactions are being
+    // processed for the first time.
+
+    // We're only recognizing magic in the commit message itself, not in
+    // audit comments.
+
     $is_commit = false;
     foreach ($xactions as $xaction) {
       switch ($xaction->getTransactionType()) {
@@ -548,13 +378,11 @@ final class PhabricatorAuditEditor
       }
     }
 
-    // "result" is always an array....
-    $result = array();
     if (!$is_commit) {
       return $result;
     }
 
-    $flat_blocks = array_mergev($blocks);
+    $flat_blocks = mpull($changes, 'getNewValue');
     $huge_block = implode("\n\n", $flat_blocks);
     $phid_map = array();
     $phid_map[] = $this->getUnmentionablePHIDMap();
@@ -581,6 +409,46 @@ final class PhabricatorAuditEditor
       ->withNames($monograms)
       ->execute();
     $phid_map[] = mpull($objects, 'getPHID', 'getPHID');
+
+
+    $reverts_refs = id(new DifferentialCustomFieldRevertsParser())
+      ->parseCorpus($huge_block);
+    $reverts = array_mergev(ipull($reverts_refs, 'monograms'));
+    if ($reverts) {
+      // Only allow commits to revert other commits in the same repository.
+      $reverted_commits = id(new DiffusionCommitQuery())
+        ->setViewer($actor)
+        ->withRepository($object->getRepository())
+        ->withIdentifiers($reverts)
+        ->execute();
+
+      $reverted_revisions = id(new PhabricatorObjectQuery())
+        ->setViewer($actor)
+        ->withNames($reverts)
+        ->withTypes(
+          array(
+            DifferentialRevisionPHIDType::TYPECONST,
+          ))
+        ->execute();
+
+      $reverted_phids =
+        mpull($reverted_commits, 'getPHID', 'getPHID') +
+        mpull($reverted_revisions, 'getPHID', 'getPHID');
+
+      // NOTE: Skip any write attempts if a user cleverly implies a commit
+      // reverts itself, although this would be exceptionally clever in Git
+      // or Mercurial.
+      unset($reverted_phids[$object->getPHID()]);
+
+      $reverts_edge = DiffusionCommitRevertsCommitEdgeType::EDGECONST;
+      $result[] = id(new PhabricatorAuditTransaction())
+        ->setTransactionType(PhabricatorTransactions::TYPE_EDGE)
+        ->setMetadataValue('edge:type', $reverts_edge)
+        ->setNewValue(array('+' => $reverted_phids));
+
+      $phid_map[] = $reverted_phids;
+    }
+
     $phid_map = array_mergev($phid_map);
     $this->setUnmentionablePHIDMap($phid_map);
 
@@ -605,17 +473,14 @@ final class PhabricatorAuditEditor
   protected function buildMailTemplate(PhabricatorLiskDAO $object) {
     $identifier = $object->getCommitIdentifier();
     $repository = $object->getRepository();
-    $monogram = $repository->getMonogram();
 
     $summary = $object->getSummary();
     $name = $repository->formatCommitName($identifier);
 
     $subject = "{$name}: {$summary}";
-    $thread_topic = "Commit {$monogram}{$identifier}";
 
     $template = id(new PhabricatorMetaMTAMail())
-      ->setSubject($subject)
-      ->addHeader('Thread-Topic', $thread_topic);
+      ->setSubject($subject);
 
     $this->attachPatch(
       $template,
@@ -625,16 +490,39 @@ final class PhabricatorAuditEditor
   }
 
   protected function getMailTo(PhabricatorLiskDAO $object) {
+    $this->requireAuditors($object);
+
     $phids = array();
 
     if ($object->getAuthorPHID()) {
       $phids[] = $object->getAuthorPHID();
     }
 
-    $status_resigned = PhabricatorAuditStatusConstants::RESIGNED;
     foreach ($object->getAudits() as $audit) {
-      if ($audit->getAuditStatus() != $status_resigned) {
+      if (!$audit->isInteresting()) {
+        // Don't send mail to uninteresting auditors, like packages which
+        // own this code but which audits have not triggered for.
+        continue;
+      }
+
+      if (!$audit->isResigned()) {
         $phids[] = $audit->getAuditorPHID();
+      }
+    }
+
+    $phids[] = $this->getActingAsPHID();
+
+    return $phids;
+  }
+
+  protected function newMailUnexpandablePHIDs(PhabricatorLiskDAO $object) {
+    $this->requireAuditors($object);
+
+    $phids = array();
+
+    foreach ($object->getAudits() as $auditor) {
+      if ($auditor->isResigned()) {
+        $phids[] = $auditor->getAuditorPHID();
       }
     }
 
@@ -675,17 +563,11 @@ final class PhabricatorAuditEditor
         $object);
     }
 
-    // Reload the commit to pull commit data.
-    $commit = id(new DiffusionCommitQuery())
-      ->setViewer($this->requireActor())
-      ->withIDs(array($object->getID()))
-      ->needCommitData(true)
-      ->executeOne();
-    $data = $commit->getCommitData();
+    $data = $object->getCommitData();
 
     $user_phids = array();
 
-    $author_phid = $commit->getAuthorPHID();
+    $author_phid = $object->getAuthorPHID();
     if ($author_phid) {
       $user_phids[$author_phid][] = pht('Author');
     }
@@ -695,10 +577,7 @@ final class PhabricatorAuditEditor
       $user_phids[$committer_phid][] = pht('Committer');
     }
 
-    // we loaded this in applyFinalEffects
-    $audit_requests = $object->getAudits();
-    $auditor_phids = mpull($audit_requests, 'getAuditorPHID');
-    foreach ($auditor_phids as $auditor_phid) {
+    foreach ($this->auditorPHIDs as $auditor_phid) {
       $user_phids[$auditor_phid][] = pht('Auditor');
     }
 
@@ -878,52 +757,14 @@ final class PhabricatorAuditEditor
   protected function buildHeraldAdapter(
     PhabricatorLiskDAO $object,
     array $xactions) {
-
     return id(new HeraldCommitAdapter())
-      ->setCommit($object);
+      ->setObject($object);
   }
 
   protected function didApplyHeraldRules(
     PhabricatorLiskDAO $object,
     HeraldAdapter $adapter,
     HeraldTranscript $transcript) {
-
-    $xactions = array();
-
-    $audit_phids = $adapter->getAuditMap();
-    foreach ($audit_phids as $phid => $rule_ids) {
-      foreach ($rule_ids as $rule_id) {
-        $this->addAuditReason(
-          $phid,
-          pht(
-            '%s Triggered Audit',
-            "H{$rule_id}"));
-      }
-    }
-    if ($audit_phids) {
-      $xactions[] = id(new PhabricatorAuditTransaction())
-        ->setTransactionType(PhabricatorAuditActionConstants::ADD_AUDITORS)
-        ->setNewValue(array_fuse(array_keys($audit_phids)))
-        ->setMetadataValue(
-          'auditStatus',
-          PhabricatorAuditStatusConstants::AUDIT_REQUIRED)
-        ->setMetadataValue(
-          'auditReasonMap', $this->auditReasonMap);
-    }
-
-    $cc_phids = $adapter->getAddCCMap();
-    $add_ccs = array('+' => array());
-    foreach ($cc_phids as $phid => $rule_ids) {
-      $add_ccs['+'][$phid] = $phid;
-    }
-    $xactions[] = id(new PhabricatorAuditTransaction())
-      ->setTransactionType(PhabricatorTransactions::TYPE_SUBSCRIBERS)
-      ->setNewValue($add_ccs);
-
-    HarbormasterBuildable::applyBuildPlans(
-      $object->getPHID(),
-      $object->getRepository()->getPHID(),
-      $adapter->getBuildPlans());
 
     $limit = self::MAX_FILES_SHOWN_IN_EMAIL;
     $files = $adapter->loadAffectedPaths();
@@ -938,7 +779,7 @@ final class PhabricatorAuditEditor
     }
     $this->affectedFiles = implode("\n", $files);
 
-    return $xactions;
+    return array();
   }
 
   private function isCommitMostlyImported(PhabricatorLiskDAO $object) {
@@ -987,6 +828,56 @@ final class PhabricatorAuditEditor
     PhabricatorLiskDAO $object,
     array $xactions) {
     return $this->shouldPublishRepositoryActivity($object, $xactions);
+  }
+
+  protected function getCustomWorkerState() {
+    return array(
+      'rawPatch' => $this->rawPatch,
+      'affectedFiles' => $this->affectedFiles,
+      'auditorPHIDs' => $this->auditorPHIDs,
+    );
+  }
+
+  protected function getCustomWorkerStateEncoding() {
+    return array(
+      'rawPatch' => self::STORAGE_ENCODING_BINARY,
+    );
+  }
+
+  protected function loadCustomWorkerState(array $state) {
+    $this->rawPatch = idx($state, 'rawPatch');
+    $this->affectedFiles = idx($state, 'affectedFiles');
+    $this->auditorPHIDs = idx($state, 'auditorPHIDs');
+    return $this;
+  }
+
+  protected function willPublish(PhabricatorLiskDAO $object, array $xactions) {
+    return id(new DiffusionCommitQuery())
+      ->setViewer($this->requireActor())
+      ->withIDs(array($object->getID()))
+      ->needAuditRequests(true)
+      ->needCommitData(true)
+      ->executeOne();
+  }
+
+  private function requireAuditors(PhabricatorRepositoryCommit $commit) {
+    if ($commit->hasAttachedAudits()) {
+      return;
+    }
+
+    $with_auditors = id(new DiffusionCommitQuery())
+      ->setViewer($this->getActor())
+      ->needAuditRequests(true)
+      ->withPHIDs(array($commit->getPHID()))
+      ->executeOne();
+    if (!$with_auditors) {
+      throw new Exception(
+        pht(
+          'Failed to reload commit ("%s").',
+          $commit->getPHID()));
+    }
+
+    $commit->attachAudits($with_auditors->getAudits());
   }
 
 }

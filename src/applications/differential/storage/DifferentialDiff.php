@@ -4,13 +4,18 @@ final class DifferentialDiff
   extends DifferentialDAO
   implements
     PhabricatorPolicyInterface,
+    PhabricatorExtendedPolicyInterface,
     HarbormasterBuildableInterface,
+    HarbormasterCircleCIBuildableInterface,
+    HarbormasterBuildkiteBuildableInterface,
     PhabricatorApplicationTransactionInterface,
-    PhabricatorDestructibleInterface {
+    PhabricatorDestructibleInterface,
+    PhabricatorConduitResultInterface {
 
   protected $revisionID;
   protected $authorPHID;
   protected $repositoryPHID;
+  protected $commitPHID;
 
   protected $sourceMachine;
   protected $sourcePath;
@@ -27,7 +32,6 @@ final class DifferentialDiff
   protected $branch;
   protected $bookmark;
 
-  protected $arcanistProjectPHID;
   protected $creationMethod;
   protected $repositoryUUID;
 
@@ -37,9 +41,11 @@ final class DifferentialDiff
 
   private $unsavedChangesets = array();
   private $changesets = self::ATTACHABLE;
-  private $arcanistProject = self::ATTACHABLE;
   private $revision = self::ATTACHABLE;
   private $properties = array();
+  private $buildable = self::ATTACHABLE;
+
+  private $unitMessages = self::ATTACHABLE;
 
   protected function getConfiguration() {
     return array(
@@ -58,8 +64,8 @@ final class DifferentialDiff
         'lineCount' => 'uint32',
         'branch' => 'text255?',
         'bookmark' => 'text255?',
-        'arcanistProjectPHID' => 'phid?',
         'repositoryUUID' => 'text64?',
+        'commitPHID' => 'phid?',
 
         // T6203/NULLABILITY
         // These should be non-null; all diffs should have a creation method
@@ -70,6 +76,9 @@ final class DifferentialDiff
       self::CONFIG_KEY_SCHEMA => array(
         'revisionID' => array(
           'columns' => array('revisionID'),
+        ),
+        'key_commit' => array(
+          'columns' => array('commitPHID'),
         ),
       ),
     ) + parent::getConfiguration();
@@ -103,28 +112,15 @@ final class DifferentialDiff
     if (!$this->getID()) {
       return array();
     }
-    return id(new DifferentialChangeset())->loadAllWhere(
+    $changesets = id(new DifferentialChangeset())->loadAllWhere(
       'diffID = %d',
       $this->getID());
-  }
 
-  public function attachArcanistProject(
-    PhabricatorRepositoryArcanistProject $project = null) {
-    $this->arcanistProject = $project;
-    return $this;
-  }
-
-  public function getArcanistProject() {
-    return $this->assertAttached($this->arcanistProject);
-  }
-
-  public function getArcanistProjectName() {
-    $name = '';
-    if ($this->arcanistProject) {
-      $project = $this->getArcanistProject();
-      $name = $project->getName();
+    foreach ($changesets as $changeset) {
+      $changeset->attachDiff($this);
     }
-    return $name;
+
+    return $changesets;
   }
 
   public function save() {
@@ -193,7 +189,7 @@ final class DifferentialDiff
       $hunks = $change->getHunks();
       if ($hunks) {
         foreach ($hunks as $hunk) {
-          $dhunk = new DifferentialModernHunk();
+          $dhunk = new DifferentialHunk();
           $dhunk->setOldOffset($hunk->getOldOffset());
           $dhunk->setOldLen($hunk->getOldLength());
           $dhunk->setNewOffset($hunk->getNewOffset());
@@ -234,16 +230,13 @@ final class DifferentialDiff
     }
     $diff->setLineCount($lines);
 
-    $parser = new DifferentialChangesetParser();
-    $changesets = $parser->detectCopiedCode(
-      $diff->getChangesets(),
-      $min_width = 30,
-      $min_lines = 3);
-    $diff->attachChangesets($changesets);
+    $changesets = $diff->getChangesets();
+
+    id(new DifferentialChangesetEngine())
+      ->rebuildChangesets($changesets);
 
     return $diff;
   }
-
 
   public function getDiffDict() {
     $dict = array(
@@ -261,11 +254,15 @@ final class DifferentialDiff
       'unitStatus' => $this->getUnitStatus(),
       'lintStatus' => $this->getLintStatus(),
       'changes' => array(),
-      'properties' => array(),
-      'projectName' => $this->getArcanistProjectName(),
     );
 
     $dict['changes'] = $this->buildChangesList();
+
+    return $dict + $this->getDiffAuthorshipDict();
+  }
+
+  public function getDiffAuthorshipDict() {
+    $dict = array('properties' => array());
 
     $properties = id(new DifferentialDiffProperty())->loadAllWhere(
       'diffID = %d',
@@ -344,6 +341,87 @@ final class DifferentialDiff
     return $this->assertAttachedKey($this->properties, $key);
   }
 
+  public function hasDiffProperty($key) {
+    $properties = $this->getDiffProperties();
+    return array_key_exists($key, $properties);
+  }
+
+  public function attachDiffProperties(array $properties) {
+    $this->properties = $properties;
+    return $this;
+  }
+
+  public function getDiffProperties() {
+    return $this->assertAttached($this->properties);
+  }
+
+  public function attachBuildable(HarbormasterBuildable $buildable = null) {
+    $this->buildable = $buildable;
+    return $this;
+  }
+
+  public function getBuildable() {
+    return $this->assertAttached($this->buildable);
+  }
+
+  public function getBuildTargetPHIDs() {
+    $buildable = $this->getBuildable();
+
+    if (!$buildable) {
+      return array();
+    }
+
+    $target_phids = array();
+    foreach ($buildable->getBuilds() as $build) {
+      foreach ($build->getBuildTargets() as $target) {
+        $target_phids[] = $target->getPHID();
+      }
+    }
+
+    return $target_phids;
+  }
+
+  public function loadCoverageMap(PhabricatorUser $viewer) {
+    $target_phids = $this->getBuildTargetPHIDs();
+    if (!$target_phids) {
+      return array();
+    }
+
+    $unit = id(new HarbormasterBuildUnitMessage())->loadAllWhere(
+      'buildTargetPHID IN (%Ls)',
+      $target_phids);
+
+    $map = array();
+    foreach ($unit as $message) {
+      $coverage = $message->getProperty('coverage', array());
+      foreach ($coverage as $path => $coverage_data) {
+        $map[$path][] = $coverage_data;
+      }
+    }
+
+    foreach ($map as $path => $coverage_items) {
+      $map[$path] = ArcanistUnitTestResult::mergeCoverage($coverage_items);
+    }
+
+    return $map;
+  }
+
+  public function getURI() {
+    $id = $this->getID();
+    return "/differential/diff/{$id}/";
+  }
+
+
+  public function attachUnitMessages(array $unit_messages) {
+    $this->unitMessages = $unit_messages;
+    return $this;
+  }
+
+
+  public function getUnitMessages() {
+    return $this->assertAttached($this->unitMessages);
+  }
+
 
 /* -(  PhabricatorPolicyInterface  )----------------------------------------- */
 
@@ -356,7 +434,7 @@ final class DifferentialDiff
 
   public function getPolicy($capability) {
     if ($this->hasRevision()) {
-      return $this->getRevision()->getPolicy($capability);
+      return PhabricatorPolicies::getMostOpenPolicy();
     }
 
     return $this->viewPolicy;
@@ -367,7 +445,7 @@ final class DifferentialDiff
       return $this->getRevision()->hasAutomaticCapability($capability, $viewer);
     }
 
-    return ($this->getAuthorPHID() == $viewer->getPhid());
+    return ($this->getAuthorPHID() == $viewer->getPHID());
   }
 
   public function describeAutomaticCapability($capability) {
@@ -375,13 +453,43 @@ final class DifferentialDiff
       return pht(
         'This diff is attached to a revision, and inherits its policies.');
     }
+
     return pht('The author of a diff can see it.');
   }
 
 
+/* -(  PhabricatorExtendedPolicyInterface  )--------------------------------- */
+
+
+  public function getExtendedPolicy($capability, PhabricatorUser $viewer) {
+    $extended = array();
+
+    switch ($capability) {
+      case PhabricatorPolicyCapability::CAN_VIEW:
+        if ($this->hasRevision()) {
+          $extended[] = array(
+            $this->getRevision(),
+            PhabricatorPolicyCapability::CAN_VIEW,
+          );
+        }
+        break;
+    }
+
+    return $extended;
+  }
+
 
 /* -(  HarbormasterBuildableInterface  )------------------------------------- */
 
+
+  public function getHarbormasterBuildableDisplayPHID() {
+    $container_phid = $this->getHarbormasterContainerPHID();
+    if ($container_phid) {
+      return $container_phid;
+    }
+
+    return $this->getHarbormasterBuildablePHID();
+  }
 
   public function getHarbormasterBuildablePHID() {
     return $this->getPHID();
@@ -402,14 +510,20 @@ final class DifferentialDiff
     $results = array();
 
     $results['buildable.diff'] = $this->getID();
-    $revision = $this->getRevision();
-    $results['buildable.revision'] = $revision->getID();
-    $repo = $revision->getRepository();
+    if ($this->revisionID) {
+      $revision = $this->getRevision();
+      $results['buildable.revision'] = $revision->getID();
+      $repo = $revision->getRepository();
 
-    if ($repo) {
-      $results['repository.callsign'] = $repo->getCallsign();
-      $results['repository.vcs'] = $repo->getVersionControlSystem();
-      $results['repository.uri'] = $repo->getPublicCloneURI();
+      if ($repo) {
+        $results['repository.callsign'] = $repo->getCallsign();
+        $results['repository.phid'] = $repo->getPHID();
+        $results['repository.vcs'] = $repo->getVersionControlSystem();
+        $results['repository.uri'] = $repo->getPublicCloneURI();
+
+        $results['repository.staging.uri'] = $repo->getStagingURI();
+        $results['repository.staging.ref'] = $this->getStagingRef();
+      }
     }
 
     return $results;
@@ -423,11 +537,158 @@ final class DifferentialDiff
         pht('The differential revision ID, if applicable.'),
       'repository.callsign' =>
         pht('The callsign of the repository in Phabricator.'),
+      'repository.phid' =>
+        pht('The PHID of the repository in Phabricator.'),
       'repository.vcs' =>
         pht('The version control system, either "svn", "hg" or "git".'),
       'repository.uri' =>
         pht('The URI to clone or checkout the repository from.'),
+      'repository.staging.uri' =>
+        pht('The URI of the staging repository.'),
+      'repository.staging.ref' =>
+        pht('The ref name for this change in the staging repository.'),
     );
+  }
+
+  public function newBuildableEngine() {
+    return new DifferentialBuildableEngine();
+  }
+
+
+/* -(  HarbormasterCircleCIBuildableInterface  )----------------------------- */
+
+
+  public function getCircleCIGitHubRepositoryURI() {
+    $diff_phid = $this->getPHID();
+    $repository_phid = $this->getRepositoryPHID();
+    if (!$repository_phid) {
+      throw new Exception(
+        pht(
+          'This diff ("%s") is not associated with a repository. A diff '.
+          'must belong to a tracked repository to be built by CircleCI.',
+          $diff_phid));
+    }
+
+    $repository = id(new PhabricatorRepositoryQuery())
+      ->setViewer(PhabricatorUser::getOmnipotentUser())
+      ->withPHIDs(array($repository_phid))
+      ->executeOne();
+    if (!$repository) {
+      throw new Exception(
+        pht(
+          'This diff ("%s") is associated with a repository ("%s") which '.
+          'could not be loaded.',
+          $diff_phid,
+          $repository_phid));
+    }
+
+    $staging_uri = $repository->getStagingURI();
+    if (!$staging_uri) {
+      throw new Exception(
+        pht(
+          'This diff ("%s") is associated with a repository ("%s") that '.
+          'does not have a Staging Area configured. You must configure a '.
+          'Staging Area to use CircleCI integration.',
+          $diff_phid,
+          $repository_phid));
+    }
+
+    $path = HarbormasterCircleCIBuildStepImplementation::getGitHubPath(
+      $staging_uri);
+    if (!$path) {
+      throw new Exception(
+        pht(
+          'This diff ("%s") is associated with a repository ("%s") that '.
+          'does not have a Staging Area ("%s") that is hosted on GitHub. '.
+          'CircleCI can only build from GitHub, so the Staging Area for '.
+          'the repository must be hosted there.',
+          $diff_phid,
+          $repository_phid,
+          $staging_uri));
+    }
+
+    return $staging_uri;
+  }
+
+  public function getCircleCIBuildIdentifierType() {
+    return 'tag';
+  }
+
+  public function getCircleCIBuildIdentifier() {
+    $ref = $this->getStagingRef();
+    $ref = preg_replace('(^refs/tags/)', '', $ref);
+    return $ref;
+  }
+
+
+/* -(  HarbormasterBuildkiteBuildableInterface  )---------------------------- */
+
+  public function getBuildkiteBranch() {
+    $ref = $this->getStagingRef();
+
+    // NOTE: Circa late January 2017, Buildkite fails with the error message
+    // "Tags have been disabled for this project" if we pass the "refs/tags/"
+    // prefix via the API and the project doesn't have GitHub tag builds
+    // enabled, even if GitHub builds are disabled. The tag builds fine
+    // without this prefix.
+    $ref = preg_replace('(^refs/tags/)', '', $ref);
+
+    return $ref;
+  }
+
+  public function getBuildkiteCommit() {
+    return 'HEAD';
+  }
+
+
+  public function getStagingRef() {
+    // TODO: We're just hoping to get lucky. Instead, `arc` should store
+    // where it sent changes and we should only provide staging details
+    // if we reasonably believe they are accurate.
+    return 'refs/tags/phabricator/diff/'.$this->getID();
+  }
+
+  public function loadTargetBranch() {
+    // TODO: This is sketchy, but just eat the query cost until this can get
+    // cleaned up.
+
+    // For now, we're only returning a target if there's exactly one and it's
+    // a branch, since we don't support landing to more esoteric targets like
+    // tags yet.
+
+    $property = id(new DifferentialDiffProperty())->loadOneWhere(
+      'diffID = %d AND name = %s',
+      $this->getID(),
+      'arc:onto');
+    if (!$property) {
+      return null;
+    }
+
+    $data = $property->getData();
+
+    if (!$data) {
+      return null;
+    }
+
+    if (!is_array($data)) {
+      return null;
+    }
+
+    if (count($data) != 1) {
+      return null;
+    }
+
+    $onto = head($data);
+    if (!is_array($onto)) {
+      return null;
+    }
+
+    $type = idx($onto, 'type');
+    if ($type != 'branch') {
+      return null;
+    }
+
+    return idx($onto, 'name');
   }
 
 
@@ -464,7 +725,7 @@ final class DifferentialDiff
       $this->delete();
 
       foreach ($this->loadChangesets() as $changeset) {
-        $changeset->delete();
+        $engine->destroyObject($changeset);
       }
 
       $properties = id(new DifferentialDiffProperty())->loadAllWhere(
@@ -475,6 +736,86 @@ final class DifferentialDiff
       }
 
     $this->saveTransaction();
+  }
+
+
+/* -(  PhabricatorConduitResultInterface  )---------------------------------- */
+
+
+  public function getFieldSpecificationsForConduit() {
+    return array(
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('revisionPHID')
+        ->setType('phid')
+        ->setDescription(pht('Associated revision PHID.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('authorPHID')
+        ->setType('phid')
+        ->setDescription(pht('Revision author PHID.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('repositoryPHID')
+        ->setType('phid')
+        ->setDescription(pht('Associated repository PHID.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('refs')
+        ->setType('map<string, wild>')
+        ->setDescription(pht('List of related VCS references.')),
+    );
+  }
+
+  public function getFieldValuesForConduit() {
+    $refs = array();
+
+    $branch = $this->getBranch();
+    if (strlen($branch)) {
+      $refs[] = array(
+        'type' => 'branch',
+        'name' => $branch,
+      );
+    }
+
+    $onto = $this->loadTargetBranch();
+    if (strlen($onto)) {
+      $refs[] = array(
+        'type' => 'onto',
+        'name' => $onto,
+      );
+    }
+
+    $base = $this->getSourceControlBaseRevision();
+    if (strlen($base)) {
+      $refs[] = array(
+        'type' => 'base',
+        'identifier' => $base,
+      );
+    }
+
+    $bookmark = $this->getBookmark();
+    if (strlen($bookmark)) {
+      $refs[] = array(
+        'type' => 'bookmark',
+        'name' => $bookmark,
+      );
+    }
+
+    $revision_phid = null;
+    if ($this->getRevisionID()) {
+      $revision_phid = $this->getRevision()->getPHID();
+    }
+
+    return array(
+      'revisionPHID' => $revision_phid,
+      'authorPHID' => $this->getAuthorPHID(),
+      'repositoryPHID' => $this->getRepositoryPHID(),
+      'refs' => $refs,
+    );
+  }
+
+  public function getConduitSearchAttachments() {
+    return array(
+      id(new DifferentialCommitsSearchEngineAttachment())
+        ->setAttachmentKey('commits'),
+    );
   }
 
 }

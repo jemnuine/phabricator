@@ -97,6 +97,7 @@ final class DoorkeeperBridgeJIRA extends DoorkeeperBridge {
 
       $ref->setAttribute('title', idx($fields, 'summary'));
       $ref->setAttribute('description', idx($result, 'description'));
+      $ref->setAttribute('shortname', $result['key']);
 
       $obj = $ref->getExternalObject();
       if ($obj->getID()) {
@@ -104,10 +105,7 @@ final class DoorkeeperBridgeJIRA extends DoorkeeperBridge {
       }
 
       $this->fillObjectFromData($obj, $result);
-
-      $unguarded = AphrontWriteGuard::beginScopedUnguardedWrites();
-        $obj->save();
-      unset($unguarded);
+      $this->saveExternalObject($ref, $obj);
     }
   }
 

@@ -38,12 +38,24 @@ final class PholioUploadedImageView extends AphrontView {
       ->setSigil('image-description')
       ->setLabel(pht('Description'));
 
+    $xform = PhabricatorFileTransform::getTransformByKey(
+      PhabricatorFileThumbnailTransform::TRANSFORM_PINBOARD);
+    $thumbnail_uri = $file->getURIForTransform($xform);
+
+    $thumb_img = javelin_tag(
+      'img',
+      array(
+        'class' => 'pholio-thumb-img',
+        'src' => $thumbnail_uri,
+        'sigil' => 'pholio-uploaded-thumb',
+      ));
+
     $thumb_frame = phutil_tag(
       'div',
       array(
         'class' => 'pholio-thumb-frame',
-        'style' => 'background-image: url('.$file->getThumb280x210URI().');',
-      ));
+      ),
+      $thumb_img);
 
     $handle = javelin_tag(
       'div',
@@ -108,7 +120,7 @@ final class PholioUploadedImageView extends AphrontView {
     return javelin_tag(
       'a',
       array(
-        'class' => 'button grey',
+        'class' => 'button button-grey',
         'sigil' => 'pholio-drop-remove',
       ),
       'X');

@@ -7,6 +7,7 @@
  * @task hisec    High Security
  * @task partial  Partial Sessions
  * @task onetime  One Time Login URIs
+ * @task cache    User Cache
  */
 final class PhabricatorAuthSessionEngine extends Phobject {
 
@@ -38,17 +39,6 @@ final class PhabricatorAuthSessionEngine extends Phobject {
    */
   const KIND_UNKNOWN   = '?';
 
-
-  /**
-   * Temporary tokens for one time logins.
-   */
-  const ONETIME_TEMPORARY_TOKEN_TYPE = 'login:onetime';
-
-
-  /**
-   * Temporary tokens for password recovery after one time login.
-   */
-  const PASSWORD_TEMPORARY_TOKEN_TYPE = 'login:password';
 
   const ONETIME_RECOVER = 'recover';
   const ONETIME_RESET = 'reset';
@@ -120,11 +110,10 @@ final class PhabricatorAuthSessionEngine extends Phobject {
     $session_table = new PhabricatorAuthSession();
     $user_table = new PhabricatorUser();
     $conn_r = $session_table->establishConnection('r');
-    $session_key = PhabricatorHash::digest($session_token);
+    $session_key = PhabricatorHash::weakDigest($session_token);
 
-    // NOTE: We're being clever here because this happens on every page load,
-    // and by joining we can save a query. This might be getting too clever
-    // for its own good, though...
+    $cache_parts = $this->getUserCacheQueryParts($conn_r);
+    list($cache_selects, $cache_joins, $cache_map, $types_map) = $cache_parts;
 
     $info = queryfx_one(
       $conn_r,
@@ -136,12 +125,15 @@ final class PhabricatorAuthSessionEngine extends Phobject {
           s.isPartial AS s_isPartial,
           s.signedLegalpadDocuments as s_signedLegalpadDocuments,
           u.*
+          %Q
         FROM %T u JOIN %T s ON u.phid = s.userPHID
-        AND s.type = %s AND s.sessionKey = %s',
+        AND s.type = %s AND s.sessionKey = %s %Q',
+      $cache_selects,
       $user_table->getTableName(),
       $session_table->getTableName(),
       $session_type,
-      $session_key);
+      $session_key,
+      $cache_joins);
 
     if (!$info) {
       return null;
@@ -152,12 +144,40 @@ final class PhabricatorAuthSessionEngine extends Phobject {
       'sessionKey' => $session_key,
       'type' => $session_type,
     );
+
+    $cache_raw = array_fill_keys($cache_map, null);
     foreach ($info as $key => $value) {
       if (strncmp($key, 's_', 2) === 0) {
         unset($info[$key]);
         $session_dict[substr($key, 2)] = $value;
+        continue;
+      }
+
+      if (isset($cache_map[$key])) {
+        unset($info[$key]);
+        $cache_raw[$cache_map[$key]] = $value;
+        continue;
       }
     }
+
+    $user = $user_table->loadFromArray($info);
+
+    $cache_raw = $this->filterRawCacheData($user, $types_map, $cache_raw);
+    $user->attachRawCacheData($cache_raw);
+
+    switch ($session_type) {
+      case PhabricatorAuthSession::TYPE_WEB:
+        // Explicitly prevent bots and mailing lists from establishing web
+        // sessions. It's normally impossible to attach authentication to these
+        // accounts, and likewise impossible to generate sessions, but it's
+        // technically possible that a session could exist in the database. If
+        // one does somehow, refuse to load it.
+        if (!$user->canEstablishWebSessions()) {
+          return null;
+        }
+        break;
+    }
+
     $session = id(new PhabricatorAuthSession())->loadFromArray($session_dict);
 
     $ttl = PhabricatorAuthSession::getSessionTypeTTL($session_type);
@@ -181,7 +201,6 @@ final class PhabricatorAuthSessionEngine extends Phobject {
       unset($unguarded);
     }
 
-    $user = $user_table->loadFromArray($info);
     $user->attachSession($session);
     return $user;
   }
@@ -221,7 +240,7 @@ final class PhabricatorAuthSessionEngine extends Phobject {
     // This has a side effect of validating the session type.
     $session_ttl = PhabricatorAuthSession::getSessionTypeTTL($session_type);
 
-    $digest_key = PhabricatorHash::digest($session_key);
+    $digest_key = PhabricatorHash::weakDigest($session_key);
 
     // Logging-in users don't have CSRF stuff yet, so we have to unguard this
     // write.
@@ -251,6 +270,16 @@ final class PhabricatorAuthSessionEngine extends Phobject {
       $log->save();
     unset($unguarded);
 
+    $info = id(new PhabricatorAuthSessionInfo())
+      ->setSessionType($session_type)
+      ->setIdentityPHID($identity_phid)
+      ->setIsPartial($partial);
+
+    $extensions = PhabricatorAuthSessionEngineExtension::getAllExtensions();
+    foreach ($extensions as $extension) {
+      $extension->didEstablishSession($info);
+    }
+
     return $session_key;
   }
 
@@ -277,18 +306,39 @@ final class PhabricatorAuthSessionEngine extends Phobject {
       ->execute();
 
     if ($except_session !== null) {
-      $except_session = PhabricatorHash::digest($except_session);
+      $except_session = PhabricatorHash::weakDigest($except_session);
     }
 
     foreach ($sessions as $key => $session) {
       if ($except_session !== null) {
-        if ($except_session == $session->getSessionKey()) {
+        $is_except = phutil_hashes_are_identical(
+          $session->getSessionKey(),
+          $except_session);
+        if ($is_except) {
           continue;
         }
       }
 
       $session->delete();
     }
+  }
+
+  public function logoutSession(
+    PhabricatorUser $user,
+    PhabricatorAuthSession $session) {
+
+    $log = PhabricatorUserLog::initializeNewLog(
+      $user,
+      $user->getPHID(),
+      PhabricatorUserLog::ACTION_LOGOUT);
+    $log->save();
+
+    $extensions = PhabricatorAuthSessionEngineExtension::getAllExtensions();
+    foreach ($extensions as $extension) {
+      $extension->didLogout($user, array($session));
+    }
+
+    $session->delete();
   }
 
 
@@ -625,11 +675,12 @@ final class PhabricatorAuthSessionEngine extends Phobject {
 
     $key = Filesystem::readRandomCharacters(32);
     $key_hash = $this->getOneTimeLoginKeyHash($user, $email, $key);
+    $onetime_type = PhabricatorAuthOneTimeLoginTemporaryTokenType::TOKENTYPE;
 
     $unguarded = AphrontWriteGuard::beginScopedUnguardedWrites();
       id(new PhabricatorAuthTemporaryToken())
-        ->setObjectPHID($user->getPHID())
-        ->setTokenType(self::ONETIME_TEMPORARY_TOKEN_TYPE)
+        ->setTokenResource($user->getPHID())
+        ->setTokenType($onetime_type)
         ->setTokenExpires(time() + phutil_units('1 day in seconds'))
         ->setTokenCode($key_hash)
         ->save();
@@ -668,11 +719,12 @@ final class PhabricatorAuthSessionEngine extends Phobject {
     $key = null) {
 
     $key_hash = $this->getOneTimeLoginKeyHash($user, $email, $key);
+    $onetime_type = PhabricatorAuthOneTimeLoginTemporaryTokenType::TOKENTYPE;
 
     return id(new PhabricatorAuthTemporaryTokenQuery())
       ->setViewer($user)
-      ->withObjectPHIDs(array($user->getPHID()))
-      ->withTokenTypes(array(self::ONETIME_TEMPORARY_TOKEN_TYPE))
+      ->withTokenResources(array($user->getPHID()))
+      ->withTokenTypes(array($onetime_type))
       ->withTokenCodes(array($key_hash))
       ->withExpired(false)
       ->executeOne();
@@ -703,7 +755,103 @@ final class PhabricatorAuthSessionEngine extends Phobject {
       $parts[] = $email->getVerificationCode();
     }
 
-    return PhabricatorHash::digest(implode(':', $parts));
+    return PhabricatorHash::weakDigest(implode(':', $parts));
+  }
+
+
+/* -(  User Cache  )--------------------------------------------------------- */
+
+
+  /**
+   * @task cache
+   */
+  private function getUserCacheQueryParts(AphrontDatabaseConnection $conn) {
+    $cache_selects = array();
+    $cache_joins = array();
+    $cache_map = array();
+
+    $keys = array();
+    $types_map = array();
+
+    $cache_types = PhabricatorUserCacheType::getAllCacheTypes();
+    foreach ($cache_types as $cache_type) {
+      foreach ($cache_type->getAutoloadKeys() as $autoload_key) {
+        $keys[] = $autoload_key;
+        $types_map[$autoload_key] = $cache_type;
+      }
+    }
+
+    $cache_table = id(new PhabricatorUserCache())->getTableName();
+
+    $cache_idx = 1;
+    foreach ($keys as $key) {
+      $join_as = 'ucache_'.$cache_idx;
+      $select_as = 'ucache_'.$cache_idx.'_v';
+
+      $cache_selects[] = qsprintf(
+        $conn,
+        '%T.cacheData %T',
+        $join_as,
+        $select_as);
+
+      $cache_joins[] = qsprintf(
+        $conn,
+        'LEFT JOIN %T AS %T ON u.phid = %T.userPHID
+          AND %T.cacheIndex = %s',
+        $cache_table,
+        $join_as,
+        $join_as,
+        $join_as,
+        PhabricatorHash::digestForIndex($key));
+
+      $cache_map[$select_as] = $key;
+
+      $cache_idx++;
+    }
+
+    if ($cache_selects) {
+      $cache_selects = ', '.implode(', ', $cache_selects);
+    } else {
+      $cache_selects = '';
+    }
+
+    if ($cache_joins) {
+      $cache_joins = implode(' ', $cache_joins);
+    } else {
+      $cache_joins = '';
+    }
+
+    return array($cache_selects, $cache_joins, $cache_map, $types_map);
+  }
+
+  private function filterRawCacheData(
+    PhabricatorUser $user,
+    array $types_map,
+    array $cache_raw) {
+
+    foreach ($cache_raw as $cache_key => $cache_data) {
+      $type = $types_map[$cache_key];
+      if ($type->shouldValidateRawCacheData()) {
+        if (!$type->isRawCacheDataValid($user, $cache_key, $cache_data)) {
+          unset($cache_raw[$cache_key]);
+        }
+      }
+    }
+
+    return $cache_raw;
+  }
+
+  public function willServeRequestForUser(PhabricatorUser $user) {
+    // We allow the login user to generate any missing cache data inline.
+    $user->setAllowInlineCacheGeneration(true);
+
+    // Switch to the user's translation.
+    PhabricatorEnv::setLocaleCode($user->getTranslation());
+
+    $extensions = PhabricatorAuthSessionEngineExtension::getAllExtensions();
+    foreach ($extensions as $extension) {
+      $extension->willServeRequestForUser($user);
+    }
   }
 
 }

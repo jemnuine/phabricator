@@ -26,4 +26,45 @@ abstract class PhabricatorManagementWorkflow extends PhutilArgumentWorkflow {
     return $epoch;
   }
 
+  protected function newContentSource() {
+    return PhabricatorContentSource::newForSource(
+      PhabricatorConsoleContentSource::SOURCECONST);
+  }
+
+  protected function logInfo($label, $message) {
+    $this->logRaw(
+      tsprintf(
+        "**<bg:blue> %s </bg>** %s\n",
+        $label,
+        $message));
+  }
+
+  protected function logOkay($label, $message) {
+    $this->logRaw(
+      tsprintf(
+        "**<bg:green> %s </bg>** %s\n",
+        $label,
+        $message));
+  }
+
+  protected function logWarn($label, $message) {
+    $this->logRaw(
+      tsprintf(
+        "**<bg:yellow> %s </bg>** %s\n",
+        $label,
+        $message));
+  }
+
+  protected function logFail($label, $message) {
+    $this->logRaw(
+      tsprintf(
+        "**<bg:red> %s </bg>** %s\n",
+        $label,
+        $message));
+  }
+
+  private function logRaw($message) {
+    fprintf(STDERR, '%s', $message);
+  }
+
 }

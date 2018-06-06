@@ -26,14 +26,44 @@ JX.install('Notification', {
     _visible : false,
     _hideTimer : null,
     _duration : 12000,
+    _asDesktop : false,
+    _asWeb : true,
+    _key : null,
+    _title : null,
+    _body : null,
+    _href : null,
+    _icon : null,
 
     show : function() {
+      var self = JX.Notification;
+
       if (!this._visible) {
         this._visible = true;
 
-        var self = JX.Notification;
         self._show(this);
         this._updateTimer();
+      }
+
+      if (self.supportsDesktopNotifications() &&
+          self.desktopNotificationsEnabled() &&
+          this._asDesktop) {
+        // Note: specifying "tag" means that notifications with matching
+        // keys will aggregate.
+        var n = new window.Notification(this._title, {
+          icon: this._icon,
+          body: this._body,
+          tag: this._key,
+        });
+        n.onclick = JX.bind(n, function (href) {
+          this.close();
+          window.focus();
+          if (href) {
+            JX.$U(href).go();
+          }
+        }, this._href);
+        // Note: some OS / browsers do this automagically; make the behavior
+        // happen everywhere.
+        setTimeout(n.close.bind(n), this._duration);
       }
       return this;
     },
@@ -56,6 +86,41 @@ JX.install('Notification', {
 
     setContent : function(content) {
       JX.DOM.setContent(this._getContainer(), content);
+      return this;
+    },
+
+    setShowAsWebNotification: function(mode) {
+      this._asWeb = mode;
+      return this;
+    },
+
+    setShowAsDesktopNotification : function(mode) {
+      this._asDesktop = mode;
+      return this;
+    },
+
+    setTitle : function(title) {
+      this._title = title;
+      return this;
+    },
+
+    setBody : function(body) {
+      this._body = body;
+      return this;
+    },
+
+    setHref : function(href) {
+      this._href = href;
+      return this;
+    },
+
+    setKey : function(key) {
+      this._key = key;
+      return this;
+    },
+
+    setIcon : function(icon) {
+      this._icon = icon;
       return this;
     },
 
@@ -97,6 +162,12 @@ JX.install('Notification', {
   },
 
   statics : {
+    supportsDesktopNotifications : function () {
+      return 'Notification' in window;
+    },
+    desktopNotificationsEnabled : function () {
+      return window.Notification.permission === 'granted';
+    },
     _container : null,
     _listening : false,
     _active : [],
@@ -177,6 +248,13 @@ JX.install('Notification', {
 
       var notifications = [];
       for (var ii = 0; ii < self._active.length; ii++) {
+
+        // Don't render this notification if it's not configured to show as
+        // a web notification.
+        if (!self._active[ii]._asWeb) {
+          continue;
+        }
+
         notifications.push(self._active[ii]._getContainer());
         if (!(--limit)) {
           break;

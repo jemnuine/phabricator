@@ -7,11 +7,10 @@ $conn_w->openTransaction();
 $src_table = 'project_legacytransaction';
 $dst_table = 'project_transaction';
 
-echo "Migrating Project transactions to new format...\n";
+echo pht('Migrating Project transactions to new format...')."\n";
 
 $content_source = PhabricatorContentSource::newForSource(
-  PhabricatorContentSource::SOURCE_LEGACY,
-  array())->serialize();
+  PhabricatorOldWorldContentSource::SOURCECONST)->serialize();
 
 $rows = new LiskRawMigrationIterator($conn_w, $src_table);
 foreach ($rows as $row) {
@@ -19,7 +18,7 @@ foreach ($rows as $row) {
 
   $project_id = $row['projectID'];
 
-  echo "Migrating transaction #{$id} (Project {$project_id})...\n";
+  echo pht('Migrating transaction #%d (Project %d)...', $id, $project_id)."\n";
 
   $project_row = queryfx_one(
     $conn_w,
@@ -33,9 +32,9 @@ foreach ($rows as $row) {
   $project_phid = $project_row['phid'];
 
   $type_map = array(
-    'name' => PhabricatorProjectTransaction::TYPE_NAME,
+    'name' => PhabricatorProjectNameTransaction::TRANSACTIONTYPE,
     'members' => PhabricatorProjectTransaction::TYPE_MEMBERS,
-    'status' => PhabricatorProjectTransaction::TYPE_STATUS,
+    'status' => PhabricatorProjectStatusTransaction::TRANSACTIONTYPE,
     'canview' => PhabricatorTransactions::TYPE_VIEW_POLICY,
     'canedit' => PhabricatorTransactions::TYPE_EDIT_POLICY,
     'canjoin' => PhabricatorTransactions::TYPE_JOIN_POLICY,
@@ -89,4 +88,4 @@ foreach ($rows as $row) {
 }
 
 $conn_w->saveTransaction();
-echo "Done.\n";
+echo pht('Done.')."\n";

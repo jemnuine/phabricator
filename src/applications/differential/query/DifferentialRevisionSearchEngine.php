@@ -11,175 +11,80 @@ final class DifferentialRevisionSearchEngine
     return 'PhabricatorDifferentialApplication';
   }
 
-  public function getPageSize(PhabricatorSavedQuery $saved) {
-    if ($saved->getQueryKey() == 'active') {
-      return 0xFFFF;
-    }
-    return parent::getPageSize($saved);
+  protected function newResultBuckets() {
+    return DifferentialRevisionResultBucket::getAllResultBuckets();
   }
 
-  public function buildSavedQueryFromRequest(AphrontRequest $request) {
-    $saved = new PhabricatorSavedQuery();
-
-    $saved->setParameter(
-      'responsiblePHIDs',
-      $this->readUsersFromRequest($request, 'responsibles'));
-
-    $saved->setParameter(
-      'authorPHIDs',
-      $this->readUsersFromRequest($request, 'authors'));
-
-    $saved->setParameter(
-      'reviewerPHIDs',
-      $this->readUsersFromRequest(
-        $request,
-        'reviewers',
-        array(
-          PhabricatorProjectProjectPHIDType::TYPECONST,
-        )));
-
-    $saved->setParameter(
-      'subscriberPHIDs',
-      $this->readUsersFromRequest($request, 'subscribers'));
-
-    $saved->setParameter(
-      'repositoryPHIDs',
-      $request->getArr('repositories'));
-
-    $saved->setParameter(
-      'draft',
-      $request->getBool('draft'));
-
-    $saved->setParameter(
-      'order',
-      $request->getStr('order'));
-
-    $saved->setParameter(
-      'status',
-      $request->getStr('status'));
-
-    return $saved;
-  }
-
-  public function buildQueryFromSavedQuery(PhabricatorSavedQuery $saved) {
-    $query = id(new DifferentialRevisionQuery())
+  public function newQuery() {
+    return id(new DifferentialRevisionQuery())
       ->needFlags(true)
       ->needDrafts(true)
-      ->needRelationships(true);
+      ->needReviewers(true);
+  }
 
-    $responsible_phids = $saved->getParameter('responsiblePHIDs', array());
-    if ($responsible_phids) {
-      $query->withResponsibleUsers($responsible_phids);
+  protected function buildQueryFromParameters(array $map) {
+    $query = $this->newQuery();
+
+    if ($map['responsiblePHIDs']) {
+      $query->withResponsibleUsers($map['responsiblePHIDs']);
     }
 
-    $author_phids = $saved->getParameter('authorPHIDs', array());
-    if ($author_phids) {
-      $query->withAuthors($author_phids);
+    if ($map['authorPHIDs']) {
+      $query->withAuthors($map['authorPHIDs']);
     }
 
-    $reviewer_phids = $saved->getParameter('reviewerPHIDs', array());
-    if ($reviewer_phids) {
-      $query->withReviewers($reviewer_phids);
+    if ($map['reviewerPHIDs']) {
+      $query->withReviewers($map['reviewerPHIDs']);
     }
 
-    $subscriber_phids = $saved->getParameter('subscriberPHIDs', array());
-    if ($subscriber_phids) {
-      $query->withCCs($subscriber_phids);
+    if ($map['repositoryPHIDs']) {
+      $query->withRepositoryPHIDs($map['repositoryPHIDs']);
     }
 
-    $repository_phids = $saved->getParameter('repositoryPHIDs', array());
-    if ($repository_phids) {
-      $query->withRepositoryPHIDs($repository_phids);
-    }
-
-    $draft = $saved->getParameter('draft', false);
-    if ($draft && $this->requireViewer()->isLoggedIn()) {
-      $query->withDraftRepliesByAuthors(
-        array($this->requireViewer()->getPHID()));
-    }
-
-    $status = $saved->getParameter('status');
-    if (idx($this->getStatusOptions(), $status)) {
-      $query->withStatus($status);
-    }
-
-    $order = $saved->getParameter('order');
-    if (idx($this->getOrderOptions(), $order)) {
-      $query->setOrder($order);
-    } else {
-      $query->setOrder(DifferentialRevisionQuery::ORDER_CREATED);
+    if ($map['statuses']) {
+      $query->withStatuses($map['statuses']);
     }
 
     return $query;
   }
 
-  public function buildSearchForm(
-    AphrontFormView $form,
-    PhabricatorSavedQuery $saved) {
-
-    $responsible_phids = $saved->getParameter('responsiblePHIDs', array());
-    $author_phids = $saved->getParameter('authorPHIDs', array());
-    $reviewer_phids = $saved->getParameter('reviewerPHIDs', array());
-    $subscriber_phids = $saved->getParameter('subscriberPHIDs', array());
-    $repository_phids = $saved->getParameter('repositoryPHIDs', array());
-    $only_draft = $saved->getParameter('draft', false);
-
-    $form
-      ->appendControl(
-        id(new AphrontFormTokenizerControl())
-          ->setLabel(pht('Responsible Users'))
-          ->setName('responsibles')
-          ->setDatasource(new PhabricatorPeopleDatasource())
-          ->setValue($responsible_phids))
-      ->appendControl(
-        id(new AphrontFormTokenizerControl())
-          ->setLabel(pht('Authors'))
-          ->setName('authors')
-          ->setDatasource(new PhabricatorPeopleDatasource())
-          ->setValue($author_phids))
-      ->appendControl(
-        id(new AphrontFormTokenizerControl())
-          ->setLabel(pht('Reviewers'))
-          ->setName('reviewers')
-          ->setDatasource(new PhabricatorProjectOrUserDatasource())
-          ->setValue($reviewer_phids))
-      ->appendControl(
-        id(new AphrontFormTokenizerControl())
-          ->setLabel(pht('Subscribers'))
-          ->setName('subscribers')
-          ->setDatasource(new PhabricatorMetaMTAMailableDatasource())
-          ->setValue($subscriber_phids))
-      ->appendControl(
-        id(new AphrontFormTokenizerControl())
-          ->setLabel(pht('Repositories'))
-          ->setName('repositories')
-          ->setDatasource(new DiffusionRepositoryDatasource())
-          ->setValue($repository_phids))
-      ->appendChild(
-        id(new AphrontFormSelectControl())
-          ->setLabel(pht('Status'))
-          ->setName('status')
-          ->setOptions($this->getStatusOptions())
-          ->setValue($saved->getParameter('status')));
-
-    if ($this->requireViewer()->isLoggedIn()) {
-      $form
-        ->appendChild(
-          id(new AphrontFormCheckboxControl())
-            ->addCheckbox(
-              'draft',
-              1,
-              pht('Show only revisions with a draft comment.'),
-              $only_draft));
-    }
-
-    $form
-      ->appendChild(
-        id(new AphrontFormSelectControl())
-          ->setLabel(pht('Order'))
-          ->setName('order')
-          ->setOptions($this->getOrderOptions())
-          ->setValue($saved->getParameter('order')));
+  protected function buildCustomSearchFields() {
+    return array(
+      id(new PhabricatorSearchDatasourceField())
+        ->setLabel(pht('Responsible Users'))
+        ->setKey('responsiblePHIDs')
+        ->setAliases(array('responsiblePHID', 'responsibles', 'responsible'))
+        ->setDatasource(new DifferentialResponsibleDatasource())
+        ->setDescription(
+          pht('Find revisions that a given user is responsible for.')),
+      id(new PhabricatorUsersSearchField())
+        ->setLabel(pht('Authors'))
+        ->setKey('authorPHIDs')
+        ->setAliases(array('author', 'authors', 'authorPHID'))
+        ->setDescription(
+          pht('Find revisions with specific authors.')),
+      id(new PhabricatorSearchDatasourceField())
+        ->setLabel(pht('Reviewers'))
+        ->setKey('reviewerPHIDs')
+        ->setAliases(array('reviewer', 'reviewers', 'reviewerPHID'))
+        ->setDatasource(new DiffusionAuditorFunctionDatasource())
+        ->setDescription(
+          pht('Find revisions with specific reviewers.')),
+      id(new PhabricatorSearchDatasourceField())
+        ->setLabel(pht('Repositories'))
+        ->setKey('repositoryPHIDs')
+        ->setAliases(array('repository', 'repositories', 'repositoryPHID'))
+        ->setDatasource(new DiffusionRepositoryFunctionDatasource())
+        ->setDescription(
+          pht('Find revisions from specific repositories.')),
+      id(new PhabricatorSearchDatasourceField())
+        ->setLabel(pht('Statuses'))
+        ->setKey('statuses')
+        ->setAliases(array('status'))
+        ->setDatasource(new DifferentialRevisionStatusFunctionDatasource())
+        ->setDescription(
+          pht('Find revisions with particular statuses.')),
+    );
   }
 
   protected function getURI($path) {
@@ -207,9 +112,12 @@ final class DifferentialRevisionSearchEngine
 
     switch ($query_key) {
       case 'active':
+        $bucket_key = DifferentialRevisionRequiredActionResultBucket::BUCKETKEY;
+
         return $query
           ->setParameter('responsiblePHIDs', array($viewer->getPHID()))
-          ->setParameter('status', DifferentialRevisionQuery::STATUS_OPEN);
+          ->setParameter('statuses', array('open()'))
+          ->setParameter('bucket', $bucket_key);
       case 'authored':
         return $query
           ->setParameter('authorPHIDs', array($viewer->getPHID()));
@@ -222,20 +130,13 @@ final class DifferentialRevisionSearchEngine
 
   private function getStatusOptions() {
     return array(
-      DifferentialRevisionQuery::STATUS_ANY            => pht('All'),
-      DifferentialRevisionQuery::STATUS_OPEN           => pht('Open'),
-      DifferentialRevisionQuery::STATUS_ACCEPTED       => pht('Accepted'),
-      DifferentialRevisionQuery::STATUS_NEEDS_REVIEW   => pht('Needs Review'),
-      DifferentialRevisionQuery::STATUS_NEEDS_REVISION => pht('Needs Revision'),
-      DifferentialRevisionQuery::STATUS_CLOSED         => pht('Closed'),
-      DifferentialRevisionQuery::STATUS_ABANDONED      => pht('Abandoned'),
-    );
-  }
-
-  private function getOrderOptions() {
-    return array(
-      DifferentialRevisionQuery::ORDER_CREATED    => pht('Created'),
-      DifferentialRevisionQuery::ORDER_MODIFIED   => pht('Updated'),
+      DifferentialLegacyQuery::STATUS_ANY            => pht('All'),
+      DifferentialLegacyQuery::STATUS_OPEN           => pht('Open'),
+      DifferentialLegacyQuery::STATUS_ACCEPTED       => pht('Accepted'),
+      DifferentialLegacyQuery::STATUS_NEEDS_REVIEW   => pht('Needs Review'),
+      DifferentialLegacyQuery::STATUS_NEEDS_REVISION => pht('Needs Revision'),
+      DifferentialLegacyQuery::STATUS_CLOSED         => pht('Closed'),
+      DifferentialLegacyQuery::STATUS_ABANDONED      => pht('Abandoned'),
     );
   }
 
@@ -247,65 +148,129 @@ final class DifferentialRevisionSearchEngine
 
     $viewer = $this->requireViewer();
     $template = id(new DifferentialRevisionListView())
-      ->setUser($viewer)
+      ->setViewer($viewer)
       ->setNoBox($this->isPanelContext());
 
+    $bucket = $this->getResultBucket($query);
+
+    $unlanded = $this->loadUnlandedDependencies($revisions);
+
     $views = array();
-    if ($query->getQueryKey() == 'active') {
-        $split = DifferentialRevisionQuery::splitResponsible(
-          $revisions,
-          $query->getParameter('responsiblePHIDs'));
-        list($blocking, $active, $waiting) = $split;
+    if ($bucket) {
+      $bucket->setViewer($viewer);
 
-      $views[] = id(clone $template)
-        ->setHeader(pht('Blocking Others'))
-        ->setNoDataString(
-          pht('No revisions are blocked on your action.'))
-        ->setHighlightAge(true)
-        ->setRevisions($blocking)
-        ->setHandles(array());
+      try {
+        $groups = $bucket->newResultGroups($query, $revisions);
 
-      $views[] = id(clone $template)
-        ->setHeader(pht('Action Required'))
-        ->setNoDataString(
-          pht('No revisions require your action.'))
-        ->setHighlightAge(true)
-        ->setRevisions($active)
-        ->setHandles(array());
-
-      $views[] = id(clone $template)
-        ->setHeader(pht('Waiting on Others'))
-        ->setNoDataString(
-          pht('You have no revisions waiting on others.'))
-        ->setRevisions($waiting)
-        ->setHandles(array());
+        foreach ($groups as $group) {
+          // Don't show groups in Dashboard Panels
+          if ($group->getObjects() || !$this->isPanelContext()) {
+            $views[] = id(clone $template)
+              ->setHeader($group->getName())
+              ->setNoDataString($group->getNoDataString())
+              ->setRevisions($group->getObjects());
+          }
+        }
+      } catch (Exception $ex) {
+        $this->addError($ex->getMessage());
+      }
     } else {
       $views[] = id(clone $template)
-        ->setRevisions($revisions)
-        ->setHandles(array());
+        ->setRevisions($revisions);
     }
 
-    $phids = array_mergev(mpull($views, 'getRequiredHandlePHIDs'));
-    if ($phids) {
-      $handles = id(new PhabricatorHandleQuery())
+    if (!$views) {
+      $views[] = id(new DifferentialRevisionListView())
         ->setViewer($viewer)
-        ->withPHIDs($phids)
-        ->execute();
-    } else {
-      $handles = array();
+        ->setNoDataString(pht('No revisions found.'));
     }
 
     foreach ($views as $view) {
-      $view->setHandles($handles);
+      $view->setUnlandedDependencies($unlanded);
     }
 
     if (count($views) == 1) {
       // Reduce this to a PHUIObjectItemListView so we can get the free
       // support from ApplicationSearch.
-      return head($views)->render();
+      $list = head($views)->render();
     } else {
-      return $views;
+      $list = $views;
     }
+
+    $result = new PhabricatorApplicationSearchResultView();
+    $result->setContent($list);
+
+    return $result;
+  }
+
+  protected function getNewUserBody() {
+    $create_button = id(new PHUIButtonView())
+      ->setTag('a')
+      ->setText(pht('Create a Diff'))
+      ->setHref('/differential/diff/create/')
+      ->setColor(PHUIButtonView::GREEN);
+
+    $icon = $this->getApplication()->getIcon();
+    $app_name =  $this->getApplication()->getName();
+    $view = id(new PHUIBigInfoView())
+      ->setIcon($icon)
+      ->setTitle(pht('Welcome to %s', $app_name))
+      ->setDescription(
+        pht('Pre-commit code review. Revisions that are waiting on your input '.
+            'will appear here.'))
+      ->addAction($create_button);
+
+      return $view;
+  }
+
+  private function loadUnlandedDependencies(array $revisions) {
+    $phids = array();
+    foreach ($revisions as $revision) {
+      if (!$revision->isAccepted()) {
+        continue;
+      }
+
+      $phids[] = $revision->getPHID();
+    }
+
+    if (!$phids) {
+      return array();
+    }
+
+    $query = id(new PhabricatorEdgeQuery())
+      ->withSourcePHIDs($phids)
+      ->withEdgeTypes(
+        array(
+          DifferentialRevisionDependsOnRevisionEdgeType::EDGECONST,
+        ));
+
+    $query->execute();
+
+    $revision_phids = $query->getDestinationPHIDs();
+    if (!$revision_phids) {
+      return array();
+    }
+
+    $viewer = $this->requireViewer();
+
+    $blocking_revisions = id(new DifferentialRevisionQuery())
+      ->setViewer($viewer)
+      ->withPHIDs($revision_phids)
+      ->withIsOpen(true)
+      ->execute();
+    $blocking_revisions = mpull($blocking_revisions, null, 'getPHID');
+
+    $result = array();
+    foreach ($revisions as $revision) {
+      $revision_phid = $revision->getPHID();
+      $blocking_phids = $query->getDestinationPHIDs(array($revision_phid));
+      $blocking = array_select_keys($blocking_revisions, $blocking_phids);
+      if ($blocking) {
+        $result[$revision_phid] = $blocking;
+      }
+    }
+
+    return $result;
   }
 
 }

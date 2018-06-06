@@ -7,7 +7,17 @@ final class ManiphestInfoConduitAPIMethod extends ManiphestConduitAPIMethod {
   }
 
   public function getMethodDescription() {
-    return 'Retrieve information about a Maniphest task, given its id.';
+    return pht('Retrieve information about a Maniphest task, given its ID.');
+  }
+
+  public function getMethodStatus() {
+    return self::METHOD_STATUS_FROZEN;
+  }
+
+  public function getMethodStatusDescription() {
+    return pht(
+      'This method is frozen and will eventually be deprecated. New code '.
+      'should use "maniphest.search" instead.');
   }
 
   protected function defineParamTypes() {
@@ -22,7 +32,7 @@ final class ManiphestInfoConduitAPIMethod extends ManiphestConduitAPIMethod {
 
   protected function defineErrorTypes() {
     return array(
-      'ERR_BAD_TASK' => 'No such maniphest task exists',
+      'ERR_BAD_TASK' => pht('No such Maniphest task exists.'),
     );
   }
 

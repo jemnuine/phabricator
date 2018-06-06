@@ -1,14 +1,14 @@
 <?php
-
 final class PHUITimelineExample extends PhabricatorUIExample {
 
   public function getName() {
-    return 'Timeline View';
+    return pht('Timeline View');
   }
 
   public function getDescription() {
-    return hsprintf(
-      'Use <tt>PHUITimelineView</tt> to comments and transactions.');
+    return pht(
+      'Use %s to comments and transactions.',
+      hsprintf('<tt>PHUITimelineView</tt>'));
   }
 
   public function renderExample() {
@@ -20,90 +20,109 @@ final class PHUITimelineExample extends PhabricatorUIExample {
       ->withPHIDs(array($user->getPHID()))
       ->executeOne();
 
+    $designer = id(new PHUIBadgeMiniView())
+      ->setIcon('fa-camera-retro')
+      ->setHeader(pht('Designer'))
+      ->setQuality(PhabricatorBadgesQuality::EPIC);
+
+    $admin = id(new PHUIBadgeMiniView())
+      ->setIcon('fa-user')
+      ->setHeader(pht('Administrator'))
+      ->setQuality(PhabricatorBadgesQuality::RARE);
+
     $events = array();
 
     $events[] = id(new PHUITimelineEventView())
       ->setUserHandle($handle)
-      ->setTitle('A major event.')
-      ->appendChild('This is a major timeline event.');
+      ->setTitle(pht('A major event.'))
+      ->appendChild(pht('This is a major timeline event.'))
+      ->addBadge($designer)
+      ->addBadge($admin);
 
     $events[] = id(new PHUITimelineEventView())
       ->setUserHandle($handle)
       ->setIcon('fa-heart')
-      ->setTitle('A minor event.');
+      ->setTitle(pht('A minor event.'));
 
     $events[] = id(new PHUITimelineEventView())
       ->setUserHandle($handle)
       ->setIcon('fa-comment')
-      ->appendChild('A major event with no title.');
+      ->appendChild(pht('A major event with no title.'));
 
     $events[] = id(new PHUITimelineEventView())
       ->setUserHandle($handle)
       ->setIcon('fa-star')
-      ->setTitle('Another minor event.');
-
-    $events[] = id(new PHUITimelineEventView())
-      ->setIcon('fa-trophy')
-      ->setToken('medal-1')
-      ->setUserHandle($handle);
-
-    $events[] = id(new PHUITimelineEventView())
-      ->setIcon('fa-quote-left')
-      ->setToken('medal-1', true)
-      ->setUserHandle($handle);
+      ->setTitle(pht('Another minor event.'));
 
     $events[] = id(new PHUITimelineEventView())
       ->setUserHandle($handle)
-      ->setTitle('Major Red Event')
+      ->setTitle(pht('Major Red Event'))
       ->setIcon('fa-heart-o')
-      ->appendChild('This event is red!')
-      ->setColor(PhabricatorTransactions::COLOR_RED);
+      ->appendChild(pht('This event is red!'))
+      ->setColor(PhabricatorTransactions::COLOR_RED)
+      ->addBadge($designer);
 
     $events[] = id(new PHUITimelineEventView())
       ->setUserHandle($handle)
       ->setIcon('fa-female')
-      ->setTitle('Minor Red Event')
+      ->setTitle(pht('Minor Red Event'))
       ->setColor(PhabricatorTransactions::COLOR_RED);
 
     $events[] = id(new PHUITimelineEventView())
       ->setIcon('fa-refresh')
       ->setUserHandle($handle)
-      ->setTitle('Minor Not-Red Event')
+      ->setTitle(pht('Minor Not-Red Event'))
       ->setColor(PhabricatorTransactions::COLOR_GREEN);
 
     $events[] = id(new PHUITimelineEventView())
       ->setUserHandle($handle)
       ->setIcon('fa-calendar-o')
-      ->setTitle('Minor Red Event')
+      ->setTitle(pht('Minor Red Event'))
       ->setColor(PhabricatorTransactions::COLOR_RED);
+
+    // Pinboard!!
+    $pin1 = id(new PHUIPinboardItemView())
+      ->setUser($user)
+      ->setHeader('user0.png')
+      ->setImageURI(celerity_get_resource_uri('/rsrc/image/people/user0.png'))
+      ->setURI(celerity_get_resource_uri('/rsrc/image/people/user0.png'))
+      ->setImageSize(280, 210);
+
+    $pin2 = id(new PHUIPinboardItemView())
+      ->setUser($user)
+      ->setHeader('user1.png')
+      ->setImageURI(celerity_get_resource_uri('/rsrc/image/people/user1.png'))
+      ->setURI(celerity_get_resource_uri('/rsrc/image/people/user1.png'))
+      ->setImageSize(280, 210);
+
+    $pin3 = id(new PHUIPinboardItemView())
+      ->setUser($user)
+      ->setHeader('user2.png')
+      ->setImageURI(celerity_get_resource_uri('/rsrc/image/people/user2.png'))
+      ->setURI(celerity_get_resource_uri('/rsrc/image/people/user1.png'))
+      ->setImageSize(280, 210);
 
     $events[] = id(new PHUITimelineEventView())
       ->setUserHandle($handle)
-      ->setIcon('fa-check')
-      ->setTitle('Historically Important Action')
-      ->setColor(PhabricatorTransactions::COLOR_BLACK)
-      ->setReallyMajorEvent(true);
-
+      ->setIcon('fa-camera-retro')
+      ->setTitle(pht('Pinboard Image Event'))
+      ->addPinboardItem($pin1)
+      ->addPinboardItem($pin2)
+      ->addPinboardItem($pin3);
 
     $events[] = id(new PHUITimelineEventView())
       ->setUserHandle($handle)
       ->setIcon('fa-circle-o')
-      ->setTitle('Major Green Disagreement Action')
-      ->appendChild('This event is green!')
+      ->setTitle(pht('Major Green Disagreement Action'))
+      ->appendChild(pht('This event is green!'))
       ->setColor(PhabricatorTransactions::COLOR_GREEN);
 
     $events[] = id(new PHUITimelineEventView())
       ->setUserHandle($handle)
       ->setIcon('fa-tag')
-      ->setTitle(str_repeat('Long Text Title ', 64))
-      ->appendChild(str_repeat('Long Text Body ', 64))
+      ->setTitle(str_repeat(pht('Long Text Title').' ', 64))
+      ->appendChild(str_repeat(pht('Long Text Body').' ', 64))
       ->setColor(PhabricatorTransactions::COLOR_ORANGE);
-
-    $events[] = id(new PHUITimelineEventView())
-      ->setUserHandle($handle)
-      ->setTitle(str_repeat('LongTextEventNoSpaces', 1024))
-      ->appendChild(str_repeat('LongTextNoSpaces', 1024))
-      ->setColor(PhabricatorTransactions::COLOR_RED);
 
     $colors = array(
       PhabricatorTransactions::COLOR_RED,
@@ -120,13 +139,13 @@ final class PHUITimelineExample extends PhabricatorUIExample {
 
     $events[] = id(new PHUITimelineEventView())
       ->setUserHandle($handle)
-      ->setTitle('Colorless')
+      ->setTitle(pht('Colorless'))
       ->setIcon('fa-lock');
 
     foreach ($colors as $color) {
       $events[] = id(new PHUITimelineEventView())
         ->setUserHandle($handle)
-        ->setTitle("Color '{$color}'")
+        ->setTitle(pht("Color '%s'", $color))
         ->setIcon('fa-paw')
         ->setColor($color);
     }
@@ -192,6 +211,7 @@ final class PHUITimelineExample extends PhabricatorUIExample {
     }
 
     $timeline = id(new PHUITimelineView());
+    $timeline->setUser($user);
     foreach ($events as $event) {
       $timeline->addEvent($event);
     }

@@ -3,11 +3,17 @@
 final class PhabricatorDifferentialRevisionTestDataGenerator
   extends PhabricatorTestDataGenerator {
 
-  public function generate() {
-    $author = $this->loadPhabrictorUser();
+  const GENERATORKEY = 'revisions';
+
+  public function getGeneratorName() {
+    return pht('Differential Revisions');
+  }
+
+  public function generateObject() {
+    $author = $this->loadPhabricatorUser();
 
     $revision = DifferentialRevision::initializeNewRevision($author);
-    $revision->attachReviewerStatus(array());
+    $revision->attachReviewers(array());
     $revision->attachActiveDiff(null);
 
     // This could be a bit richer and more formal than it is.
@@ -16,20 +22,17 @@ final class PhabricatorDifferentialRevisionTestDataGenerator
     $revision->setTestPlan($this->generateDescription());
 
     $diff = $this->generateDiff($author);
+    $type_update = DifferentialRevisionUpdateTransaction::TRANSACTIONTYPE;
 
     $xactions = array();
 
     $xactions[] = id(new DifferentialTransaction())
-      ->setTransactionType(DifferentialTransaction::TYPE_UPDATE)
+      ->setTransactionType($type_update)
       ->setNewValue($diff->getPHID());
-
-    $content_source = PhabricatorContentSource::newForSource(
-      PhabricatorContentSource::SOURCE_LIPSUM,
-      array());
 
     id(new DifferentialTransactionEditor())
       ->setActor($author)
-      ->setContentSource($content_source)
+      ->setContentSource($this->getLipsumContentSource())
       ->applyTransactions($revision, $xactions);
 
     return $revision;
@@ -38,7 +41,7 @@ final class PhabricatorDifferentialRevisionTestDataGenerator
   public function getCCPHIDs() {
     $ccs = array();
     for ($i = 0; $i < rand(1, 4);$i++) {
-      $ccs[] = $this->loadPhabrictorUserPHID();
+      $ccs[] = $this->loadPhabricatorUserPHID();
     }
     return $ccs;
   }
@@ -53,10 +56,10 @@ final class PhabricatorDifferentialRevisionTestDataGenerator
     $diff = id(new PhabricatorDifferenceEngine())
       ->generateRawDiffFromFileContent($code, $newcode);
      $call = new ConduitCall(
-        'differential.createrawdiff',
-        array(
-          'diff' => $diff,
-        ));
+      'differential.createrawdiff',
+      array(
+        'diff' => $diff,
+      ));
     $call->setUser($author);
     $result = $call->execute();
     $thediff = id(new DifferentialDiff())->load(

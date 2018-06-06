@@ -21,10 +21,15 @@ final class FundBackerProduct extends PhortuneProductImplementation {
 
   public function getName(PhortuneProduct $product) {
     $initiative = $this->getInitiative();
-    return pht(
-      'Fund %s %s',
-      $initiative->getMonogram(),
-      $initiative->getName());
+
+    if (!$initiative) {
+      return pht('Fund <Unknown Initiative>');
+    } else {
+      return pht(
+        'Fund %s %s',
+        $initiative->getMonogram(),
+        $initiative->getName());
+    }
   }
 
   public function getPriceAsCurrency(PhortuneProduct $product) {
@@ -86,7 +91,7 @@ final class FundBackerProduct extends PhortuneProductImplementation {
       ->withPHIDs(array($purchase->getMetadataValue('backerPHID')))
       ->executeOne();
     if (!$backer) {
-      throw new Exception(pht('Unable to load FundBacker!'));
+      throw new Exception(pht('Unable to load %s!', 'FundBacker'));
     }
 
     // Load the actual backing user -- they may not be the curent viewer if this
@@ -100,7 +105,7 @@ final class FundBackerProduct extends PhortuneProductImplementation {
 
     $xactions = array();
     $xactions[] = id(new FundInitiativeTransaction())
-      ->setTransactionType(FundInitiativeTransaction::TYPE_BACKER)
+      ->setTransactionType(FundInitiativeBackerTransaction::TRANSACTIONTYPE)
       ->setMetadataValue(
         FundInitiativeTransaction::PROPERTY_AMOUNT,
         $backer->getAmountAsCurrency()->serializeForStorage())
@@ -124,12 +129,12 @@ final class FundBackerProduct extends PhortuneProductImplementation {
       ->withPHIDs(array($purchase->getMetadataValue('backerPHID')))
       ->executeOne();
     if (!$backer) {
-      throw new Exception(pht('Unable to load FundBacker!'));
+      throw new Exception(pht('Unable to load %s!', 'FundBacker'));
     }
 
     $xactions = array();
     $xactions[] = id(new FundInitiativeTransaction())
-      ->setTransactionType(FundInitiativeTransaction::TYPE_REFUND)
+      ->setTransactionType(FundInitiativeRefundTransaction::TRANSACTIONTYPE)
       ->setMetadataValue(
         FundInitiativeTransaction::PROPERTY_AMOUNT,
         $amount->serializeForStorage())

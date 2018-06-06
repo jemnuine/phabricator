@@ -3,20 +3,25 @@
 /**
  * This is a standard Phabricator page with menus, Javelin, DarkConsole, and
  * basic styles.
- *
  */
-final class PhabricatorStandardPageView extends PhabricatorBarePageView {
+final class PhabricatorStandardPageView extends PhabricatorBarePageView
+  implements AphrontResponseProducerInterface {
 
   private $baseURI;
   private $applicationName;
   private $glyph;
   private $menuContent;
   private $showChrome = true;
+  private $classes = array();
   private $disableConsole;
   private $pageObjects = array();
   private $applicationMenu;
   private $showFooter = true;
   private $showDurableColumn = true;
+  private $quicksandConfig = array();
+  private $tabs;
+  private $crumbs;
+  private $navigation;
 
   public function setShowFooter($show_footer) {
     $this->showFooter = $show_footer;
@@ -27,7 +32,10 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     return $this->showFooter;
   }
 
-  public function setApplicationMenu(PHUIListView $application_menu) {
+  public function setApplicationMenu($application_menu) {
+    // NOTE: For now, this can either be a PHUIListView or a
+    // PHUIApplicationMenuView.
+
     $this->applicationMenu = $application_menu;
     return $this;
   }
@@ -68,10 +76,14 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     return $this->showChrome;
   }
 
-  public function appendPageObjects(array $objs) {
-    foreach ($objs as $obj) {
-      $this->pageObjects[] = $obj;
-    }
+  public function addClass($class) {
+    $this->classes[] = $class;
+    return $this;
+  }
+
+  public function setPageObjectPHIDs(array $phids) {
+    $this->pageObjects = $phids;
+    return $this;
   }
 
   public function setShowDurableColumn($show) {
@@ -97,30 +109,83 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
       return false;
     }
 
-    $patterns = $this->getQuicksandURIPatternBlacklist();
-    $path = $request->getRequestURI()->getPath();
-    foreach ($patterns as $pattern) {
-      if (preg_match('(^'.$pattern.'$)', $path)) {
-        return false;
-      }
+    if ($this->isQuicksandBlacklistURI()) {
+      return false;
     }
 
     return true;
   }
 
-  public function getDurableColumnVisible() {
-    $column_key = PhabricatorUserPreferences::PREFERENCE_CONPHERENCE_COLUMN;
-    return (bool)$this->getUserPreference($column_key, 0);
+  private function isQuicksandBlacklistURI() {
+    $request = $this->getRequest();
+    if (!$request) {
+      return false;
+    }
+
+    $patterns = $this->getQuicksandURIPatternBlacklist();
+    $path = $request->getRequestURI()->getPath();
+    foreach ($patterns as $pattern) {
+      if (preg_match('(^'.$pattern.'$)', $path)) {
+        return true;
+      }
+    }
+    return false;
   }
 
+  public function getDurableColumnVisible() {
+    $column_key = PhabricatorConpherenceColumnVisibleSetting::SETTINGKEY;
+    return (bool)$this->getUserPreference($column_key, false);
+  }
+
+  public function getDurableColumnMinimize() {
+    $column_key = PhabricatorConpherenceColumnMinimizeSetting::SETTINGKEY;
+    return (bool)$this->getUserPreference($column_key, false);
+  }
+
+  public function addQuicksandConfig(array $config) {
+    $this->quicksandConfig = $config + $this->quicksandConfig;
+    return $this;
+  }
+
+  public function getQuicksandConfig() {
+    return $this->quicksandConfig;
+  }
+
+  public function setCrumbs(PHUICrumbsView $crumbs) {
+    $this->crumbs = $crumbs;
+    return $this;
+  }
+
+  public function getCrumbs() {
+    return $this->crumbs;
+  }
+
+  public function setTabs(PHUIListView $tabs) {
+    $tabs->setType(PHUIListView::TABBAR_LIST);
+    $tabs->addClass('phabricator-standard-page-tabs');
+    $this->tabs = $tabs;
+    return $this;
+  }
+
+  public function getTabs() {
+    return $this->tabs;
+  }
+
+  public function setNavigation(AphrontSideNavFilterView $navigation) {
+    $this->navigation = $navigation;
+    return $this;
+  }
+
+  public function getNavigation() {
+    return $this->navigation;
+  }
 
   public function getTitle() {
-    $glyph_key = PhabricatorUserPreferences::PREFERENCE_TITLES;
-    if ($this->getUserPreference($glyph_key) == 'text') {
-      $use_glyph = false;
-    } else {
-      $use_glyph = true;
-    }
+    $glyph_key = PhabricatorTitleGlyphsSetting::SETTINGKEY;
+    $glyph_on = PhabricatorTitleGlyphsSetting::VALUE_TITLE_GLYPHS;
+    $glyph_setting = $this->getUserPreference($glyph_key, $glyph_on);
+
+    $use_glyph = ($glyph_setting == $glyph_on);
 
     $title = parent::getTitle();
 
@@ -148,7 +213,9 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     if (!$this->getRequest()) {
       throw new Exception(
         pht(
-          'You must set the Request to render a PhabricatorStandardPageView.'));
+          'You must set the %s to render a %s.',
+          'Request',
+          __CLASS__));
     }
 
     $console = $this->getConsole();
@@ -158,9 +225,9 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     require_celerity_resource('phui-button-css');
     require_celerity_resource('phui-spacing-css');
     require_celerity_resource('phui-form-css');
-    require_celerity_resource('sprite-gradient-css');
     require_celerity_resource('phabricator-standard-page-view');
     require_celerity_resource('conpherence-durable-column-view');
+    require_celerity_resource('font-lato');
 
     Javelin::initBehavior('workflow', array());
 
@@ -171,28 +238,48 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     }
 
     if ($user) {
-      $default_img_uri =
-        celerity_get_resource_uri(
-          'rsrc/image/icon/fatcow/document_black.png');
-      $download_form = phabricator_form(
-        $user,
-        array(
-          'action' => '#',
-          'method' => 'POST',
-          'class'  => 'lightbox-download-form',
-          'sigil'  => 'download',
-        ),
-        phutil_tag(
-          'button',
-          array(),
-          pht('Download')));
+      if ($user->isUserActivated()) {
+        $offset = $user->getTimeZoneOffset();
 
-      Javelin::initBehavior(
-        'lightbox-attachments',
-        array(
-          'defaultImageUri' => $default_img_uri,
-          'downloadForm'    => $download_form,
-        ));
+        $ignore_key = PhabricatorTimezoneIgnoreOffsetSetting::SETTINGKEY;
+        $ignore = $user->getUserSetting($ignore_key);
+
+        Javelin::initBehavior(
+          'detect-timezone',
+          array(
+            'offset' => $offset,
+            'uri' => '/settings/timezone/',
+            'message' => pht(
+              'Your browser timezone setting differs from the timezone '.
+              'setting in your profile, click to reconcile.'),
+            'ignoreKey' => $ignore_key,
+            'ignore' => $ignore,
+          ));
+
+        if ($user->getIsAdmin()) {
+          $server_https = $request->isHTTPS();
+          $server_protocol = $server_https ? 'HTTPS' : 'HTTP';
+          $client_protocol = $server_https ? 'HTTP' : 'HTTPS';
+
+          $doc_name = 'Configuring a Preamble Script';
+          $doc_href = PhabricatorEnv::getDoclink($doc_name);
+
+          Javelin::initBehavior(
+            'setup-check-https',
+            array(
+              'server_https' => $server_https,
+              'doc_name' => pht('See Documentation'),
+              'doc_href' => $doc_href,
+              'message' => pht(
+                'Phabricator thinks you are using %s, but your '.
+                'client is convinced that it is using %s. This is a serious '.
+                'misconfiguration with subtle, but significant, consequences.',
+                $server_protocol, $client_protocol),
+            ));
+        }
+      }
+
+      Javelin::initBehavior('lightbox-attachments');
     }
 
     Javelin::initBehavior('aphront-form-disable-on-submit');
@@ -209,26 +296,24 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
       'refresh-csrf',
       array(
         'tokenName' => AphrontRequest::getCSRFTokenName(),
-        'header'    => AphrontRequest::getCSRFHeaderName(),
+        'header' => AphrontRequest::getCSRFHeaderName(),
+        'viaHeader' => AphrontRequest::getViaHeaderName(),
         'current'   => $current_token,
       ));
 
     Javelin::initBehavior('device');
 
-    if ($user->hasSession()) {
-      $hisec = ($user->getSession()->getHighSecurityUntil() - time());
-      if ($hisec > 0) {
-        $remaining_time = phutil_format_relative_time($hisec);
-        Javelin::initBehavior(
-          'high-security-warning',
-          array(
-            'uri' => '/auth/session/downgrade/',
-            'message' => pht(
-              'Your session is in high security mode. When you '.
-              'finish using it, click here to leave.',
-              $remaining_time),
-          ));
-      }
+    Javelin::initBehavior(
+      'high-security-warning',
+      $this->getHighSecurityWarningConfig());
+
+    if (PhabricatorEnv::isReadOnly()) {
+      Javelin::initBehavior(
+        'read-only-warning',
+        array(
+          'message' => PhabricatorEnv::getReadOnlyMessage(),
+          'uri' => PhabricatorEnv::getReadOnlyURI(),
+        ));
     }
 
     if ($console) {
@@ -244,18 +329,7 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
 
       Javelin::initBehavior(
         'dark-console',
-        array(
-          // NOTE: We use a generic label here to prevent input reflection
-          // and mitigate compression attacks like BREACH. See discussion in
-          // T3684.
-          'uri' => pht('Main Request'),
-          'selected' => $user ? $user->getConsoleTab() : null,
-          'visible'  => $user ? (int)$user->getConsoleVisible() : true,
-          'headers' => $headers,
-        ));
-
-      // Change this to initBehavior when there is some behavior to initialize
-      require_celerity_resource('javelin-behavior-error-log');
+        $this->getConsoleConfig());
     }
 
     if ($user) {
@@ -271,8 +345,18 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
       $menu->setController($this->getController());
     }
 
-    if ($this->getApplicationMenu()) {
-      $menu->setApplicationMenu($this->getApplicationMenu());
+    $application_menu = $this->getApplicationMenu();
+    if ($application_menu) {
+      if ($application_menu instanceof PHUIApplicationMenuView) {
+        $crumbs = $this->getCrumbs();
+        if ($crumbs) {
+          $application_menu->setCrumbs($crumbs);
+        }
+
+        $application_menu = $application_menu->buildListView();
+      }
+
+      $menu->setApplicationMenu($application_menu);
     }
 
     $this->menuContent = $menu->render();
@@ -286,8 +370,8 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     if ($request) {
       $user = $request->getUser();
       if ($user) {
-        $monospaced = $user->loadPreferences()->getPreference(
-            PhabricatorUserPreferences::PREFERENCE_MONOSPACED);
+        $monospaced = $user->getUserSetting(
+          PhabricatorMonospacedFontSetting::SETTINGKEY);
       }
     }
 
@@ -295,12 +379,19 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
 
     $font_css = null;
     if (!empty($monospaced)) {
+      // We can't print this normally because escaping quotation marks will
+      // break the CSS. Instead, filter it strictly and then mark it as safe.
+      $monospaced = new PhutilSafeHTML(
+        PhabricatorMonospacedFontSetting::filterMonospacedCSSRule(
+          $monospaced));
+
       $font_css = hsprintf(
         '<style type="text/css">'.
         '.PhabricatorMonospaced, '.
         '.phabricator-remarkup .remarkup-code-block '.
           '.remarkup-code { font: %s !important; } '.
-        '</style>', $monospaced);
+        '</style>',
+        $monospaced);
     }
 
     return hsprintf(
@@ -360,31 +451,6 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
           'or the error log.'));
     }
 
-    // Render the "you have unresolved setup issues..." warning.
-    $setup_warning = null;
-    if ($user && $user->getIsAdmin()) {
-      $open = PhabricatorSetupCheck::getOpenSetupIssueKeys();
-      if ($open) {
-        $classes[] = 'page-has-warning';
-        $setup_warning = phutil_tag_div(
-          'setup-warning-callout',
-          phutil_tag(
-            'a',
-            array(
-              'href' => '/config/issue/',
-              'title' => implode(', ', $open),
-            ),
-            pht('You have %d unresolved setup issue(s)...', count($open))));
-      }
-    }
-
-    Javelin::initBehavior(
-      'scrollbar',
-      array(
-        'nodeID' => 'phabricator-standard-page',
-        'isMainContent' => true,
-      ));
-
     $main_page = phutil_tag(
       'div',
       array(
@@ -392,6 +458,7 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
         'class' => 'phabricator-standard-page',
       ),
       array(
+        $developer_warning,
         $header_chrome,
         phutil_tag(
           'div',
@@ -405,11 +472,17 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     $durable_column = null;
     if ($this->getShowDurableColumn()) {
       $is_visible = $this->getDurableColumnVisible();
+      $is_minimize = $this->getDurableColumnMinimize();
       $durable_column = id(new ConpherenceDurableColumnView())
         ->setSelectedConpherence(null)
         ->setUser($user)
+        ->setQuicksandConfig($this->buildQuicksandConfig())
         ->setVisible($is_visible)
+        ->setMinimize($is_minimize)
         ->setInitialLoad(true);
+      if ($is_minimize) {
+        $this->classes[] = 'minimize-column';
+      }
     }
 
     Javelin::initBehavior('quicksand-blacklist', array(
@@ -420,10 +493,9 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
       'div',
       array(
         'class' => implode(' ', $classes),
+        'id' => 'main-page-frame',
       ),
       array(
-        $developer_warning,
-        $setup_warning,
         $main_page,
         $durable_column,
       ));
@@ -432,10 +504,45 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
   private function renderPageBodyContent() {
     $console = $this->getConsole();
 
+    $body = parent::getBody();
+
+    $footer = $this->renderFooter();
+
+    $nav = $this->getNavigation();
+    $tabs = $this->getTabs();
+    if ($nav) {
+      $crumbs = $this->getCrumbs();
+      if ($crumbs) {
+        $nav->setCrumbs($crumbs);
+      }
+      $nav->appendChild($body);
+      $nav->appendFooter($footer);
+      $content = phutil_implode_html('', array($nav->render()));
+    } else {
+      $content = array();
+
+      $crumbs = $this->getCrumbs();
+      if ($crumbs) {
+        if ($this->getTabs()) {
+          $crumbs->setBorder(true);
+        }
+        $content[] = $crumbs;
+      }
+
+      $tabs = $this->getTabs();
+      if ($tabs) {
+        $content[] = $tabs;
+      }
+
+      $content[] = $body;
+      $content[] = $footer;
+
+      $content = phutil_implode_html('', $content);
+    }
+
     return array(
       ($console ? hsprintf('<darkconsole />') : null),
-      parent::getBody(),
-      $this->renderFooter(),
+      $content,
     );
   }
 
@@ -449,39 +556,36 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
 
     $response = CelerityAPI::getStaticResourceResponse();
 
-    if (PhabricatorEnv::getEnvConfig('notification.enabled')) {
+    if ($request->isHTTPS()) {
+      $with_protocol = 'https';
+    } else {
+      $with_protocol = 'http';
+    }
+
+    $servers = PhabricatorNotificationServerRef::getEnabledClientServers(
+      $with_protocol);
+
+    if ($servers) {
       if ($user && $user->isLoggedIn()) {
+        // TODO: We could tell the browser about all the servers and let it
+        // do random reconnects to improve reliability.
+        shuffle($servers);
+        $server = head($servers);
 
-        $client_uri = PhabricatorEnv::getEnvConfig('notification.client-uri');
-        $client_uri = new PhutilURI($client_uri);
-        if ($client_uri->getDomain() == 'localhost') {
-          $this_host = $this->getRequest()->getHost();
-          $this_host = new PhutilURI('http://'.$this_host.'/');
-          $client_uri->setDomain($this_host->getDomain());
-        }
-
-        $subscriptions = $this->pageObjects;
-        if ($user) {
-          $subscriptions[] = $user->getPHID();
-        }
-
-        if ($request->isHTTPS()) {
-          $client_uri->setProtocol('wss');
-        } else {
-          $client_uri->setProtocol('ws');
-        }
+        $client_uri = $server->getWebsocketURI();
 
         Javelin::initBehavior(
           'aphlict-listen',
           array(
-            'websocketURI'  => (string)$client_uri,
-            'pageObjects'   => array_fill_keys($this->pageObjects, true),
-            'subscriptions' => $subscriptions,
-          ));
+            'websocketURI' => (string)$client_uri,
+          ) + $this->buildAphlictListenConfigData());
+
+        CelerityAPI::getStaticResourceResponse()
+          ->addContentSecurityPolicyURI('connect-src', $client_uri);
       }
     }
 
-    $tail[] = $response->renderHTMLFooter();
+    $tail[] = $response->renderHTMLFooter($this->getFrameable());
 
     return $tail;
   }
@@ -522,6 +626,11 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
       $classes[] = 'audible';
     }
 
+    $classes[] = 'phui-theme-'.PhabricatorEnv::getEnvConfig('ui.header-color');
+    foreach ($this->classes as $class) {
+      $classes[] = $class;
+    }
+
     return implode(' ', $classes);
   }
 
@@ -530,6 +639,58 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
       return null;
     }
     return $this->getRequest()->getApplicationConfiguration()->getConsole();
+  }
+
+  private function getConsoleConfig() {
+    $user = $this->getRequest()->getUser();
+
+    $headers = array();
+    if (DarkConsoleXHProfPluginAPI::isProfilerStarted()) {
+      $headers[DarkConsoleXHProfPluginAPI::getProfilerHeader()] = 'page';
+    }
+    if (DarkConsoleServicesPlugin::isQueryAnalyzerRequested()) {
+      $headers[DarkConsoleServicesPlugin::getQueryAnalyzerHeader()] = true;
+    }
+
+    if ($user) {
+      $setting_tab = PhabricatorDarkConsoleTabSetting::SETTINGKEY;
+      $setting_visible = PhabricatorDarkConsoleVisibleSetting::SETTINGKEY;
+      $tab = $user->getUserSetting($setting_tab);
+      $visible = $user->getUserSetting($setting_visible);
+    } else {
+      $tab = null;
+      $visible = true;
+    }
+
+    return array(
+      // NOTE: We use a generic label here to prevent input reflection
+      // and mitigate compression attacks like BREACH. See discussion in
+      // T3684.
+      'uri' => pht('Main Request'),
+      'selected' => $tab,
+      'visible'  => $visible,
+      'headers' => $headers,
+    );
+  }
+
+  private function getHighSecurityWarningConfig() {
+    $user = $this->getRequest()->getUser();
+
+    $show = false;
+    if ($user->hasSession()) {
+      $hisec = ($user->getSession()->getHighSecurityUntil() - time());
+      if ($hisec > 0) {
+        $show = true;
+      }
+    }
+
+    return array(
+      'show' => $show,
+      'uri' => '/auth/session/downgrade/',
+      'message' => pht(
+        'Your session is in high security mode. When you '.
+        'finish using it, click here to leave.'),
+        );
   }
 
   private function renderFooter() {
@@ -583,8 +744,83 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     $response = $this->renderPageBodyContent();
     $response = $this->willSendResponse($response);
 
+    $extra_config = $this->getQuicksandConfig();
+
     return array(
       'content' => hsprintf('%s', $response),
+    ) + $this->buildQuicksandConfig()
+      + $extra_config;
+  }
+
+  private function buildQuicksandConfig() {
+    $viewer = $this->getRequest()->getUser();
+    $controller = $this->getController();
+
+    $dropdown_query = id(new AphlictDropdownDataQuery())
+      ->setViewer($viewer);
+    $dropdown_query->execute();
+
+    $hisec_warning_config = $this->getHighSecurityWarningConfig();
+
+    $console_config = null;
+    $console = $this->getConsole();
+    if ($console) {
+      $console_config = $this->getConsoleConfig();
+    }
+
+    $upload_enabled = false;
+    if ($controller) {
+      $upload_enabled = $controller->isGlobalDragAndDropUploadEnabled();
+    }
+
+    $application_class = null;
+    $application_search_icon = null;
+    $application_help = null;
+    $controller = $this->getController();
+    if ($controller) {
+      $application = $controller->getCurrentApplication();
+      if ($application) {
+        $application_class = get_class($application);
+        if ($application->getApplicationSearchDocumentTypes()) {
+          $application_search_icon = $application->getIcon();
+        }
+
+        $help_items = $application->getHelpMenuItems($viewer);
+        if ($help_items) {
+          $help_list = id(new PhabricatorActionListView())
+            ->setViewer($viewer);
+          foreach ($help_items as $help_item) {
+            $help_list->addAction($help_item);
+          }
+          $application_help = $help_list->getDropdownMenuMetadata();
+        }
+      }
+    }
+
+    return array(
+      'title' => $this->getTitle(),
+      'bodyClasses' => $this->getBodyClasses(),
+      'aphlictDropdownData' => array(
+        $dropdown_query->getNotificationData(),
+        $dropdown_query->getConpherenceData(),
+      ),
+      'globalDragAndDrop' => $upload_enabled,
+      'hisecWarningConfig' => $hisec_warning_config,
+      'consoleConfig' => $console_config,
+      'applicationClass' => $application_class,
+      'applicationSearchIcon' => $application_search_icon,
+      'helpItems' => $application_help,
+    ) + $this->buildAphlictListenConfigData();
+  }
+
+  private function buildAphlictListenConfigData() {
+    $user = $this->getRequest()->getUser();
+    $subscriptions = $this->pageObjects;
+    $subscriptions[] = $user->getPHID();
+
+    return array(
+      'pageObjects'   => array_fill_keys($this->pageObjects, true),
+      'subscriptions' => $subscriptions,
     );
   }
 
@@ -595,6 +831,19 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     foreach ($applications as $application) {
       $blacklist[] = $application->getQuicksandURIPatternBlacklist();
     }
+
+    // See T4340. Currently, Phortune and Auth both require pulling in external
+    // Javascript (for Stripe card management and Recaptcha, respectively).
+    // This can put us in a position where the user loads a page with a
+    // restrictive Content-Security-Policy, then uses Quicksand to navigate to
+    // a page which needs to load external scripts. For now, just blacklist
+    // these entire applications since we aren't giving up anything
+    // significant by doing so.
+
+    $blacklist[] = array(
+      '/phortune/.*',
+      '/auth/.*',
+    );
 
     return array_mergev($blacklist);
   }
@@ -610,7 +859,49 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
       return $default;
     }
 
-    return $user->loadPreferences()->getPreference($key, $default);
+    return $user->getUserSetting($key);
+  }
+
+  public function produceAphrontResponse() {
+    $controller = $this->getController();
+
+    if (!$this->getApplicationMenu()) {
+      $application_menu = $controller->buildApplicationMenu();
+      if ($application_menu) {
+        $this->setApplicationMenu($application_menu);
+      }
+    }
+
+    $viewer = $this->getUser();
+    if ($viewer && $viewer->getPHID()) {
+      $object_phids = $this->pageObjects;
+      foreach ($object_phids as $object_phid) {
+        PhabricatorFeedStoryNotification::updateObjectNotificationViews(
+          $viewer,
+          $object_phid);
+      }
+    }
+
+    if ($this->getRequest()->isQuicksand()) {
+      $content = $this->renderForQuicksand();
+      $response = id(new AphrontAjaxResponse())
+        ->setContent($content);
+    } else {
+      $content = $this->render();
+
+      $response = id(new AphrontWebpageResponse())
+        ->setContent($content)
+        ->setFrameable($this->getFrameable());
+
+      $static = CelerityAPI::getStaticResourceResponse();
+      foreach ($static->getContentSecurityPolicyURIMap() as $kind => $uris) {
+        foreach ($uris as $uri) {
+          $response->addContentSecurityPolicyURI($kind, $uri);
+        }
+      }
+    }
+
+    return $response;
   }
 
 }

@@ -29,8 +29,7 @@ final class DoorkeeperObjectRef extends Phobject {
 
   public function getExternalObject() {
     if (!$this->externalObject) {
-      throw new Exception(
-        'Call attachExternalObject() before getExternalObject()!');
+      throw new PhutilInvalidStateException('attachExternalObject');
     }
     return $this->externalObject;
   }
@@ -104,6 +103,13 @@ final class DoorkeeperObjectRef extends Phobject {
   public function getFullName() {
     return coalesce(
       $this->getAttribute('fullname'),
+      $this->getAttribute('name'),
+      pht('External Object'));
+  }
+
+  public function getShortName() {
+    return coalesce(
+      $this->getAttribute('shortname'),
       $this->getAttribute('name'),
       pht('External Object'));
   }

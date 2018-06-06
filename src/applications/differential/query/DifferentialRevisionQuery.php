@@ -1,13 +1,6 @@
 <?php
 
 /**
- * Flexible query API for Differential revisions. Example:
- *
- *   // Load open revisions
- *   $revisions = id(new DifferentialRevisionQuery())
- *     ->withStatus(DifferentialRevisionQuery::STATUS_OPEN)
- *     ->execute();
- *
  * @task config   Query Configuration
  * @task exec     Query Execution
  * @task internal Internals
@@ -16,15 +9,6 @@ final class DifferentialRevisionQuery
   extends PhabricatorCursorPagedPolicyAwareQuery {
 
   private $pathIDs = array();
-
-  private $status             = 'status-any';
-  const STATUS_ANY            = 'status-any';
-  const STATUS_OPEN           = 'status-open';
-  const STATUS_ACCEPTED       = 'status-accepted';
-  const STATUS_NEEDS_REVIEW   = 'status-needs-review';
-  const STATUS_NEEDS_REVISION = 'status-needs-revision';
-  const STATUS_CLOSED         = 'status-closed';
-  const STATUS_ABANDONED      = 'status-abandoned';
 
   private $authors = array();
   private $draftAuthors = array();
@@ -36,25 +20,23 @@ final class DifferentialRevisionQuery
   private $phids = array();
   private $responsibles = array();
   private $branches = array();
-  private $arcanistProjectPHIDs = array();
   private $repositoryPHIDs;
   private $updatedEpochMin;
   private $updatedEpochMax;
+  private $statuses;
+  private $isOpen;
 
   const ORDER_MODIFIED      = 'order-modified';
   const ORDER_CREATED       = 'order-created';
 
-  private $needRelationships  = false;
   private $needActiveDiffs    = false;
   private $needDiffIDs        = false;
   private $needCommitPHIDs    = false;
   private $needHashes         = false;
-  private $needReviewerStatus = false;
+  private $needReviewers = false;
   private $needReviewerAuthority;
   private $needDrafts;
   private $needFlags;
-
-  private $buildingGlobalOrder;
 
 
 /* -(  Query Configuration  )------------------------------------------------ */
@@ -89,18 +71,6 @@ final class DifferentialRevisionQuery
    */
   public function withAuthors(array $author_phids) {
     $this->authors = $author_phids;
-    return $this;
-  }
-
-  /**
-   * Filter results to revisions with comments authored by the given PHIDs.
-   *
-   * @param array List of PHIDs of authors
-   * @return this
-   * @task config
-   */
-  public function withDraftRepliesByAuthors(array $author_phids) {
-    $this->draftAuthors = $author_phids;
     return $this;
   }
 
@@ -161,16 +131,13 @@ final class DifferentialRevisionQuery
     return $this;
   }
 
-  /**
-   * Filter results to revisions with a given status. Provide a class constant,
-   * such as `DifferentialRevisionQuery::STATUS_OPEN`.
-   *
-   * @param const Class STATUS constant, like STATUS_OPEN.
-   * @return this
-   * @task config
-   */
-  public function withStatus($status_constant) {
-    $this->status = $status_constant;
+  public function withStatuses(array $statuses) {
+    $this->statuses = $statuses;
+    return $this;
+  }
+
+  public function withIsOpen($is_open) {
+    $this->isOpen = $is_open;
     return $this;
   }
 
@@ -228,19 +195,6 @@ final class DifferentialRevisionQuery
   }
 
 
-  /**
-   * Filter results to only return revisions with a given set of arcanist
-   * projects.
-   *
-   * @param array List of project PHIDs.
-   * @return this
-   * @task config
-   */
-  public function withArcanistProjectPHIDs(array $arc_project_phids) {
-    $this->arcanistProjectPHIDs = $arc_project_phids;
-    return $this;
-  }
-
   public function withRepositoryPHIDs(array $repository_phids) {
     $this->repositoryPHIDs = $repository_phids;
     return $this;
@@ -249,41 +203,6 @@ final class DifferentialRevisionQuery
   public function withUpdatedEpochBetween($min, $max) {
     $this->updatedEpochMin = $min;
     $this->updatedEpochMax = $max;
-    return $this;
-  }
-
-
-  /**
-   * Set result ordering. Provide a class constant, such as
-   * `DifferentialRevisionQuery::ORDER_CREATED`.
-   *
-   * @task config
-   */
-  public function setOrder($order_constant) {
-    switch ($order_constant) {
-      case self::ORDER_CREATED:
-        $this->setOrderVector(array('id'));
-        break;
-      case self::ORDER_MODIFIED:
-        $this->setOrderVector(array('updated', 'id'));
-        break;
-      default:
-        throw new Exception(pht('Unknown order "%s".', $order_constant));
-    }
-
-    return $this;
-  }
-
-
-  /**
-   * Set whether or not the query will load and attach relationships.
-   *
-   * @param bool True to load and attach relationships.
-   * @return this
-   * @task config
-   */
-  public function needRelationships($need_relationships) {
-    $this->needRelationships = $need_relationships;
     return $this;
   }
 
@@ -345,14 +264,14 @@ final class DifferentialRevisionQuery
 
 
   /**
-   * Set whether or not the query should load associated reviewer status.
+   * Set whether or not the query should load associated reviewers.
    *
    * @param bool True to load and attach reviewers.
    * @return this
    * @task config
    */
-  public function needReviewerStatus($need_reviewer_status) {
-    $this->needReviewerStatus = $need_reviewer_status;
+  public function needReviewers($need_reviewers) {
+    $this->needReviewers = $need_reviewers;
     return $this;
   }
 
@@ -385,6 +304,11 @@ final class DifferentialRevisionQuery
 /* -(  Query Execution  )---------------------------------------------------- */
 
 
+  public function newResultObject() {
+    return new DifferentialRevision();
+  }
+
+
   /**
    * Execute the query as configured, returning matching
    * @{class:DifferentialRevision} objects.
@@ -393,11 +317,9 @@ final class DifferentialRevisionQuery
    * @task exec
    */
   protected function loadPage() {
-    $table = new DifferentialRevision();
-    $conn_r = $table->establishConnection('r');
-
     $data = $this->loadData();
-
+    $data = $this->didLoadRawRows($data);
+    $table = $this->newResultObject();
     return $table->loadAllFromArray($data);
   }
 
@@ -469,10 +391,6 @@ final class DifferentialRevisionQuery
     $table = new DifferentialRevision();
     $conn_r = $table->establishConnection('r');
 
-    if ($this->needRelationships) {
-      $this->loadRelationships($conn_r, $revisions);
-    }
-
     if ($this->needCommitPHIDs) {
       $this->loadCommitPHIDs($conn_r, $revisions);
     }
@@ -492,7 +410,7 @@ final class DifferentialRevisionQuery
       $this->loadHashes($conn_r, $revisions);
     }
 
-    if ($this->needReviewerStatus || $this->needReviewerAuthority) {
+    if ($this->needReviewers || $this->needReviewerAuthority) {
       $this->loadReviewers($conn_r, $revisions);
     }
 
@@ -517,23 +435,16 @@ final class DifferentialRevisionQuery
     }
 
     if ($this->needDrafts) {
-      $drafts = id(new DifferentialDraft())->loadAllWhere(
-        'authorPHID = %s AND objectPHID IN (%Ls)',
-        $viewer->getPHID(),
-        mpull($revisions, 'getPHID'));
-      $drafts = mgroup($drafts, 'getObjectPHID');
-      foreach ($revisions as $revision) {
-        $revision->attachDrafts(
-          $viewer,
-          idx($drafts, $revision->getPHID(), array()));
-      }
+      PhabricatorDraftEngine::attachDrafts(
+        $viewer,
+        $revisions);
     }
 
     return $revisions;
   }
 
   private function loadData() {
-    $table = new DifferentialRevision();
+    $table = $this->newResultObject();
     $conn_r = $table->establishConnection('r');
 
     $selects = array();
@@ -545,25 +456,17 @@ final class DifferentialRevisionQuery
       $basic_authors = $this->authors;
       $basic_reviewers = $this->reviewers;
 
-      $authority_projects = id(new PhabricatorProjectQuery())
-        ->setViewer($this->getViewer())
-        ->withMemberPHIDs($this->responsibles)
-        ->execute();
-      $authority_phids = mpull($authority_projects, 'getPHID');
-
       try {
         // Build the query where the responsible users are authors.
         $this->authors = array_merge($basic_authors, $this->responsibles);
+
         $this->reviewers = $basic_reviewers;
         $selects[] = $this->buildSelectStatement($conn_r);
 
         // Build the query where the responsible users are reviewers, or
         // projects they are members of are reviewers.
         $this->authors = $basic_authors;
-        $this->reviewers = array_merge(
-          $basic_reviewers,
-          $this->responsibles,
-          $authority_phids);
+        $this->reviewers = array_merge($basic_reviewers, $this->responsibles);
         $selects[] = $this->buildSelectStatement($conn_r);
 
         // Put everything back like it was.
@@ -579,12 +482,11 @@ final class DifferentialRevisionQuery
     }
 
     if (count($selects) > 1) {
-      $this->buildingGlobalOrder = true;
       $query = qsprintf(
         $conn_r,
         '%Q %Q %Q',
         implode(' UNION DISTINCT ', $selects),
-        $this->buildOrderClause($conn_r),
+        $this->buildOrderClause($conn_r, true),
         $this->buildLimitClause($conn_r));
     } else {
       $query = head($selects);
@@ -596,27 +498,31 @@ final class DifferentialRevisionQuery
   private function buildSelectStatement(AphrontDatabaseConnection $conn_r) {
     $table = new DifferentialRevision();
 
-    $select = qsprintf(
+    $select = $this->buildSelectClause($conn_r);
+
+    $from = qsprintf(
       $conn_r,
-      'SELECT r.* FROM %T r',
+      'FROM %T r',
       $table->getTableName());
 
     $joins = $this->buildJoinsClause($conn_r);
     $where = $this->buildWhereClause($conn_r);
-    $group_by = $this->buildGroupByClause($conn_r);
+    $group_by = $this->buildGroupClause($conn_r);
+    $having = $this->buildHavingClause($conn_r);
 
-    $this->buildingGlobalOrder = false;
     $order_by = $this->buildOrderClause($conn_r);
 
     $limit = $this->buildLimitClause($conn_r);
 
     return qsprintf(
       $conn_r,
-      '(%Q %Q %Q %Q %Q %Q)',
+      '(%Q %Q %Q %Q %Q %Q %Q %Q)',
       $select,
+      $from,
       $joins,
       $where,
       $group_by,
+      $having,
       $order_by,
       $limit);
   }
@@ -659,21 +565,22 @@ final class DifferentialRevisionQuery
     if ($this->reviewers) {
       $joins[] = qsprintf(
         $conn_r,
-        'JOIN %T e_reviewers ON e_reviewers.src = r.phid '.
-        'AND e_reviewers.type = %s '.
-        'AND e_reviewers.dst in (%Ls)',
-        PhabricatorEdgeConfig::TABLE_NAME_EDGE,
-        DifferentialRevisionHasReviewerEdgeType::EDGECONST,
+        'JOIN %T reviewer ON reviewer.revisionPHID = r.phid
+          AND reviewer.reviewerStatus != %s
+          AND reviewer.reviewerPHID in (%Ls)',
+        id(new DifferentialReviewer())->getTableName(),
+        DifferentialReviewerStatus::STATUS_RESIGNED,
         $this->reviewers);
     }
 
     if ($this->draftAuthors) {
-      $differential_draft = new DifferentialDraft();
       $joins[] = qsprintf(
         $conn_r,
-        'JOIN %T has_draft ON has_draft.objectPHID = r.phid '.
-        'AND has_draft.authorPHID IN (%Ls)',
-        $differential_draft->getTableName(),
+        'JOIN %T has_draft ON has_draft.srcPHID = r.phid
+          AND has_draft.type = %s
+          AND has_draft.dstPHID IN (%Ls)',
+        PhabricatorEdgeConfig::TABLE_NAME_EDGE,
+        PhabricatorObjectHasDraftEdgeType::EDGECONST,
         $this->draftAuthors);
     }
 
@@ -684,16 +591,16 @@ final class DifferentialRevisionQuery
         DifferentialRevision::TABLE_COMMIT);
     }
 
-    $joins = implode(' ', $joins);
+    $joins[] = $this->buildJoinClauseParts($conn_r);
 
-    return $joins;
+    return $this->formatJoinClause($joins);
   }
 
 
   /**
    * @task internal
    */
-  private function buildWhereClause($conn_r) {
+  protected function buildWhereClause(AphrontDatabaseConnection $conn_r) {
     $where = array();
 
     if ($this->pathIDs) {
@@ -766,13 +673,6 @@ final class DifferentialRevisionQuery
         $this->branches);
     }
 
-    if ($this->arcanistProjectPHIDs) {
-      $where[] = qsprintf(
-        $conn_r,
-        'r.arcanistProjectPHID in (%Ls)',
-        $this->arcanistProjectPHIDs);
-    }
-
     if ($this->updatedEpochMin !== null) {
       $where[] = qsprintf(
         $conn_r,
@@ -787,59 +687,28 @@ final class DifferentialRevisionQuery
         $this->updatedEpochMax);
     }
 
-    switch ($this->status) {
-      case self::STATUS_ANY:
-        break;
-      case self::STATUS_OPEN:
-        $where[] = qsprintf(
-          $conn_r,
-          'r.status IN (%Ld)',
-          DifferentialRevisionStatus::getOpenStatuses());
-        break;
-      case self::STATUS_NEEDS_REVIEW:
-        $where[] = qsprintf(
-          $conn_r,
-          'r.status IN (%Ld)',
-          array(
-            ArcanistDifferentialRevisionStatus::NEEDS_REVIEW,
-          ));
-        break;
-      case self::STATUS_NEEDS_REVISION:
-        $where[] = qsprintf(
-          $conn_r,
-          'r.status IN (%Ld)',
-          array(
-            ArcanistDifferentialRevisionStatus::NEEDS_REVISION,
-          ));
-        break;
-      case self::STATUS_ACCEPTED:
-        $where[] = qsprintf(
-          $conn_r,
-          'r.status IN (%Ld)',
-          array(
-            ArcanistDifferentialRevisionStatus::ACCEPTED,
-          ));
-        break;
-      case self::STATUS_CLOSED:
-        $where[] = qsprintf(
-          $conn_r,
-          'r.status IN (%Ld)',
-          DifferentialRevisionStatus::getClosedStatuses());
-        break;
-      case self::STATUS_ABANDONED:
-        $where[] = qsprintf(
-          $conn_r,
-          'r.status IN (%Ld)',
-          array(
-            ArcanistDifferentialRevisionStatus::ABANDONED,
-          ));
-        break;
-      default:
-        throw new Exception(
-          "Unknown revision status filter constant '{$this->status}'!");
+    if ($this->statuses !== null) {
+      $where[] = qsprintf(
+        $conn_r,
+        'r.status in (%Ls)',
+        $this->statuses);
     }
 
-    $where[] = $this->buildPagingClause($conn_r);
+    if ($this->isOpen !== null) {
+      if ($this->isOpen) {
+        $statuses = DifferentialLegacyQuery::getModernValues(
+          DifferentialLegacyQuery::STATUS_OPEN);
+      } else {
+        $statuses = DifferentialLegacyQuery::getModernValues(
+          DifferentialLegacyQuery::STATUS_CLOSED);
+      }
+      $where[] = qsprintf(
+        $conn_r,
+        'r.status in (%Ls)',
+        $statuses);
+    }
+
+    $where[] = $this->buildWhereClauseParts($conn_r);
     return $this->formatWhereClause($where);
   }
 
@@ -847,19 +716,37 @@ final class DifferentialRevisionQuery
   /**
    * @task internal
    */
-  private function buildGroupByClause($conn_r) {
+  protected function shouldGroupQueryResultRows() {
+
     $join_triggers = array_merge(
       $this->pathIDs,
       $this->ccs,
       $this->reviewers);
 
-    $needs_distinct = (count($join_triggers) > 1);
-
-    if ($needs_distinct) {
-      return 'GROUP BY r.id';
-    } else {
-      return '';
+    if (count($join_triggers) > 1) {
+      return true;
     }
+
+    return parent::shouldGroupQueryResultRows();
+  }
+
+  public function getBuiltinOrders() {
+    $orders = parent::getBuiltinOrders() + array(
+      'updated' => array(
+        'vector' => array('updated', 'id'),
+        'name' => pht('Date Updated (Latest First)'),
+        'aliases' => array(self::ORDER_MODIFIED),
+      ),
+      'outdated' => array(
+        'vector' => array('-updated', '-id'),
+        'name' => pht('Date Updated (Oldest First)'),
+       ),
+    );
+
+    // Alias the "newest" builtin to the historical key for it.
+    $orders['newest']['aliases'][] = self::ORDER_CREATED;
+
+    return $orders;
   }
 
   protected function getDefaultOrderVector() {
@@ -867,21 +754,13 @@ final class DifferentialRevisionQuery
   }
 
   public function getOrderableColumns() {
-    $primary = ($this->buildingGlobalOrder ? null : 'r');
-
     return array(
-      'id' => array(
-        'table' => $primary,
-        'column' => 'id',
-        'type' => 'int',
-        'unique' => true,
-      ),
       'updated' => array(
-        'table' => $primary,
+        'table' => $this->getPrimaryTableAlias(),
         'column' => 'dateModified',
         'type' => 'int',
       ),
-    );
+    ) + parent::getOrderableColumns();
   }
 
   protected function getPagingValueMap($cursor, array $keys) {
@@ -890,40 +769,6 @@ final class DifferentialRevisionQuery
       'id' => $revision->getID(),
       'updated' => $revision->getDateModified(),
     );
-  }
-
-  private function loadRelationships($conn_r, array $revisions) {
-    assert_instances_of($revisions, 'DifferentialRevision');
-
-    $type_reviewer = DifferentialRevisionHasReviewerEdgeType::EDGECONST;
-    $type_subscriber = PhabricatorObjectHasSubscriberEdgeType::EDGECONST;
-
-    $edges = id(new PhabricatorEdgeQuery())
-      ->withSourcePHIDs(mpull($revisions, 'getPHID'))
-      ->withEdgeTypes(array($type_reviewer, $type_subscriber))
-      ->setOrder(PhabricatorEdgeQuery::ORDER_OLDEST_FIRST)
-      ->execute();
-
-    $type_map = array(
-      DifferentialRevision::RELATION_REVIEWER => $type_reviewer,
-      DifferentialRevision::RELATION_SUBSCRIBED => $type_subscriber,
-    );
-
-    foreach ($revisions as $revision) {
-      $data = array();
-      foreach ($type_map as $rel_type => $edge_type) {
-        $revision_edges = $edges[$revision->getPHID()][$edge_type];
-        foreach ($revision_edges as $dst_phid => $edge_data) {
-          $data[] = array(
-            'relation' => $rel_type,
-            'objectPHID' => $dst_phid,
-            'reasonPHID' => null,
-          );
-        }
-      }
-
-      $revision->attachRelationships($data);
-    }
   }
 
   private function loadCommitPHIDs($conn_r, array $revisions) {
@@ -1010,21 +855,28 @@ final class DifferentialRevisionQuery
   }
 
   private function loadReviewers(
-    AphrontDatabaseConnection $conn_r,
+    AphrontDatabaseConnection $conn,
     array $revisions) {
 
     assert_instances_of($revisions, 'DifferentialRevision');
-    $edge_type = DifferentialRevisionHasReviewerEdgeType::EDGECONST;
 
-    $edges = id(new PhabricatorEdgeQuery())
-      ->withSourcePHIDs(mpull($revisions, 'getPHID'))
-      ->withEdgeTypes(array($edge_type))
-      ->needEdgeData(true)
-      ->setOrder(PhabricatorEdgeQuery::ORDER_OLDEST_FIRST)
-      ->execute();
+    $reviewer_table = new DifferentialReviewer();
+    $reviewer_rows = queryfx_all(
+      $conn,
+      'SELECT * FROM %T WHERE revisionPHID IN (%Ls)
+        ORDER BY id ASC',
+      $reviewer_table->getTableName(),
+      mpull($revisions, 'getPHID'));
+    $reviewer_list = $reviewer_table->loadAllFromArray($reviewer_rows);
+    $reviewer_map = mgroup($reviewer_list, 'getRevisionPHID');
+
+    foreach ($reviewer_map as $key => $reviewers) {
+      $reviewer_map[$key] = mpull($reviewers, null, 'getReviewerPHID');
+    }
 
     $viewer = $this->getViewer();
     $viewer_phid = $viewer->getPHID();
+
     $allow_key = 'differential.allow-self-accept';
     $allow_self = PhabricatorEnv::getEnvConfig($allow_key);
 
@@ -1032,16 +884,13 @@ final class DifferentialRevisionQuery
     if ($this->needReviewerAuthority && $viewer_phid) {
       $authority = $this->loadReviewerAuthority(
         $revisions,
-        $edges,
+        $reviewer_map,
         $allow_self);
     }
 
     foreach ($revisions as $revision) {
-      $revision_edges = $edges[$revision->getPHID()][$edge_type];
-      $reviewers = array();
-      foreach ($revision_edges as $reviewer_phid => $edge) {
-        $reviewer = new DifferentialReviewer($reviewer_phid, $edge['data']);
-
+      $reviewers = idx($reviewer_map, $revision->getPHID(), array());
+      foreach ($reviewers as $reviewer_phid => $reviewer) {
         if ($this->needReviewerAuthority) {
           if (!$viewer_phid) {
             // Logged-out users never have authority.
@@ -1051,7 +900,7 @@ final class DifferentialRevisionQuery
             // The author can never have authority unless we allow self-accept.
             $has_authority = false;
           } else {
-            // Otherwise, look up whether th viewer has authority.
+            // Otherwise, look up whether the viewer has authority.
             $has_authority = isset($authority[$reviewer_phid]);
           }
 
@@ -1061,69 +910,28 @@ final class DifferentialRevisionQuery
         $reviewers[$reviewer_phid] = $reviewer;
       }
 
-      $revision->attachReviewerStatus($reviewers);
+      $revision->attachReviewers($reviewers);
     }
-  }
-
-
-  public static function splitResponsible(array $revisions, array $user_phids) {
-    $blocking = array();
-    $active = array();
-    $waiting = array();
-    $status_review = ArcanistDifferentialRevisionStatus::NEEDS_REVIEW;
-
-    // Bucket revisions into $blocking (revisions where you are blocking
-    // others), $active (revisions you need to do something about) and $waiting
-    // (revisions you're waiting on someone else to do something about).
-    foreach ($revisions as $revision) {
-      $needs_review = ($revision->getStatus() == $status_review);
-      $filter_is_author = in_array($revision->getAuthorPHID(), $user_phids);
-      if (!$revision->getReviewers()) {
-        $needs_review = false;
-        $author_is_reviewer = false;
-      } else {
-        $author_is_reviewer = in_array(
-          $revision->getAuthorPHID(),
-          $revision->getReviewers());
-      }
-
-      // If exactly one of "needs review" and "the user is the author" is
-      // true, the user needs to act on it. Otherwise, they're waiting on
-      // it.
-      if ($needs_review ^ $filter_is_author) {
-        if ($needs_review) {
-          array_unshift($blocking, $revision);
-        } else {
-          $active[] = $revision;
-        }
-      // User is author **and** reviewer. An exotic but configurable workflow.
-      // User needs to act on it double.
-      } else if ($needs_review && $author_is_reviewer) {
-        array_unshift($blocking, $revision);
-        $active[] = $revision;
-      } else {
-        $waiting[] = $revision;
-      }
-    }
-
-    return array($blocking, $active, $waiting);
   }
 
   private function loadReviewerAuthority(
     array $revisions,
-    array $edges,
+    array $reviewers,
     $allow_self) {
 
     $revision_map = mpull($revisions, null, 'getPHID');
     $viewer_phid = $this->getViewer()->getPHID();
 
-    // Find all the project reviewers which the user may have authority over.
+    // Find all the project/package reviewers which the user may have authority
+    // over.
     $project_phids = array();
+    $package_phids = array();
     $project_type = PhabricatorProjectProjectPHIDType::TYPECONST;
-    $edge_type = DifferentialRevisionHasReviewerEdgeType::EDGECONST;
-    foreach ($edges as $src => $types) {
+    $package_type = PhabricatorOwnersPackagePHIDType::TYPECONST;
+
+    foreach ($reviewers as $revision_phid => $reviewer_list) {
       if (!$allow_self) {
-        if ($revision_map[$src]->getAuthorPHID() == $viewer_phid) {
+        if ($revision_map[$revision_phid]->getAuthorPHID() == $viewer_phid) {
           // If self-review isn't permitted, the user will never have
           // authority over projects on revisions they authored because you
           // can't accept your own revisions, so we don't need to load any
@@ -1131,16 +939,22 @@ final class DifferentialRevisionQuery
           continue;
         }
       }
-      $edge_data = idx($types, $edge_type, array());
-      foreach ($edge_data as $dst => $data) {
-        if (phid_get_type($dst) == $project_type) {
-          $project_phids[] = $dst;
+
+      foreach ($reviewer_list as $reviewer_phid => $reviewer) {
+        $phid_type = phid_get_type($reviewer_phid);
+        if ($phid_type == $project_type) {
+          $project_phids[] = $reviewer_phid;
+        }
+        if ($phid_type == $package_type) {
+          $package_phids[] = $reviewer_phid;
         }
       }
     }
 
-    // Now, figure out which of these projects the viewer is actually a
-    // member of.
+    // The viewer has authority over themselves.
+    $user_authority = array_fuse(array($viewer_phid));
+
+    // And over any projects they are a member of.
     $project_authority = array();
     if ($project_phids) {
       $project_authority = id(new PhabricatorProjectQuery())
@@ -1149,16 +963,30 @@ final class DifferentialRevisionQuery
         ->withMemberPHIDs(array($viewer_phid))
         ->execute();
       $project_authority = mpull($project_authority, 'getPHID');
+      $project_authority = array_fuse($project_authority);
     }
 
-    // Finally, the viewer has authority over themselves.
-    return array(
-      $viewer_phid => true,
-    ) + array_fuse($project_authority);
+    // And over any packages they own.
+    $package_authority = array();
+    if ($package_phids) {
+      $package_authority = id(new PhabricatorOwnersPackageQuery())
+        ->setViewer($this->getViewer())
+        ->withPHIDs($package_phids)
+        ->withAuthorityPHIDs(array($viewer_phid))
+        ->execute();
+      $package_authority = mpull($package_authority, 'getPHID');
+      $package_authority = array_fuse($package_authority);
+    }
+
+    return $user_authority + $project_authority + $package_authority;
   }
 
   public function getQueryApplicationClass() {
     return 'PhabricatorDifferentialApplication';
+  }
+
+  protected function getPrimaryTableAlias() {
+    return 'r';
   }
 
 }

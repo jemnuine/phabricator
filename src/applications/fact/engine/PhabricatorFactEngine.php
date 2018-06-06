@@ -1,39 +1,52 @@
 <?php
 
-abstract class PhabricatorFactEngine {
+abstract class PhabricatorFactEngine extends Phobject {
+
+  private $factMap;
+  private $viewer;
 
   final public static function loadAllEngines() {
-    $classes = id(new PhutilSymbolLoader())
+    return id(new PhutilClassMapQuery())
       ->setAncestorClass(__CLASS__)
-      ->setConcreteOnly(true)
-      ->selectAndLoadSymbols();
+      ->execute();
+  }
 
-    $objects = array();
-    foreach ($classes as $class) {
-      $objects[] = newv($class['name'], array());
+  abstract public function newFacts();
+
+  abstract public function supportsDatapointsForObject(
+    PhabricatorLiskDAO $object);
+
+  abstract public function newDatapointsForObject(PhabricatorLiskDAO $object);
+
+  final protected function getFact($key) {
+    if ($this->factMap === null) {
+      $facts = $this->newFacts();
+      $facts = mpull($facts, null, 'getKey');
+      $this->factMap = $facts;
     }
 
-    return $objects;
+    if (!isset($this->factMap[$key])) {
+      throw new Exception(
+        pht(
+          'Unknown fact ("%s") for engine "%s".',
+          $key,
+          get_class($this)));
+    }
+
+    return $this->factMap[$key];
   }
 
-  public function getFactSpecs(array $fact_types) {
-    return array();
+  public function setViewer(PhabricatorUser $viewer) {
+    $this->viewer = $viewer;
+    return $this;
   }
 
-  public function shouldComputeRawFactsForObject(PhabricatorLiskDAO $object) {
-    return false;
-  }
+  public function getViewer() {
+    if (!$this->viewer) {
+      throw new PhutilInvalidStateException('setViewer');
+    }
 
-  public function computeRawFactsForObject(PhabricatorLiskDAO $object) {
-    return array();
-  }
-
-  public function shouldComputeAggregateFacts() {
-    return false;
-  }
-
-  public function computeAggregateFacts() {
-    return array();
+    return $this->viewer;
   }
 
 }

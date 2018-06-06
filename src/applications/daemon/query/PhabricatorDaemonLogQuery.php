@@ -68,8 +68,8 @@ final class PhabricatorDaemonLogQuery
   }
 
   protected function willFilterPage(array $daemons) {
-    $unknown_delay = PhabricatorDaemonLogQuery::getTimeUntilUnknown();
-    $dead_delay = PhabricatorDaemonLogQuery::getTimeUntilDead();
+    $unknown_delay = self::getTimeUntilUnknown();
+    $dead_delay = self::getTimeUntilDead();
 
     $status_running = PhabricatorDaemonLog::STATUS_RUNNING;
     $status_unknown = PhabricatorDaemonLog::STATUS_UNKNOWN;
@@ -124,7 +124,7 @@ final class PhabricatorDaemonLogQuery
     return $daemons;
   }
 
-  private function buildWhereClause(AphrontDatabaseConnection $conn_r) {
+  protected function buildWhereClause(AphrontDatabaseConnection $conn_r) {
     $where = array();
 
     if ($this->ids !== null) {

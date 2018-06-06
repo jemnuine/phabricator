@@ -2,12 +2,10 @@
 
 /**
  * @task commitmessage    Integration with Commit Messages
+ * @task diff             Integration with Diff Properties
  */
 abstract class DifferentialCustomField
   extends PhabricatorCustomField {
-
-  const ROLE_COMMITMESSAGE      = 'differential:commitmessage';
-  const ROLE_COMMITMESSAGEEDIT  = 'differential:commitmessageedit';
 
   /**
    * TODO: It would be nice to remove this, but a lot of different code is
@@ -19,49 +17,47 @@ abstract class DifferentialCustomField
     return $this->getFieldKey();
   }
 
-  public function shouldEnableForRole($role) {
-    switch ($role) {
-      case self::ROLE_COMMITMESSAGE:
-        return $this->shouldAppearInCommitMessage();
-      case self::ROLE_COMMITMESSAGEEDIT:
-        return $this->shouldAppearInCommitMessage() &&
-               $this->shouldAllowEditInCommitMessage();
-    }
-
-    return parent::shouldEnableForRole($role);
-  }
-
-  public function getRequiredDiffPropertiesForRevisionView() {
-    if ($this->getProxy()) {
-      return $this->getProxy()->getRequiredDiffPropertiesForRevisionView();
-    }
-    return array();
+  // TODO: As above.
+  public function getModernFieldKey() {
+    return $this->getFieldKeyForConduit();
   }
 
   protected function parseObjectList(
     $value,
     array $types,
-    $allow_partial = false) {
+    $allow_partial = false,
+    array $suffixes = array()) {
     return id(new PhabricatorObjectListQuery())
       ->setViewer($this->getViewer())
       ->setAllowedTypes($types)
       ->setObjectList($value)
       ->setAllowPartialResults($allow_partial)
+      ->setSuffixes($suffixes)
       ->execute();
   }
 
-  protected function renderObjectList(array $handles) {
+  protected function renderObjectList(
+    array $handles,
+    array $suffixes = array()) {
+
     if (!$handles) {
       return null;
     }
 
     $out = array();
     foreach ($handles as $handle) {
+      $phid = $handle->getPHID();
+
       if ($handle->getPolicyFiltered()) {
-        $out[] = $handle->getPHID();
+        $token = $phid;
       } else if ($handle->isComplete()) {
-        $out[] = $handle->getObjectName();
+        $token = $handle->getCommandLineObjectName();
       }
+
+      $suffix = idx($suffixes, $phid);
+      $token = $token.$suffix;
+
+      $out[] = $token;
     }
 
     return implode(', ', $out);
@@ -74,6 +70,15 @@ abstract class DifferentialCustomField
     return array();
   }
 
+  protected function getActiveDiff() {
+    $object = $this->getObject();
+    try {
+      return $object->getActiveDiff();
+    } catch (Exception $ex) {
+      return null;
+    }
+  }
+
   public function getRequiredHandlePHIDsForRevisionHeaderWarnings() {
     return array();
   }
@@ -82,40 +87,8 @@ abstract class DifferentialCustomField
     return array();
   }
 
+
 /* -(  Integration with Commit Messages  )----------------------------------- */
-
-
-  /**
-   * @task commitmessage
-   */
-  public function shouldAppearInCommitMessage() {
-    if ($this->getProxy()) {
-      return $this->getProxy()->shouldAppearInCommitMessage();
-    }
-    return false;
-  }
-
-
-  /**
-   * @task commitmessage
-   */
-  public function shouldAppearInCommitMessageTemplate() {
-    if ($this->getProxy()) {
-      return $this->getProxy()->shouldAppearInCommitMessageTemplate();
-    }
-    return false;
-  }
-
-
-  /**
-   * @task commitmessage
-   */
-  public function shouldAllowEditInCommitMessage() {
-    if ($this->getProxy()) {
-      return $this->getProxy()->shouldAllowEditInCommitMessage();
-    }
-    return true;
-  }
 
 
   /**
@@ -129,92 +102,39 @@ abstract class DifferentialCustomField
   }
 
 
-  /**
-   * @task commitmessage
-   */
-  public function getCommitMessageLabels() {
-    if ($this->getProxy()) {
-      return $this->getProxy()->getCommitMessageLabels();
-    }
-    return array($this->renderCommitMessageLabel());
-  }
+/* -(  Integration with Diff Properties  )----------------------------------- */
 
 
   /**
-   * @task commitmessage
+   * @task diff
    */
-  public function parseValueFromCommitMessage($value) {
+  public function shouldAppearInDiffPropertyView() {
     if ($this->getProxy()) {
-      return $this->getProxy()->parseValueFromCommitMessage($value);
-    }
-    return $value;
-  }
-
-
-  /**
-   * @task commitmessage
-   */
-  public function readValueFromCommitMessage($value) {
-    if ($this->getProxy()) {
-      $this->getProxy()->readValueFromCommitMessage($value);
-      return $this;
-    }
-    return $this;
-  }
-
-
-  /**
-   * @task commitmessage
-   */
-  public function shouldOverwriteWhenCommitMessageIsEdited() {
-    if ($this->getProxy()) {
-      return $this->getProxy()->shouldOverwriteWhenCommitMessageIsEdited();
+      return $this->getProxy()->shouldAppearInDiffPropertyView();
     }
     return false;
   }
 
 
   /**
-   * @task commitmessage
+   * @task diff
    */
-  public function getRequiredHandlePHIDsForCommitMessage() {
+  public function renderDiffPropertyViewLabel(DifferentialDiff $diff) {
     if ($this->getProxy()) {
-      return $this->getProxy()->getRequiredHandlePHIDsForCommitMessage();
-    }
-    return array();
-  }
-
-
-  /**
-   * @task commitmessage
-   */
-  public function renderCommitMessageLabel() {
-    if ($this->getProxy()) {
-      return $this->getProxy()->renderCommitMessageLabel();
+      return $this->getProxy()->renderDiffPropertyViewLabel($diff);
     }
     return $this->getFieldName();
   }
 
 
   /**
-   * @task commitmessage
+   * @task diff
    */
-  public function renderCommitMessageValue(array $handles) {
+  public function renderDiffPropertyViewValue(DifferentialDiff $diff) {
     if ($this->getProxy()) {
-      return $this->getProxy()->renderCommitMessageValue($handles);
+      return $this->getProxy()->renderDiffPropertyViewValue($diff);
     }
     throw new PhabricatorCustomFieldImplementationIncompleteException($this);
-  }
-
-
-  /**
-   * @task commitmessage
-   */
-  public function validateCommitMessageValue($value) {
-    if ($this->getProxy()) {
-      return $this->getProxy()->validateCommitMessageValue($value);
-    }
-    return;
   }
 
 }

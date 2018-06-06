@@ -2,23 +2,17 @@
 
 final class PhrictionDiffController extends PhrictionController {
 
-  private $id;
-
   public function shouldAllowPublic() {
     return true;
   }
 
-  public function willProcessRequest(array $data) {
-    $this->id = $data['id'];
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $id = $request->getURIData('id');
 
     $document = id(new PhrictionDocumentQuery())
-      ->setViewer($user)
-      ->withIDs(array($this->id))
+      ->setViewer($viewer)
+      ->withIDs(array($id))
       ->needContent(true)
       ->executeOne();
     if (!$document) {
@@ -35,10 +29,11 @@ final class PhrictionDiffController extends PhrictionController {
       list($l, $r) = explode(',', $ref);
     }
 
-    $content = id(new PhrictionContent())->loadAllWhere(
-      'documentID = %d AND version IN (%Ld)',
-      $document->getID(),
-      array($l, $r));
+    $content = id(new PhrictionContentQuery())
+      ->setViewer($viewer)
+      ->withDocumentPHIDs(array($document->getPHID()))
+      ->withVersions(array($l, $r))
+      ->execute();
     $content = mpull($content, null, 'getVersion');
 
     $content_l = idx($content, $l, null);
@@ -51,60 +46,20 @@ final class PhrictionDiffController extends PhrictionController {
     $text_l = $content_l->getContent();
     $text_r = $content_r->getContent();
 
-    $text_l = phutil_utf8_hard_wrap($text_l, 80);
-    $text_l = implode("\n", $text_l);
-    $text_r = phutil_utf8_hard_wrap($text_r, 80);
-    $text_r = implode("\n", $text_r);
+    $diff_view = id(new PhabricatorApplicationTransactionTextDiffDetailView())
+      ->setOldText($text_l)
+      ->setNewText($text_r);
 
-    $engine = new PhabricatorDifferenceEngine();
-    $changeset = $engine->generateChangesetFromFileContent($text_l, $text_r);
-
-    $changeset->setFilename($content_r->getTitle());
-
-    $changeset->setOldProperties(
-      array(
-        'Title'   => $content_l->getTitle(),
-      ));
-    $changeset->setNewProperties(
-      array(
-        'Title'   => $content_r->getTitle(),
-      ));
-
-    $whitespace_mode = DifferentialChangesetParser::WHITESPACE_SHOW_ALL;
-
-    $parser = id(new DifferentialChangesetParser())
-      ->setUser($user)
-      ->setChangeset($changeset)
-      ->setRenderingReference("{$l},{$r}");
-
-    $parser->readParametersFromRequest($request);
-    $parser->setWhitespaceMode($whitespace_mode);
-
-    $engine = new PhabricatorMarkupEngine();
-    $engine->setViewer($user);
-    $engine->process();
-    $parser->setMarkupEngine($engine);
-
-    $spec = $request->getStr('range');
-    list($range_s, $range_e, $mask) =
-      DifferentialChangesetParser::parseRangeSpecification($spec);
-
-    $parser->setRange($range_s, $range_e);
-    $parser->setMask($mask);
-
-    if ($request->isAjax()) {
-      return id(new PhabricatorChangesetResponse())
-        ->setRenderedChangeset($parser->renderChangeset());
-    }
-
-    $changes = id(new DifferentialChangesetListView())
-      ->setUser($this->getViewer())
-      ->setChangesets(array($changeset))
-      ->setVisibleChangesets(array($changeset))
-      ->setRenderingReferences(array("{$l},{$r}"))
-      ->setRenderURI('/phriction/diff/'.$document->getID().'/')
-      ->setTitle(pht('Changes'))
-      ->setParser($parser);
+    $changes = id(new PHUIObjectBoxView())
+      ->setHeaderText(pht('Content Changes'))
+      ->setBackground(PHUIObjectBoxView::BLUE_PROPERTY)
+      ->appendChild(
+        phutil_tag(
+          'div',
+          array(
+            'class' => 'prose-diff-frame',
+          ),
+          $diff_view));
 
     require_celerity_resource('phriction-document-css');
 
@@ -126,10 +81,10 @@ final class PhrictionDiffController extends PhrictionController {
     $title = pht('Version %s vs %s', $l, $r);
 
     $header = id(new PHUIHeaderView())
-      ->setHeader($title);
+      ->setHeader($title)
+      ->setHeaderIcon('fa-history');
 
     $crumbs->addTextCrumb($title, $request->getRequestURI());
-
 
     $comparison_table = $this->renderComparisonTable(
       array(
@@ -149,7 +104,7 @@ final class PhrictionDiffController extends PhrictionController {
           'a',
           array(
             'href' => $uri->alter('l', $l - 1)->alter('r', $r - 1),
-            'class' => 'button',
+            'class' => 'button button-grey',
           ),
           pht("\xC2\xAB Previous Change"));
       } else {
@@ -157,7 +112,7 @@ final class PhrictionDiffController extends PhrictionController {
           'a',
           array(
             'href' => '#',
-            'class' => 'button grey disabled',
+            'class' => 'button button-grey disabled',
           ),
           pht('Original Change'));
       }
@@ -168,7 +123,7 @@ final class PhrictionDiffController extends PhrictionController {
           'a',
           array(
             'href' => $uri->alter('l', $l + 1)->alter('r', $r + 1),
-            'class' => 'button',
+            'class' => 'button button-grey',
           ),
           pht("Next Change \xC2\xBB"));
       } else {
@@ -176,7 +131,7 @@ final class PhrictionDiffController extends PhrictionController {
           'a',
           array(
             'href' => '#',
-            'class' => 'button grey disabled',
+            'class' => 'button button-grey disabled',
           ),
           pht('Most Recent Change'));
       }
@@ -190,7 +145,6 @@ final class PhrictionDiffController extends PhrictionController {
         )));
     }
 
-
     $output = hsprintf(
       '<div class="phriction-document-history-diff">'.
         '%s%s'.
@@ -203,20 +157,24 @@ final class PhrictionDiffController extends PhrictionController {
       $revert_l,
       $revert_r);
 
-
     $object_box = id(new PHUIObjectBoxView())
-      ->setHeader($header)
+      ->setHeaderText(pht('Edits'))
+      ->setBackground(PHUIObjectBoxView::BLUE_PROPERTY)
       ->appendChild($output);
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
+    $crumbs->setBorder(true);
+
+    $view = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->setFooter(array(
         $object_box,
         $changes,
-      ),
-      array(
-        'title'     => pht('Document History'),
       ));
+
+    return $this->newPage()
+      ->setTitle(pht('Document History'))
+      ->setCrumbs($crumbs)
+      ->appendChild($view);
 
   }
 
@@ -243,7 +201,7 @@ final class PhrictionDiffController extends PhrictionController {
         'a',
         array(
           'href'  => '/phriction/edit/'.$document_id.'/',
-          'class' => 'button grey',
+          'class' => 'button button-grey',
         ),
         pht('Edit Current Version'));
     }
@@ -253,7 +211,7 @@ final class PhrictionDiffController extends PhrictionController {
       'a',
       array(
         'href'  => '/phriction/edit/'.$document_id.'/?revert='.$version,
-        'class' => 'button grey',
+        'class' => 'button button-grey',
       ),
       pht('Revert to Version %s...', $version));
   }
@@ -261,13 +219,12 @@ final class PhrictionDiffController extends PhrictionController {
   private function renderComparisonTable(array $content) {
     assert_instances_of($content, 'PhrictionContent');
 
-    $user = $this->getRequest()->getUser();
+    $viewer = $this->getViewer();
 
     $phids = mpull($content, 'getAuthorPHID');
     $handles = $this->loadViewerHandles($phids);
 
     $list = new PHUIObjectItemListView();
-    $list->setFlush(true);
 
     $first = true;
     foreach ($content as $c) {
@@ -278,18 +235,18 @@ final class PhrictionDiffController extends PhrictionController {
           $author,
           pht('Version %s', $c->getVersion())))
         ->addAttribute(pht('%s %s',
-          phabricator_date($c->getDateCreated(), $user),
-          phabricator_time($c->getDateCreated(), $user)));
+          phabricator_date($c->getDateCreated(), $viewer),
+          phabricator_time($c->getDateCreated(), $viewer)));
 
       if ($c->getDescription()) {
         $item->addAttribute($c->getDescription());
       }
 
       if ($first == true) {
-        $item->setBarColor('green');
+        $item->setStatusIcon('fa-file green');
         $first = false;
       } else {
-        $item->setBarColor('red');
+        $item->setStatusIcon('fa-file red');
       }
 
       $list->addItem($item);

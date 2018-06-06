@@ -1,52 +1,6 @@
 <?php
 
-final class CeleritySpriteGenerator {
-
-  public function buildMenuSheet() {
-    $sprites = array();
-
-    $sources = array(
-      'logo' => array(
-        'x' => 96,
-        'y' => 40,
-        'css' => '.phabricator-main-menu-logo',
-      ),
-      'eye' => array(
-        'x' => 40,
-        'y' => 40,
-        'css' => '.phabricator-main-menu-eye',
-      ),
-    );
-
-    $scales = array(
-      '1x' => 1,
-      '2x' => 2,
-    );
-
-    $template = new PhutilSprite();
-    foreach ($sources as $name => $spec) {
-      $sprite = id(clone $template)
-        ->setName($name)
-        ->setSourceSize($spec['x'], $spec['y'])
-        ->setTargetCSS($spec['css']);
-
-      foreach ($scales as $scale_name => $scale) {
-        $path = 'menu_'.$scale_name.'/'.$name.'.png';
-        $path = $this->getPath($path);
-
-        $sprite->setSourceFile($path, $scale);
-      }
-      $sprites[] = $sprite;
-    }
-
-    $sheet = $this->buildSheet('menu', true);
-    $sheet->setScales($scales);
-    foreach ($sprites as $sprite) {
-      $sheet->addSprite($sprite);
-    }
-
-    return $sheet;
-  }
+final class CeleritySpriteGenerator extends Phobject {
 
   public function buildTokenSheet() {
     $icons = $this->getDirectoryList('tokens_1x');
@@ -55,7 +9,7 @@ final class CeleritySpriteGenerator {
       '2x' => 2,
     );
     $template = id(new PhutilSprite())
-      ->setSourceSize(16, 16);
+      ->setSourceSize(18, 18);
 
     $sprites = array();
     $prefix = 'tokens_';
@@ -80,38 +34,6 @@ final class CeleritySpriteGenerator {
     return $sheet;
   }
 
-  public function buildProjectsSheet() {
-    $icons = $this->getDirectoryList('projects_1x');
-    $scales = array(
-      '1x' => 1,
-      '2x' => 2,
-    );
-    $template = id(new PhutilSprite())
-      ->setSourceSize(50, 50);
-
-    $sprites = array();
-    $prefix = 'projects-';
-    foreach ($icons as $icon) {
-      $sprite = id(clone $template)
-        ->setName($prefix.$icon)
-        ->setTargetCSS('.'.$prefix.$icon);
-
-      foreach ($scales as $scale_key => $scale) {
-        $path = $this->getPath('projects_'.$scale_key.'/'.$icon.'.png');
-        $sprite->setSourceFile($path, $scale);
-      }
-      $sprites[] = $sprite;
-    }
-
-    $sheet = $this->buildSheet('projects', true);
-    $sheet->setScales($scales);
-    foreach ($sprites as $sprite) {
-      $sheet->addSprite($sprite);
-    }
-
-    return $sheet;
-  }
-
   public function buildLoginSheet() {
     $icons = $this->getDirectoryList('login_1x');
     $scales = array(
@@ -119,7 +41,7 @@ final class CeleritySpriteGenerator {
       '2x' => 2,
     );
     $template = id(new PhutilSprite())
-      ->setSourceSize(34, 34);
+      ->setSourceSize(28, 28);
 
     $sprites = array();
     $prefix = 'login_';
@@ -144,71 +66,6 @@ final class CeleritySpriteGenerator {
     return $sheet;
   }
 
-  public function buildGradientSheet() {
-    $gradients = $this->getDirectoryList('gradients');
-
-    $template = new PhutilSprite();
-
-    $unusual_heights = array(
-      'breadcrumbs'     => 31,
-      'grey-header'     => 70,
-      'dark-grey-header' => 70,
-      'lightblue-header' => 240,
-      'lightgreen-header' => 240,
-      'lightviolet-header' => 240,
-      'lightred-header' => 240,
-    );
-
-    $sprites = array();
-    foreach ($gradients as $gradient) {
-      $path = $this->getPath('gradients/'.$gradient.'.png');
-      $sprite = id(clone $template)
-        ->setName('gradient-'.$gradient)
-        ->setSourceFile($path)
-        ->setTargetCSS('.gradient-'.$gradient);
-
-      $sprite->setSourceSize(4, idx($unusual_heights, $gradient, 26));
-
-      $sprites[] = $sprite;
-    }
-
-    $sheet = $this->buildSheet(
-      'gradient',
-      false,
-      PhutilSpriteSheet::TYPE_REPEAT_X);
-    foreach ($sprites as $sprite) {
-      $sheet->addSprite($sprite);
-    }
-
-    return $sheet;
-  }
-
-  public function buildMainHeaderSheet() {
-    $gradients = $this->getDirectoryList('main_header');
-    $template = new PhutilSprite();
-
-    $sprites = array();
-    foreach ($gradients as $gradient) {
-      $path = $this->getPath('main_header/'.$gradient.'.png');
-      $sprite = id(clone $template)
-        ->setName('main-header-'.$gradient)
-        ->setSourceFile($path)
-        ->setTargetCSS('.main-header-'.$gradient);
-      $sprite->setSourceSize(6, 44);
-      $sprites[] = $sprite;
-    }
-
-    $sheet = $this->buildSheet('main-header',
-      false,
-      PhutilSpriteSheet::TYPE_REPEAT_X);
-
-    foreach ($sprites as $sprite) {
-      $sheet->addSprite($sprite);
-    }
-
-    return $sheet;
-  }
-
   private function getPath($to_path = null) {
     $root = dirname(phutil_get_library_root('phabricator'));
     return $root.'/resources/sprite/'.$to_path;
@@ -223,8 +80,11 @@ final class CeleritySpriteGenerator {
     foreach ($images as $image) {
       if (!preg_match('/\.png$/', $image)) {
         throw new Exception(
-          "Expected file '{$image}' in '{$path}' to be a sprite source ".
-          "ending in '.png'.");
+          pht(
+            "Expected file '%s' in '%s' to be a sprite source ending in '%s'.",
+            $image,
+            $path,
+            '.png'));
       }
       $result[] = substr($image, 0, -4);
     }
@@ -261,7 +121,8 @@ final class CeleritySpriteGenerator {
       $retina_rules = <<<EOCSS
 @media
 only screen and (min-device-pixel-ratio: 1.5),
-only screen and (-webkit-min-device-pixel-ratio: 1.5) {
+only screen and (-webkit-min-device-pixel-ratio: 1.5),
+only screen and (min-resolution: 1.5dppx) {
   .sprite-{$name}{$extra_css} {
     background-image: url(/rsrc/image/sprite-{$name}-X2.png);
     background-size: {X}px {Y}px;

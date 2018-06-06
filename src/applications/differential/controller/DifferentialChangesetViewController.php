@@ -9,8 +9,6 @@ final class DifferentialChangesetViewController extends DifferentialController {
   public function handleRequest(AphrontRequest $request) {
     $viewer = $this->getViewer();
 
-    $author_phid = $viewer->getPHID();
-
     $rendering_reference = $request->getStr('ref');
     $parts = explode('/', $rendering_reference);
     if (count($parts) == 2) {
@@ -67,6 +65,8 @@ final class DifferentialChangesetViewController extends DifferentialController {
       }
     }
 
+    $old = array();
+    $new = array();
     if (!$vs) {
       $right = $changeset;
       $left  = null;
@@ -77,6 +77,9 @@ final class DifferentialChangesetViewController extends DifferentialController {
       $left_new = false;
 
       $render_cache_key = $right->getID();
+
+      $old[] = $changeset;
+      $new[] = $changeset;
     } else if ($vs == -1) {
       $right = null;
       $left = $changeset;
@@ -87,6 +90,9 @@ final class DifferentialChangesetViewController extends DifferentialController {
       $left_new = true;
 
       $render_cache_key = null;
+
+      $old[] = $changeset;
+      $new[] = $changeset;
     } else {
       $right = $changeset;
       $left = $vs_changeset;
@@ -97,6 +103,9 @@ final class DifferentialChangesetViewController extends DifferentialController {
       $left_new = true;
 
       $render_cache_key = null;
+
+      $new[] = $left;
+      $new[] = $right;
     }
 
     if ($left) {
@@ -118,29 +127,32 @@ final class DifferentialChangesetViewController extends DifferentialController {
       $changeset = $choice;
     }
 
-    $coverage = null;
-    if ($right && $right->getDiffID()) {
-      $unit = id(new DifferentialDiffProperty())->loadOneWhere(
-        'diffID = %d AND name = %s',
-        $right->getDiffID(),
-        'arc:unit');
-
-      if ($unit) {
-        $coverage = array();
-        foreach ($unit->getData() as $result) {
-          $result_coverage = idx($result, 'coverage');
-          if (!$result_coverage) {
-            continue;
-          }
-          $file_coverage = idx($result_coverage, $right->getFileName());
-          if (!$file_coverage) {
-            continue;
-          }
-          $coverage[] = $file_coverage;
-        }
-
-        $coverage = ArcanistUnitTestResult::mergeCoverage($coverage);
+    if ($left_new || $right_new) {
+      $diff_map = array();
+      if ($left) {
+        $diff_map[] = $left->getDiff();
       }
+      if ($right) {
+        $diff_map[] = $right->getDiff();
+      }
+      $diff_map = mpull($diff_map, null, 'getPHID');
+
+      $buildables = id(new HarbormasterBuildableQuery())
+        ->setViewer($viewer)
+        ->withBuildablePHIDs(array_keys($diff_map))
+        ->withManualBuildables(false)
+        ->needBuilds(true)
+        ->needTargets(true)
+        ->execute();
+      $buildables = mpull($buildables, null, 'getBuildablePHID');
+      foreach ($diff_map as $diff_phid => $changeset_diff) {
+        $changeset_diff->attachBuildable(idx($buildables, $diff_phid));
+      }
+    }
+
+    $coverage = null;
+    if ($right_new) {
+      $coverage = $this->loadCoverage($right);
     }
 
     $spec = $request->getStr('range');
@@ -161,10 +173,38 @@ final class DifferentialChangesetViewController extends DifferentialController {
       $parser->setOriginals($left, $right);
     }
 
+    $diff = $changeset->getDiff();
+    $revision_id = $diff->getRevisionID();
+
+    $can_mark = false;
+    $object_owner_phid = null;
+    $revision = null;
+    if ($revision_id) {
+      $revision = id(new DifferentialRevisionQuery())
+        ->setViewer($viewer)
+        ->withIDs(array($revision_id))
+        ->executeOne();
+      if ($revision) {
+        $can_mark = ($revision->getAuthorPHID() == $viewer->getPHID());
+        $object_owner_phid = $revision->getAuthorPHID();
+      }
+    }
+
     // Load both left-side and right-side inline comments.
-    $inlines = $this->loadInlineComments(
-      array($left_source, $right_source),
-      $author_phid);
+    if ($revision) {
+      $query = id(new DifferentialInlineCommentQuery())
+        ->setViewer($viewer)
+        ->needHidden(true)
+        ->withRevisionPHIDs(array($revision->getPHID()));
+      $inlines = $query->execute();
+      $inlines = $query->adjustInlinesForChangesets(
+        $inlines,
+        $old,
+        $new,
+        $revision);
+    } else {
+      $inlines = array();
+    }
 
     if ($left_new) {
       $inlines = array_merge(
@@ -201,22 +241,6 @@ final class DifferentialChangesetViewController extends DifferentialController {
 
     $engine->process();
 
-    $diff = $changeset->getDiff();
-    $revision_id = $diff->getRevisionID();
-
-    $can_mark = false;
-    $object_owner_phid = null;
-    if ($revision_id) {
-      $revision = id(new DifferentialRevisionQuery())
-        ->setViewer($viewer)
-        ->withIDs(array($revision_id))
-        ->executeOne();
-      if ($revision) {
-        $can_mark = ($revision->getAuthorPHID() == $viewer->getPHID());
-        $object_owner_phid = $revision->getAuthorPHID();
-      }
-    }
-
     $parser
       ->setUser($viewer)
       ->setMarkupEngine($engine)
@@ -227,15 +251,19 @@ final class DifferentialChangesetViewController extends DifferentialController {
       ->setMask($mask);
 
     if ($request->isAjax()) {
+      // NOTE: We must render the changeset before we render coverage
+      // information, since it builds some caches.
+      $rendered_changeset = $parser->renderChangeset();
+
       $mcov = $parser->renderModifiedCoverage();
 
-      $coverage = array(
+      $coverage_data = array(
         'differential-mcoverage-'.md5($changeset->getFilename()) => $mcov,
       );
 
       return id(new PhabricatorChangesetResponse())
-        ->setRenderedChangeset($parser->renderChangeset())
-        ->setCoverage($coverage)
+        ->setRenderedChangeset($rendered_changeset)
+        ->setCoverage($coverage_data)
         ->setUndoTemplates($parser->getRenderer()->renderUndoTemplates());
     }
 
@@ -247,6 +275,7 @@ final class DifferentialChangesetViewController extends DifferentialController {
       ->setRenderURI('/differential/changeset/')
       ->setDiff($diff)
       ->setTitle(pht('Standalone View'))
+      ->setBackground(PHUIObjectBoxView::BLUE_PROPERTY)
       ->setParser($parser);
 
     if ($revision_id) {
@@ -268,27 +297,20 @@ final class DifferentialChangesetViewController extends DifferentialController {
     }
 
     $crumbs->addTextCrumb($changeset->getDisplayFilename());
+    $crumbs->setBorder(true);
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
-        $detail,
-      ),
-      array(
-        'title' => pht('Changeset View'),
-        'device' => false,
-      ));
-  }
+    $header = id(new PHUIHeaderView())
+      ->setHeader(pht('Changeset View'))
+      ->setHeaderIcon('fa-gear');
 
-  private function loadInlineComments(array $changeset_ids, $author_phid) {
-    $changeset_ids = array_unique(array_filter($changeset_ids));
-    if (!$changeset_ids) {
-      return;
-    }
+    $view = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->setFooter($detail);
 
-    return id(new DifferentialInlineCommentQuery())
-      ->withViewerAndChangesetIDs($author_phid, $changeset_ids)
-      ->execute();
+    return $this->newPage()
+      ->setTitle(pht('Changeset View'))
+      ->setCrumbs($crumbs)
+      ->appendChild($view);
   }
 
   private function buildRawFileResponse(
@@ -328,12 +350,18 @@ final class DifferentialChangesetViewController extends DifferentialController {
         $data = $changeset->makeOldFile();
       }
 
+      $diff = $changeset->getDiff();
+
       $file = PhabricatorFile::newFromFileData(
         $data,
         array(
-          'name'      => $changeset->getFilename(),
+          'name' => $changeset->getFilename(),
           'mime-type' => 'text/plain',
+          'ttl.relative' => phutil_units('24 hours in seconds'),
+          'viewPolicy' => PhabricatorPolicies::POLICY_NOONE,
         ));
+
+      $file->attachToObject($diff->getPHID());
 
       $metadata[$key] = $file->getPHID();
       $changeset->setMetadata($metadata);
@@ -346,33 +374,82 @@ final class DifferentialChangesetViewController extends DifferentialController {
   }
 
   private function buildLintInlineComments($changeset) {
-    $lint = id(new DifferentialDiffProperty())->loadOneWhere(
-      'diffID = %d AND name = %s',
-      $changeset->getDiffID(),
-      'arc:lint');
-    if (!$lint) {
+    $diff = $changeset->getDiff();
+
+    $target_phids = $diff->getBuildTargetPHIDs();
+    if (!$target_phids) {
       return array();
     }
-    $lint = $lint->getData();
+
+    $messages = id(new HarbormasterBuildLintMessage())->loadAllWhere(
+      'buildTargetPHID IN (%Ls) AND path = %s',
+      $target_phids,
+      $changeset->getFilename());
+
+    if (!$messages) {
+      return array();
+    }
+
+    $change_type = $changeset->getChangeType();
+    if (DifferentialChangeType::isDeleteChangeType($change_type)) {
+      // If this is a lint message on a deleted file, show it on the left
+      // side of the UI because there are no source code lines on the right
+      // side of the UI so inlines don't have anywhere to render. See PHI416.
+      $is_new = 0;
+    } else {
+      $is_new = 1;
+    }
+
+    $template = id(new DifferentialInlineComment())
+      ->setChangesetID($changeset->getID())
+      ->setIsNewFile($is_new)
+      ->setLineLength(0);
 
     $inlines = array();
-    foreach ($lint as $msg) {
-      if ($msg['path'] != $changeset->getFilename()) {
-        continue;
-      }
-      $inline = new DifferentialInlineComment();
-      $inline->setChangesetID($changeset->getID());
-      $inline->setIsNewFile(1);
-      $inline->setSyntheticAuthor('Lint: '.$msg['name']);
-      $inline->setLineNumber($msg['line']);
-      $inline->setLineLength(0);
+    foreach ($messages as $message) {
+      $description = $message->getProperty('description');
 
-      $inline->setContent('%%%'.$msg['description'].'%%%');
-
-      $inlines[] = $inline;
+      $inlines[] = id(clone $template)
+        ->setSyntheticAuthor(pht('Lint: %s', $message->getName()))
+        ->setLineNumber($message->getLine())
+        ->setContent($description);
     }
 
     return $inlines;
+  }
+
+  private function loadCoverage(DifferentialChangeset $changeset) {
+    $target_phids = $changeset->getDiff()->getBuildTargetPHIDs();
+    if (!$target_phids) {
+      return null;
+    }
+
+    $unit = id(new HarbormasterBuildUnitMessage())->loadAllWhere(
+      'buildTargetPHID IN (%Ls)',
+      $target_phids);
+
+    if (!$unit) {
+      return null;
+    }
+
+    $coverage = array();
+    foreach ($unit as $message) {
+      $test_coverage = $message->getProperty('coverage');
+      if ($test_coverage === null) {
+        continue;
+      }
+      $coverage_data = idx($test_coverage, $changeset->getFileName());
+      if (!strlen($coverage_data)) {
+        continue;
+      }
+      $coverage[] = $coverage_data;
+    }
+
+    if (!$coverage) {
+      return null;
+    }
+
+    return ArcanistUnitTestResult::mergeCoverage($coverage);
   }
 
 }

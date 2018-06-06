@@ -8,7 +8,8 @@ final class ManiphestQueryStatusesConduitAPIMethod
   }
 
   public function getMethodDescription() {
-    return 'Retrieve information about possible Maniphest Task status values.';
+    return pht(
+      'Retrieve information about possible Maniphest task status values.');
   }
 
   protected function defineParamTypes() {
@@ -31,5 +32,15 @@ final class ManiphestQueryStatusesConduitAPIMethod
     );
     return $results;
   }
+
+  public function getMethodStatus() {
+     return self::METHOD_STATUS_FROZEN;
+   }
+
+   public function getMethodStatusDescription() {
+     return pht(
+       'This method is frozen and will eventually be deprecated. New code '.
+       'should use "maniphest.status.search" instead.');
+   }
 
 }

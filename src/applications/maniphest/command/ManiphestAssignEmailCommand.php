@@ -17,11 +17,13 @@ final class ManiphestAssignEmailCommand
 
   public function getCommandDescription() {
     return pht(
-      'To assign a task to another user, provide their username. For example, '.
-      'to assign a task to `alincoln`, write `!assign alincoln`.'.
-      "\n\n".
-      'If you omit the username or the username is not valid, this behaves '.
-      'like `!claim` and assigns the task to you instead.');
+      "To assign a task to another user, provide their username. For example, ".
+      "to assign a task to `%s`, write `%s`.\n\n".
+      "If you omit the username or the username is not valid, this behaves ".
+      "like `%s` and assigns the task to you instead.",
+      'alincoln',
+      '!assign alincoln',
+      '!claim');
   }
 
   public function buildTransactions(
@@ -32,6 +34,7 @@ final class ManiphestAssignEmailCommand
     array $argv) {
     $xactions = array();
 
+    $assign_phid = null;
 
     $assign_to = head($argv);
     if ($assign_to) {
@@ -50,7 +53,7 @@ final class ManiphestAssignEmailCommand
     }
 
     $xactions[] = $object->getApplicationTransactionTemplate()
-      ->setTransactionType(ManiphestTransaction::TYPE_OWNER)
+      ->setTransactionType(ManiphestTaskOwnerTransaction::TRANSACTIONTYPE)
       ->setNewValue($assign_phid);
 
     return $xactions;

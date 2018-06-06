@@ -13,7 +13,14 @@ final class PhabricatorEmojiRemarkupRule extends PhutilRemarkupRule {
       $text);
   }
 
-  public function markupEmoji($matches) {
+  public function markupEmojiJSON() {
+    $root = dirname(phutil_get_library_root('phabricator'));
+    $json = Filesystem::readFile(
+      $root.'/resources/emoji/manifest.json');
+    return $json;
+  }
+
+  public function markupEmoji(array $matches) {
     if (!$this->isFlatText($matches[0])) {
       return $matches[0];
     }

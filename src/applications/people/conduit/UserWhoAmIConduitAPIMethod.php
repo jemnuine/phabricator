@@ -7,7 +7,7 @@ final class UserWhoAmIConduitAPIMethod extends UserConduitAPIMethod {
   }
 
   public function getMethodDescription() {
-    return 'Retrieve information about the logged-in user.';
+    return pht('Retrieve information about the logged-in user.');
   }
 
   protected function defineParamTypes() {
@@ -19,7 +19,7 @@ final class UserWhoAmIConduitAPIMethod extends UserConduitAPIMethod {
   }
 
   public function getRequiredScope() {
-    return PhabricatorOAuthServerScope::SCOPE_WHOAMI;
+    return self::SCOPE_ALWAYS;
   }
 
   protected function execute(ConduitAPIRequest $request) {
@@ -29,7 +29,10 @@ final class UserWhoAmIConduitAPIMethod extends UserConduitAPIMethod {
       ->withPHIDs(array($request->getUser()->getPHID()))
       ->executeOne();
 
-    return $this->buildUserInformationDictionary($person);
+    return $this->buildUserInformationDictionary(
+      $person,
+      $with_email = true,
+      $with_availability = false);
   }
 
 }

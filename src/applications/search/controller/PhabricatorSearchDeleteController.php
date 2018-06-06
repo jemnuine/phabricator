@@ -3,41 +3,45 @@
 final class PhabricatorSearchDeleteController
   extends PhabricatorSearchBaseController {
 
-  private $queryKey;
-  private $engineClass;
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $this->getViewer();
 
-  public function willProcessRequest(array $data) {
-    $this->queryKey = idx($data, 'queryKey');
-    $this->engineClass = idx($data, 'engine');
-  }
+    $id = $request->getURIData('id');
+    if ($id) {
+      $named_query = id(new PhabricatorNamedQueryQuery())
+        ->setViewer($viewer)
+        ->withIDs(array($id))
+        ->requireCapabilities(
+          array(
+            PhabricatorPolicyCapability::CAN_VIEW,
+            PhabricatorPolicyCapability::CAN_EDIT,
+          ))
+        ->executeOne();
+      if (!$named_query) {
+        return new Aphront404Response();
+      }
 
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
+      $engine = newv($named_query->getEngineClassName(), array());
+      $engine->setViewer($viewer);
 
-    $key = $this->queryKey;
+      $key = $named_query->getQueryKey();
+    } else {
+      $key = $request->getURIData('queryKey');
+      $engine_class = $request->getURIData('engine');
 
-    $base_class = 'PhabricatorApplicationSearchEngine';
-    if (!is_subclass_of($this->engineClass, $base_class)) {
-      return new Aphront400Response();
-    }
+      $base_class = 'PhabricatorApplicationSearchEngine';
+      if (!is_subclass_of($engine_class, $base_class)) {
+        return new Aphront400Response();
+      }
 
-    $engine = newv($this->engineClass, array());
-    $engine->setViewer($user);
+      $engine = newv($engine_class, array());
+      $engine->setViewer($viewer);
 
-    $named_query = id(new PhabricatorNamedQueryQuery())
-      ->setViewer($user)
-      ->withEngineClassNames(array($this->engineClass))
-      ->withQueryKeys(array($key))
-      ->withUserPHIDs(array($user->getPHID()))
-      ->executeOne();
+      if (!$engine->isBuiltinQuery($key)) {
+        return new Aphront404Response();
+      }
 
-    if (!$named_query && $engine->isBuiltinQuery($key)) {
       $named_query = $engine->getBuiltinQuery($key);
-    }
-
-    if (!$named_query) {
-      return new Aphront404Response();
     }
 
     $builtin = null;
@@ -84,7 +88,7 @@ final class PhabricatorSearchDeleteController
     }
 
     $dialog = id(new AphrontDialogView())
-      ->setUser($user)
+      ->setUser($viewer)
       ->setTitle($title)
       ->appendChild($desc)
       ->addCancelButton($return_uri)

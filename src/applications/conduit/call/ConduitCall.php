@@ -8,13 +8,14 @@
  *   $result = $call->execute();
  *
  */
-final class ConduitCall {
+final class ConduitCall extends Phobject {
 
   private $method;
+  private $handler;
   private $request;
   private $user;
 
-  public function __construct($method, array $params) {
+  public function __construct($method, array $params, $strictly_typed = true) {
     $this->method = $method;
     $this->handler = $this->buildMethodHandler($method);
 
@@ -40,7 +41,7 @@ final class ConduitCall {
           "'".implode("', '", array_keys($invalid_params))."'"));
     }
 
-    $this->request = new ConduitAPIRequest($params);
+    $this->request = new ConduitAPIRequest($params, $strictly_typed);
   }
 
   public function getAPIRequest() {
@@ -62,10 +63,6 @@ final class ConduitCall {
 
   public function shouldAllowUnguardedWrites() {
     return $this->handler->shouldAllowUnguardedWrites();
-  }
-
-  public function getRequiredScope() {
-    return $this->handler->getRequiredScope();
   }
 
   public function getErrorDescription($code) {
@@ -148,6 +145,10 @@ final class ConduitCall {
     }
 
     return $method;
+  }
+
+  public function getMethodImplementation() {
+    return $this->handler;
   }
 
 

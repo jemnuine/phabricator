@@ -9,7 +9,7 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
 
   protected function defineErrorTypes() {
     return array(
-      'ERR-INVALID-PARAMETER' => 'Missing or malformed parameter.',
+      'ERR-INVALID-PARAMETER' => pht('Missing or malformed parameter.'),
     );
   }
 
@@ -60,7 +60,7 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
     if ($is_new) {
       $task->setTitle((string)$request->getValue('title'));
       $task->setDescription((string)$request->getValue('description'));
-      $changes[ManiphestTransaction::TYPE_STATUS] =
+      $changes[ManiphestTaskStatusTransaction::TRANSACTIONTYPE] =
         ManiphestTaskStatus::getDefaultStatus();
       $changes[PhabricatorTransactions::TYPE_SUBSCRIBERS] =
         array('+' => array($request->getUser()->getPHID()));
@@ -73,12 +73,12 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
 
       $title = $request->getValue('title');
       if ($title !== null) {
-        $changes[ManiphestTransaction::TYPE_TITLE] = $title;
+        $changes[ManiphestTaskTitleTransaction::TRANSACTIONTYPE] = $title;
       }
 
       $desc = $request->getValue('description');
       if ($desc !== null) {
-        $changes[ManiphestTransaction::TYPE_DESCRIPTION] = $desc;
+        $changes[ManiphestTaskDescriptionTransaction::TRANSACTIONTYPE] = $desc;
       }
 
       $status = $request->getValue('status');
@@ -86,9 +86,9 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
         $valid_statuses = ManiphestTaskStatus::getTaskStatusMap();
         if (!isset($valid_statuses[$status])) {
           throw id(new ConduitException('ERR-INVALID-PARAMETER'))
-            ->setErrorDescription('Status set to invalid value.');
+            ->setErrorDescription(pht('Status set to invalid value.'));
         }
-        $changes[ManiphestTransaction::TYPE_STATUS] = $status;
+        $changes[ManiphestTaskStatusTransaction::TRANSACTIONTYPE] = $status;
       }
     }
 
@@ -97,9 +97,11 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
       $valid_priorities = ManiphestTaskPriority::getTaskPriorityMap();
       if (!isset($valid_priorities[$priority])) {
         throw id(new ConduitException('ERR-INVALID-PARAMETER'))
-          ->setErrorDescription('Priority set to invalid value.');
+          ->setErrorDescription(pht('Priority set to invalid value.'));
       }
-      $changes[ManiphestTransaction::TYPE_PRIORITY] = $priority;
+      $keyword_map = ManiphestTaskPriority::getTaskPriorityKeywordsMap();
+      $keyword = head(idx($keyword_map, $priority));
+      $changes[ManiphestTaskPriorityTransaction::TRANSACTIONTYPE] = $keyword;
     }
 
     $owner_phid = $request->getValue('ownerPHID');
@@ -108,7 +110,7 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
         array($owner_phid),
         PhabricatorPeopleUserPHIDType::TYPECONST,
         'ownerPHID');
-      $changes[ManiphestTransaction::TYPE_OWNER] = $owner_phid;
+      $changes[ManiphestTaskOwnerTransaction::TRANSACTIONTYPE] = $owner_phid;
     }
 
     $ccs = $request->getValue('ccPHIDs');
@@ -192,23 +194,7 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
       return;
     }
 
-    $event = new PhabricatorEvent(
-      PhabricatorEventType::TYPE_MANIPHEST_WILLEDITTASK,
-      array(
-        'task'          => $task,
-        'new'           => $is_new,
-        'transactions'  => $transactions,
-      ));
-    $event->setUser($request->getUser());
-    $event->setConduitRequest($request);
-    PhutilEventEngine::dispatchEvent($event);
-
-    $task = $event->getValue('task');
-    $transactions = $event->getValue('transactions');
-
-    $content_source = PhabricatorContentSource::newForSource(
-      PhabricatorContentSource::SOURCE_CONDUIT,
-      array());
+    $content_source = $request->newContentSource();
 
     $editor = id(new ManiphestTransactionEditor())
       ->setActor($request->getUser())
@@ -220,17 +206,6 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
     }
 
     $editor->applyTransactions($task, $transactions);
-
-    $event = new PhabricatorEvent(
-      PhabricatorEventType::TYPE_MANIPHEST_DIDEDITTASK,
-      array(
-        'task'          => $task,
-        'new'           => $is_new,
-        'transactions'  => $transactions,
-      ));
-    $event->setUser($request->getUser());
-    $event->setConduitRequest($request);
-    PhutilEventEngine::dispatchEvent($event);
 
     // reload the task now that we've done all the fun stuff
     return id(new ManiphestTaskQuery())
@@ -313,7 +288,10 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
     unset($phid_groups[$phid_type]);
     if (!empty($phid_groups)) {
       throw id(new ConduitException('ERR-INVALID-PARAMETER'))
-        ->setErrorDescription('One or more PHIDs were invalid for '.$field.'.');
+        ->setErrorDescription(
+          pht(
+            'One or more PHIDs were invalid for %s.',
+            $field));
     }
 
     return true;

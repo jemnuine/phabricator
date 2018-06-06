@@ -5,43 +5,48 @@
  * out how a repository has changed when we discover new commits or branch
  * heads.
  */
-final class PhabricatorRepositoryRefCursor extends PhabricatorRepositoryDAO
+final class PhabricatorRepositoryRefCursor
+  extends PhabricatorRepositoryDAO
   implements PhabricatorPolicyInterface {
 
   const TYPE_BRANCH = 'branch';
   const TYPE_TAG = 'tag';
   const TYPE_BOOKMARK = 'bookmark';
+  const TYPE_REF = 'ref';
 
   protected $repositoryPHID;
   protected $refType;
   protected $refNameHash;
   protected $refNameRaw;
   protected $refNameEncoding;
-  protected $commitIdentifier;
 
   private $repository = self::ATTACHABLE;
+  private $positions = self::ATTACHABLE;
 
   protected function getConfiguration() {
     return array(
       self::CONFIG_TIMESTAMPS => false,
+      self::CONFIG_AUX_PHID => true,
       self::CONFIG_BINARY => array(
         'refNameRaw' => true,
       ),
       self::CONFIG_COLUMN_SCHEMA => array(
         'refType' => 'text32',
         'refNameHash' => 'bytes12',
-        'commitIdentifier' => 'text40',
-
-        // T6203/NULLABILITY
-        // This probably should not be nullable; refNameRaw is not nullable.
         'refNameEncoding' => 'text16?',
       ),
       self::CONFIG_KEY_SCHEMA => array(
-        'key_cursor' => array(
+        'key_ref' => array(
           'columns' => array('repositoryPHID', 'refType', 'refNameHash'),
+          'unique' => true,
         ),
       ),
     ) + parent::getConfiguration();
+  }
+
+  public function generatePHID() {
+    return PhabricatorPHID::generateNewPHID(
+      PhabricatorRepositoryRefCursorPHIDType::TYPECONST);
   }
 
   public function getRefName() {
@@ -65,6 +70,20 @@ final class PhabricatorRepositoryRefCursor extends PhabricatorRepositoryDAO
 
   public function getRepository() {
     return $this->assertAttached($this->repository);
+  }
+
+  public function attachPositions(array $positions) {
+    assert_instances_of($positions, 'PhabricatorRepositoryRefPosition');
+    $this->positions = $positions;
+    return $this;
+  }
+
+  public function getPositions() {
+    return $this->assertAttached($this->positions);
+  }
+
+  public function getPositionIdentifiers() {
+    return mpull($this->getPositions(), 'getCommitIdentifier');
   }
 
 

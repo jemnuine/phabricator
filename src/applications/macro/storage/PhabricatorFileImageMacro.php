@@ -5,6 +5,7 @@ final class PhabricatorFileImageMacro extends PhabricatorFileDAO
     PhabricatorSubscribableInterface,
     PhabricatorApplicationTransactionInterface,
     PhabricatorFlaggableInterface,
+    PhabricatorTokenReceiverInterface,
     PhabricatorPolicyInterface {
 
   protected $authorPHID;
@@ -38,6 +39,12 @@ final class PhabricatorFileImageMacro extends PhabricatorFileDAO
 
   public function getAudio() {
     return $this->assertAttached($this->audio);
+  }
+
+  public static function initializeNewFileImageMacro(PhabricatorUser $actor) {
+    $macro = id(new self())
+      ->setAuthorPHID($actor->getPHID());
+    return $macro;
   }
 
   protected function getConfiguration() {
@@ -79,6 +86,10 @@ final class PhabricatorFileImageMacro extends PhabricatorFileDAO
     return parent::save();
   }
 
+  public function getViewURI() {
+    return '/macro/view/'.$this->getID().'/';
+  }
+
 
 /* -(  PhabricatorApplicationTransactionInterface  )------------------------- */
 
@@ -110,12 +121,14 @@ final class PhabricatorFileImageMacro extends PhabricatorFileDAO
     return false;
   }
 
-  public function shouldShowSubscribersProperty() {
-    return true;
-  }
 
-  public function shouldAllowSubscription($phid) {
-    return true;
+/* -(  PhabricatorTokenRecevierInterface  )---------------------------------- */
+
+
+  public function getUsersToNotifyOfTokenGiven() {
+    return array(
+      $this->getAuthorPHID(),
+    );
   }
 
 
@@ -125,19 +138,23 @@ final class PhabricatorFileImageMacro extends PhabricatorFileDAO
   public function getCapabilities() {
     return array(
       PhabricatorPolicyCapability::CAN_VIEW,
+      PhabricatorPolicyCapability::CAN_EDIT,
     );
   }
 
   public function getPolicy($capability) {
-    return PhabricatorPolicies::getMostOpenPolicy();
+    switch ($capability) {
+      case PhabricatorPolicyCapability::CAN_VIEW:
+        return PhabricatorPolicies::getMostOpenPolicy();
+      case PhabricatorPolicyCapability::CAN_EDIT:
+        $app = PhabricatorApplication::getByClass(
+          'PhabricatorMacroApplication');
+        return $app->getPolicy(PhabricatorMacroManageCapability::CAPABILITY);
+    }
   }
 
   public function hasAutomaticCapability($capability, PhabricatorUser $viewer) {
     return false;
-  }
-
-  public function describeAutomaticCapability($capability) {
-    return null;
   }
 
 }

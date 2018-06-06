@@ -7,7 +7,17 @@ final class PasteQueryConduitAPIMethod extends PasteConduitAPIMethod {
   }
 
   public function getMethodDescription() {
-    return 'Query Pastes.';
+    return pht('Query Pastes.');
+  }
+
+  public function getMethodStatus() {
+    return self::METHOD_STATUS_FROZEN;
+  }
+
+  public function getMethodStatusDescription() {
+    return pht(
+      'This method is frozen and will eventually be deprecated. New code '.
+      'should use "paste.search" instead.');
   }
 
   protected function defineParamTypes() {

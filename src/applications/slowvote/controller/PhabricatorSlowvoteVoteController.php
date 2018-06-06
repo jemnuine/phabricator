@@ -3,19 +3,13 @@
 final class PhabricatorSlowvoteVoteController
   extends PhabricatorSlowvoteController {
 
-  private $id;
-
-  public function willProcessRequest(array $data) {
-    $this->id = $data['id'];
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $id = $request->getURIData('id');
 
     $poll = id(new PhabricatorSlowvoteQuery())
-      ->setViewer($user)
-      ->withIDs(array($this->id))
+      ->setViewer($viewer)
+      ->withIDs(array($id))
       ->needOptions(true)
       ->needViewerChoices(true)
       ->executeOne();
@@ -27,14 +21,14 @@ final class PhabricatorSlowvoteVoteController
     }
 
     $options = $poll->getOptions();
-    $user_choices = $poll->getViewerChoices($user);
+    $viewer_choices = $poll->getViewerChoices($viewer);
 
-    $old_votes = mpull($user_choices, null, 'getOptionID');
+    $old_votes = mpull($viewer_choices, null, 'getOptionID');
 
     if ($request->isAjax()) {
       $vote = $request->getInt('vote');
       $votes = array_keys($old_votes);
-      $votes = array_fuse($votes, $votes);
+      $votes = array_fuse($votes);
 
       if ($poll->getMethod() == PhabricatorSlowvotePoll::METHOD_PLURALITY) {
         if (idx($votes, $vote, false)) {
@@ -50,12 +44,12 @@ final class PhabricatorSlowvoteVoteController
         }
       }
 
-      $this->updateVotes($user, $poll, $old_votes, $votes);
+      $this->updateVotes($viewer, $poll, $old_votes, $votes);
 
       $updated_choices = id(new PhabricatorSlowvoteChoice())->loadAllWhere(
         'pollID = %d AND authorPHID = %s',
         $poll->getID(),
-        $user->getPHID());
+        $viewer->getPHID());
 
       $embed = id(new SlowvoteEmbedView())
         ->setPoll($poll)
@@ -74,14 +68,14 @@ final class PhabricatorSlowvoteVoteController
     }
 
     $votes = $request->getArr('vote');
-    $votes = array_fuse($votes, $votes);
+    $votes = array_fuse($votes);
 
-    $this->updateVotes($user, $poll, $old_votes, $votes);
+    $this->updateVotes($viewer, $poll, $old_votes, $votes);
 
     return id(new AphrontRedirectResponse())->setURI('/V'.$poll->getID());
   }
 
-  private function updateVotes($user, $poll, $old_votes, $votes) {
+  private function updateVotes($viewer, $poll, $old_votes, $votes) {
     if (!empty($votes) && count($votes) > 1 &&
         $poll->getMethod() == PhabricatorSlowvotePoll::METHOD_PLURALITY) {
       return id(new Aphront400Response());
@@ -99,7 +93,7 @@ final class PhabricatorSlowvoteVoteController
       }
 
       id(new PhabricatorSlowvoteChoice())
-        ->setAuthorPHID($user->getPHID())
+        ->setAuthorPHID($viewer->getPHID())
         ->setPollID($poll->getID())
         ->setOptionID($vote)
         ->save();

@@ -34,7 +34,9 @@ final class PhabricatorDataCacheSpec extends PhabricatorCacheSpec {
       ->setVersion(phpversion('apc'));
 
     if (ini_get('apc.enabled')) {
-      $this->setIsEnabled(true);
+      $this
+        ->setIsEnabled(true)
+        ->setClearCacheCallback('apc_clear_cache');
       $this->initAPCCommonSpec();
     } else {
       $this->setIsEnabled(false);
@@ -48,7 +50,15 @@ final class PhabricatorDataCacheSpec extends PhabricatorCacheSpec {
       ->setVersion(phpversion('apcu'));
 
     if (ini_get('apc.enabled')) {
-      $this->setIsEnabled(true);
+      if (function_exists('apcu_clear_cache')) {
+        $clear_callback = 'apcu_clear_cache';
+      } else {
+        $clear_callback = 'apc_clear_cache';
+      }
+
+      $this
+        ->setIsEnabled(true)
+        ->setClearCacheCallback($clear_callback);
       $this->initAPCCommonSpec();
     } else {
       $this->setIsEnabled(false);
@@ -59,7 +69,9 @@ final class PhabricatorDataCacheSpec extends PhabricatorCacheSpec {
   private function initNoneSpec() {
     if (version_compare(phpversion(), '5.5', '>=')) {
       $message = pht(
-        'Installing the "APCu" PHP extension will improve performance.');
+        'Installing the "APCu" PHP extension will improve performance. '.
+        'This extension is strongly recommended. Without it, Phabricator '.
+        'must rely on a very inefficient disk-based cache.');
 
       $this
         ->newIssue('extension.apcu')
@@ -73,28 +85,40 @@ final class PhabricatorDataCacheSpec extends PhabricatorCacheSpec {
   }
 
   private function initAPCCommonSpec() {
-    $mem = apc_sma_info();
-    $this->setTotalMemory($mem['num_seg'] * $mem['seg_size']);
-
-    $info = apc_cache_info('user');
-    $this->setUsedMemory($info['mem_size']);
-    $this->setEntryCount(count($info['cache_list']));
-
-    $cache = $info['cache_list'];
     $state = array();
-    foreach ($cache as $item) {
-      $info = idx($item, 'info', '<unknown-key>');
-      $key = self::getKeyPattern($info);
-      if (empty($state[$key])) {
-        $state[$key] = array(
-          'max' => 0,
-          'total' => 0,
-          'count' => 0,
-        );
+
+    if (function_exists('apcu_sma_info')) {
+      $mem = apcu_sma_info();
+      $info = apcu_cache_info();
+    } else if (function_exists('apc_sma_info')) {
+      $mem = apc_sma_info();
+      $info = apc_cache_info('user');
+    } else {
+      $mem = null;
+    }
+
+    if ($mem) {
+      $this->setTotalMemory($mem['num_seg'] * $mem['seg_size']);
+
+      $this->setUsedMemory($info['mem_size']);
+      $this->setEntryCount(count($info['cache_list']));
+
+      $cache = $info['cache_list'];
+      $state = array();
+      foreach ($cache as $item) {
+        $info = idx($item, 'info', '<unknown-key>');
+        $key = self::getKeyPattern($info);
+        if (empty($state[$key])) {
+          $state[$key] = array(
+            'max' => 0,
+            'total' => 0,
+            'count' => 0,
+          );
+        }
+        $state[$key]['max'] = max($state[$key]['max'], $item['mem_size']);
+        $state[$key]['total'] += $item['mem_size'];
+        $state[$key]['count']++;
       }
-      $state[$key]['max'] = max($state[$key]['max'], $item['mem_size']);
-      $state[$key]['total'] += $item['mem_size'];
-      $state[$key]['count']++;
     }
 
     $this->setCacheSummary($state);
@@ -118,5 +142,4 @@ final class PhabricatorDataCacheSpec extends PhabricatorCacheSpec {
 
     return $key;
   }
-
 }

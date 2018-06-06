@@ -3,9 +3,7 @@
 /**
  * Defines the location of static resources.
  */
-abstract class CelerityResources {
-
-  private $map;
+abstract class CelerityResources extends Phobject {
 
   abstract public function getName();
   abstract public function getResourceData($name);
@@ -16,7 +14,7 @@ abstract class CelerityResources {
 
   public function getCelerityHash($data) {
     $tail = PhabricatorEnv::getEnvConfig('celerity.resource-hash');
-    $hash = PhabricatorHash::digest($data, $tail);
+    $hash = PhabricatorHash::weakDigest($data, $tail);
     return substr($hash, 0, 8);
   }
 

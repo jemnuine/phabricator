@@ -10,4 +10,8 @@ final class NuanceQueueTransaction extends NuanceTransaction {
     return new NuanceQueueTransactionComment();
   }
 
+  public function getBaseTransactionClass() {
+    return 'NuanceQueueTransactionType';
+  }
+
 }

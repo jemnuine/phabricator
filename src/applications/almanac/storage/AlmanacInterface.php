@@ -4,7 +4,10 @@ final class AlmanacInterface
   extends AlmanacDAO
   implements
     PhabricatorPolicyInterface,
-    PhabricatorDestructibleInterface {
+    PhabricatorDestructibleInterface,
+    PhabricatorExtendedPolicyInterface,
+    PhabricatorApplicationTransactionInterface,
+    PhabricatorConduitResultInterface {
 
   protected $devicePHID;
   protected $networkPHID;
@@ -31,6 +34,10 @@ final class AlmanacInterface
         ),
         'key_device' => array(
           'columns' => array('devicePHID'),
+        ),
+        'key_unique' => array(
+          'columns' => array('devicePHID', 'networkPHID', 'address', 'port'),
+          'unique' => true,
         ),
       ),
     ) + parent::getConfiguration();
@@ -74,6 +81,16 @@ final class AlmanacInterface
     return $this->getAddress().':'.$this->getPort();
   }
 
+  public function loadIsInUse() {
+    $binding = id(new AlmanacBindingQuery())
+      ->setViewer(PhabricatorUser::getOmnipotentUser())
+      ->withInterfacePHIDs(array($this->getPHID()))
+      ->setLimit(1)
+      ->executeOne();
+
+    return (bool)$binding;
+  }
+
 
 /* -(  PhabricatorPolicyInterface  )----------------------------------------- */
 
@@ -101,14 +118,28 @@ final class AlmanacInterface
         'view the interface.'),
     );
 
-    if ($capability === PhabricatorPolicyCapability::CAN_EDIT) {
-      if ($this->getDevice()->getIsLocked()) {
-        $notes[] = pht(
-          'The device for this interface is locked, so it can not be edited.');
-      }
+    return $notes;
+  }
+
+
+/* -(  PhabricatorExtendedPolicyInterface  )--------------------------------- */
+
+
+  public function getExtendedPolicy($capability, PhabricatorUser $viewer) {
+    switch ($capability) {
+      case PhabricatorPolicyCapability::CAN_EDIT:
+        if ($this->getDevice()->isClusterDevice()) {
+          return array(
+            array(
+              new PhabricatorAlmanacApplication(),
+              AlmanacManageClusterServicesCapability::CAPABILITY,
+            ),
+          );
+        }
+        break;
     }
 
-    return $notes;
+    return array();
   }
 
 
@@ -119,7 +150,7 @@ final class AlmanacInterface
     PhabricatorDestructionEngine $engine) {
 
     $bindings = id(new AlmanacBindingQuery())
-      ->setViewer($this->getViewer())
+      ->setViewer($engine->getViewer())
       ->withInterfacePHIDs(array($this->getPHID()))
       ->execute();
     foreach ($bindings as $binding) {
@@ -127,6 +158,66 @@ final class AlmanacInterface
     }
 
     $this->delete();
+  }
+
+
+/* -(  PhabricatorApplicationTransactionInterface  )------------------------- */
+
+
+  public function getApplicationTransactionEditor() {
+    return new AlmanacInterfaceEditor();
+  }
+
+  public function getApplicationTransactionObject() {
+    return $this;
+  }
+
+  public function getApplicationTransactionTemplate() {
+    return new AlmanacInterfaceTransaction();
+  }
+
+  public function willRenderTimeline(
+    PhabricatorApplicationTransactionView $timeline,
+    AphrontRequest $request) {
+    return $timeline;
+  }
+
+
+/* -(  PhabricatorConduitResultInterface  )---------------------------------- */
+
+
+  public function getFieldSpecificationsForConduit() {
+    return array(
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('devicePHID')
+        ->setType('phid')
+        ->setDescription(pht('The device the interface is on.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('networkPHID')
+        ->setType('phid')
+        ->setDescription(pht('The network the interface is part of.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('address')
+        ->setType('string')
+        ->setDescription(pht('The address of the interface.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('port')
+        ->setType('int')
+        ->setDescription(pht('The port number of the interface.')),
+    );
+  }
+
+  public function getFieldValuesForConduit() {
+    return array(
+      'devicePHID' => $this->getDevicePHID(),
+      'networkPHID' => $this->getNetworkPHID(),
+      'address' => (string)$this->getAddress(),
+      'port' => (int)$this->getPort(),
+    );
+  }
+
+  public function getConduitSearchAttachments() {
+    return array();
   }
 
 }

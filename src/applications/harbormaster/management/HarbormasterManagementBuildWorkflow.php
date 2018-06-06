@@ -11,9 +11,15 @@ final class HarbormasterManagementBuildWorkflow
       ->setArguments(
         array(
           array(
-            'name' => 'plan',
-            'param' => 'id',
-            'help' => pht('ID of build plan to run.'),
+            'name'        => 'plan',
+            'param'       => 'id',
+            'help'        => pht('ID of build plan to run.'),
+          ),
+          array(
+            'name' => 'background',
+            'help' => pht(
+              'Submit builds into the build queue normally instead of '.
+              'running them in the foreground.'),
           ),
           array(
             'name'        => 'buildable',
@@ -50,7 +56,9 @@ final class HarbormasterManagementBuildWorkflow
     $plan_id = $args->getArg('plan');
     if (!$plan_id) {
       throw new PhutilArgumentUsageException(
-        pht('Use --plan to specify a build plan to run.'));
+        pht(
+          'Use %s to specify a build plan to run.',
+          '--plan'));
     }
 
     $plan = id(new HarbormasterBuildPlanQuery())
@@ -62,6 +70,11 @@ final class HarbormasterManagementBuildWorkflow
         pht('Build plan "%s" does not exist.', $plan_id));
     }
 
+    if (!$plan->canRunManually()) {
+      throw new PhutilArgumentUsageException(
+        pht('This build plan can not be run manually.'));
+    }
+
     $console = PhutilConsole::getConsole();
 
     $buildable = HarbormasterBuildable::initializeNewBuildable($viewer)
@@ -69,6 +82,11 @@ final class HarbormasterManagementBuildWorkflow
       ->setBuildablePHID($buildable->getHarbormasterBuildablePHID())
       ->setContainerPHID($buildable->getHarbormasterContainerPHID())
       ->save();
+
+    $buildable->sendMessage(
+      $viewer,
+      HarbormasterMessageType::BUILDABLE_BUILD,
+      false);
 
     $console->writeOut(
       "%s\n",
@@ -81,8 +99,16 @@ final class HarbormasterManagementBuildWorkflow
       "\n    %s\n\n",
       PhabricatorEnv::getProductionURI('/B'.$buildable->getID()));
 
-    PhabricatorWorker::setRunAllTasksInProcess(true);
-    $buildable->applyPlan($plan);
+    if (!$args->getArg('background')) {
+      PhabricatorWorker::setRunAllTasksInProcess(true);
+    }
+
+    if ($viewer->isOmnipotent()) {
+      $initiator = id(new PhabricatorHarbormasterApplication())->getPHID();
+    } else {
+      $initiator =  $viewer->getPHID();
+    }
+    $buildable->applyPlan($plan, array(), $initiator);
 
     $console->writeOut("%s\n", pht('Done.'));
 

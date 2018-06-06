@@ -10,6 +10,7 @@ final class PhragmentFragment extends PhragmentDAO
   protected $editPolicy;
 
   private $latestVersion = self::ATTACHABLE;
+  private $file = self::ATTACHABLE;
 
   protected function getConfiguration() {
     return array(
@@ -78,9 +79,9 @@ final class PhragmentFragment extends PhragmentDAO
   public static function createFromFile(
     PhabricatorUser $viewer,
     PhabricatorFile $file = null,
-    $path,
-    $view_policy,
-    $edit_policy) {
+    $path = null,
+    $view_policy = null,
+    $edit_policy = null) {
 
     $fragment = id(new PhragmentFragment());
     $fragment->setPath($path);
@@ -142,7 +143,8 @@ final class PhragmentFragment extends PhragmentDAO
     PhabricatorFile $file) {
 
     if ($file->getMimeType() !== 'application/zip') {
-      throw new Exception("File must have mimetype 'application/zip'");
+      throw new Exception(
+        pht("File must have mimetype '%s'.", 'application/zip'));
     }
 
     // First apply the ZIP as normal.
@@ -160,7 +162,7 @@ final class PhragmentFragment extends PhragmentDAO
     $temp = new TempFile();
     Filesystem::writeFile($temp, $file->loadFileData());
     if (!$zip->open($temp)) {
-      throw new Exception('Unable to open ZIP');
+      throw new Exception(pht('Unable to open ZIP.'));
     }
 
     // Get all of the paths and their data from the ZIP.
@@ -256,7 +258,7 @@ final class PhragmentFragment extends PhragmentDAO
             $mappings[$path],
             array('name' => basename($path)));
         }
-        PhragmentFragment::createFromFile(
+        self::createFromFile(
           $viewer,
           $file,
           $base_path.'/'.$path,
@@ -342,10 +344,6 @@ final class PhragmentFragment extends PhragmentDAO
 
   public function hasAutomaticCapability($capability, PhabricatorUser $viewer) {
     return false;
-  }
-
-  public function describeAutomaticCapability($capability) {
-    return null;
   }
 
 }

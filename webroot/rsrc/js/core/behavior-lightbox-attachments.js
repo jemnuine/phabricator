@@ -5,27 +5,63 @@
  *           javelin-dom
  *           javelin-mask
  *           javelin-util
+ *           phuix-icon-view
  *           phabricator-busy
  */
 
-JX.behavior('lightbox-attachments', function (config) {
+JX.behavior('lightbox-attachments', function() {
 
-  var lightbox     = null;
+  var lightbox = null;
+
   var prev         = null;
   var next         = null;
-  var downloadForm = JX.$H(config.downloadForm).getFragment().firstChild;
+  var shown        = false;
+
+  function _toggleComment(e) {
+    e.kill();
+    shown = !shown;
+    JX.DOM.alterClass(lightbox, 'comment-panel-open', shown);
+  }
+
+  function markCommentsLoading(loading) {
+    var frame = JX.$('lightbox-comment-frame');
+    JX.DOM.alterClass(frame, 'loading', loading);
+  }
+
+  function onLoadCommentsResponse(r) {
+    var frame = JX.$('lightbox-comment-frame');
+    JX.DOM.setContent(frame, JX.$H(r));
+    markCommentsLoading(false);
+  }
+
+  function loadComments(phid) {
+    markCommentsLoading(true);
+    var uri = '/file/thread/' + phid + '/';
+    new JX.Workflow(uri)
+      .setHandler(onLoadCommentsResponse)
+      .start();
+  }
 
   function loadLightBox(e) {
     if (!e.isNormalClick()) {
       return;
     }
 
-    if (JX.Stratcom.pass()) {
+    // If you click the "Download" link inside an embedded file element,
+    // don't lightbox the file. But do lightbox when the user clicks an
+    // "<img />" inside an "<a />".
+    if (e.getNode('tag:a') && !e.getNode('tag:img')) {
       return;
     }
-    e.prevent();
 
-    var links = JX.DOM.scry(document, 'a', 'lightboxable');
+    e.kill();
+
+    activateLightbox(e.getNode('lightboxable'));
+  }
+
+  function activateLightbox(target) {
+    var mainFrame = JX.$('main-page-frame');
+    var links = JX.DOM.scry(mainFrame, '*', 'lightboxable');
     var phids = {};
     var data;
     for (var i = 0; i < links.length; i++) {
@@ -36,7 +72,6 @@ JX.behavior('lightbox-attachments', function (config) {
     // Now that we have the big picture phid situation sorted out, figure
     // out how the actual node the user clicks fits into that big picture
     // and build some pretty UI to show the attachment.
-    var target      = e.getNode('lightboxable');
     var target_data = JX.Stratcom.getData(target);
     var total       = JX.keys(phids).length;
     var current     = 1;
@@ -54,58 +89,146 @@ JX.behavior('lightbox-attachments', function (config) {
     }
 
     var img_uri = '';
+    var img = '';
     var extra_status = '';
-    var name_element = '';
-    // for now, this conditional is always true
-    // revisit if / when we decide to add non-images to lightbox view
+
     if (target_data.viewable) {
       img_uri = target_data.uri;
+      var alt_name = '';
+      if (typeof target_data.name != 'undefined') {
+        alt_name = target_data.name;
+      }
+
+      img =
+        JX.$N('img',
+          {
+            className : 'loading',
+            alt : alt_name
+          }
+        );
     } else {
-      img_uri = config.defaultImageUri;
-      extra_status = ' Image may not be representative of actual attachment.';
-      name_element = JX.$N('div',
-                           { className : 'attachment-name' },
-                           target_data.name
-                          );
+      var imgIcon = new JX.PHUIXIconView()
+        .setIcon(target_data.icon + ' phui-lightbox-file-icon')
+        .getNode();
+      var nameElement =
+        JX.$N('div',
+          {
+            className : 'attachment-name'
+          },
+          target_data.name
+        );
+      img =
+        JX.$N('a',
+          {
+            className : 'lightbox-icon-frame',
+            sigil : 'lightbox-download-submit',
+            href : target_data.dUri,
+          },
+          [ imgIcon, nameElement ]
+        );
     }
 
-    var alt_name = '';
-    if (typeof target_data.name != 'undefined') {
-      alt_name = target_data.name;
-    }
+    var imgFrame =
+      JX.$N('div',
+        {
+          className : 'lightbox-image-frame',
+          sigil : 'lightbox-image-frame',
+        },
+        img
+      );
 
-    var img = JX.$N('img',
-                    {
-                      className : 'loading',
-                      alt       : alt_name
-                    }
-                   );
+    var commentFrame =
+      JX.$N('div',
+        {
+          className : 'lightbox-comment-frame',
+          id : 'lightbox-comment-frame'
+        }
+      );
 
-    lightbox = JX.$N('div',
-                     {
-                       className : 'lightbox-attachment',
-                       sigil: 'lightbox-attachment'
-                     },
-                     img
-                    );
-    JX.DOM.appendContent(lightbox, name_element);
+    var commentClass = (shown) ? 'comment-panel-open' : '';
 
-    var closeIcon = JX.$N('a',
-                         {
-                           className : 'lightbox-close',
-                           href : '#'
-                         }
-                        );
-    JX.DOM.listen(closeIcon, 'click', null, closeLightBox);
-    JX.DOM.appendContent(lightbox, closeIcon);
+    lightbox =
+      JX.$N('div',
+        {
+          className : 'lightbox-attachment ' + commentClass,
+          sigil : 'lightbox-attachment'
+        },
+        [imgFrame, commentFrame]
+      );
+
+    var monogram = JX.$N('strong', {}, target_data.monogram);
+    var m_url = JX.$N('a', { href :  '/' + target_data.monogram }, monogram);
+    var statusSpan =
+      JX.$N('span',
+        {
+          className: 'lightbox-status-txt'
+        },
+        [
+          m_url,
+          current + ' / ' + total
+        ]
+      );
+
+    var download_icon = new JX.PHUIXIconView()
+      .setIcon('fa-download phui-icon-circle-icon')
+      .getNode();
+
+    var download_button = JX.$N(
+      'a',
+      {
+        className: 'lightbox-download phui-icon-circle hover-sky',
+        href: target_data.dUri
+      },
+      download_icon);
+
+    var commentIcon = new JX.PHUIXIconView()
+      .setIcon('fa-comments phui-icon-circle-icon')
+      .getNode();
+    var commentButton =
+      JX.$N('a',
+        {
+          className : 'lightbox-comment phui-icon-circle hover-sky',
+          href : '#',
+          sigil : 'lightbox-comment'
+        },
+        commentIcon
+      );
+
+    var closeIcon = new JX.PHUIXIconView()
+      .setIcon('fa-times phui-icon-circle-icon')
+      .getNode();
+    var closeButton =
+      JX.$N('a',
+        {
+          className : 'lightbox-close phui-icon-circle hover-red',
+          href : '#'
+        },
+        closeIcon);
+
+    var statusHTML =
+      JX.$N('div',
+        {
+          className : 'lightbox-status'
+        },
+       [statusSpan, closeButton, commentButton, download_button]
+      );
+    JX.DOM.appendContent(lightbox, statusHTML);
+    JX.DOM.listen(closeButton, 'click', null, closeLightBox);
+
     var leftIcon = '';
     if (next) {
-      leftIcon = JX.$N('a',
-                       {
-                         className : 'lightbox-right',
-                         href : '#'
-                       }
-                      );
+      var r_icon = new JX.PHUIXIconView()
+        .setIcon('fa-angle-right')
+        .setColor('lightgreytext')
+        .getNode();
+      leftIcon =
+        JX.$N('a',
+          {
+            className : 'lightbox-right',
+            href : '#'
+          },
+          r_icon
+        );
       JX.DOM.listen(leftIcon,
                     'click',
                     null,
@@ -115,12 +238,18 @@ JX.behavior('lightbox-attachments', function (config) {
     JX.DOM.appendContent(lightbox, leftIcon);
     var rightIcon = '';
     if (prev) {
-      rightIcon = JX.$N('a',
-                        {
-                          className : 'lightbox-left',
-                          href : '#'
-                        }
-                       );
+      var l_icon = new JX.PHUIXIconView()
+        .setIcon('fa-angle-left')
+        .setColor('lightgreytext')
+        .getNode();
+      rightIcon =
+        JX.$N('a',
+          {
+            className : 'lightbox-left',
+            href : '#'
+          },
+          l_icon
+        );
       JX.DOM.listen(rightIcon,
                     'click',
                     null,
@@ -129,39 +258,21 @@ JX.behavior('lightbox-attachments', function (config) {
     }
     JX.DOM.appendContent(lightbox, rightIcon);
 
-    var statusSpan = JX.$N('span',
-                           {
-                             className: 'lightbox-status-txt'
-                           },
-                           'Image '+current+' of '+total+'.'+extra_status
-                           );
-
-    var downloadSpan = JX.$N('span',
-                            {
-                              className : 'lightbox-download'
-                            });
-    var statusHTML = JX.$N('div',
-                           {
-                             className : 'lightbox-status'
-                           },
-                           [statusSpan, downloadSpan]
-                          );
-    JX.DOM.appendContent(lightbox, statusHTML);
     JX.DOM.alterClass(document.body, 'lightbox-attached', true);
     JX.Mask.show('jx-dark-mask');
 
-    downloadForm.action = target_data.dUri;
-    downloadSpan.appendChild(downloadForm);
-
     document.body.appendChild(lightbox);
 
-    JX.Busy.start();
-    img.onload = function() {
-      JX.DOM.alterClass(img, 'loading', false);
-      JX.Busy.done();
-    };
+    if (img_uri) {
+      JX.Busy.start();
+      img.onload = function() {
+        JX.DOM.alterClass(img, 'loading', false);
+        JX.Busy.done();
+      };
 
-    img.src = img_uri;
+      img.src = img_uri;
+    }
+    loadComments(target_data.phid);
   }
 
   // TODO - make this work with KeyboardShortcut, which means
@@ -216,12 +327,15 @@ JX.behavior('lightbox-attachments', function (config) {
     }
     e.prevent();
     closeLightBox(e);
-    el.click();
+
+    activateLightbox(el);
   }
 
-  JX.Stratcom.listen(
+  // Only look for lightboxable inside the main page, not other lightboxes.
+  JX.DOM.listen(
+    JX.$('main-page-frame'),
     'click',
-    ['lightboxable', 'tag:a'],
+    ['lightboxable'],
     loadLightBox);
 
   JX.Stratcom.listen(
@@ -232,12 +346,12 @@ JX.behavior('lightbox-attachments', function (config) {
   // When the user clicks the background, close the lightbox.
   JX.Stratcom.listen(
     'click',
-    'lightbox-attachment',
+    'lightbox-image-frame',
     function (e) {
       if (!lightbox) {
         return;
       }
-      if (e.getTarget() != e.getNode('lightbox-attachment')) {
+      if (e.getTarget() != e.getNode('lightbox-image-frame')) {
         // Don't close if they clicked some other element, like the image
         // itself or the next/previous arrows.
         return;
@@ -245,5 +359,34 @@ JX.behavior('lightbox-attachments', function (config) {
       closeLightBox(e);
       e.kill();
     });
+
+  JX.Stratcom.listen(
+    'click',
+    'lightbox-comment',
+  _toggleComment);
+
+  var _sendMessage = function(e) {
+    e.kill();
+    var form = e.getNode('tag:form');
+    JX.Workflow.newFromForm(form)
+      .setHandler(onLoadCommentsResponse)
+      .start();
+  };
+
+  JX.Stratcom.listen(
+    ['submit', 'didSyntheticSubmit'],
+    'lightbox-comment-form',
+    _sendMessage);
+
+  var _startPageDownload = function(e) {
+    e.kill();
+    var form = e.getNode('tag:form');
+    form.submit();
+  };
+
+  JX.Stratcom.listen(
+    'click',
+    'embed-download-form',
+    _startPageDownload);
 
 });

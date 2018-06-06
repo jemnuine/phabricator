@@ -9,9 +9,9 @@ final class PhabricatorConfigCoreSchemaSpec
   public function buildSchemata() {
     // Build all Lisk table schemata.
 
-    $lisk_objects = id(new PhutilSymbolLoader())
+    $lisk_objects = id(new PhutilClassMapQuery())
       ->setAncestorClass('PhabricatorLiskDAO')
-      ->loadObjects();
+      ->execute();
 
     $counters = array();
     foreach ($lisk_objects as $object) {
@@ -42,5 +42,13 @@ final class PhabricatorConfigCoreSchemaSpec
         ));
     }
 
+    $ferret_objects = id(new PhutilClassMapQuery())
+      ->setAncestorClass('PhabricatorFerretInterface')
+      ->execute();
+
+    foreach ($ferret_objects as $ferret_object) {
+      $engine = $ferret_object->newFerretEngine();
+      $this->buildFerretIndexSchema($engine);
+    }
   }
 }

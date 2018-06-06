@@ -76,13 +76,11 @@ final class PhabricatorObjectMailReceiverTestCase
   }
 
   private function buildMail($style) {
-
-    // TODO: Clean up test data generators so that we don't need to guarantee
-    // the existence of a user.
-    $this->generateNewTestUser();
-
-    $task = id(new PhabricatorManiphestTaskTestDataGenerator())->generate();
     $user = $this->generateNewTestUser();
+
+    $task = id(new PhabricatorManiphestTaskTestDataGenerator())
+      ->setViewer($user)
+      ->generateObject();
 
     $is_public = ($style === 'public');
     $is_bad_hash = ($style == 'badhash');
@@ -100,8 +98,11 @@ final class PhabricatorObjectMailReceiverTestCase
     if ($is_bad_hash) {
       $hash = PhabricatorObjectMailReceiver::computeMailHash('x', 'y');
     } else {
+
+      $mail_key = PhabricatorMetaMTAMailProperties::loadMailKey($task);
+
       $hash = PhabricatorObjectMailReceiver::computeMailHash(
-        $task->getMailKey(),
+        $mail_key,
         $is_public ? $task->getPHID() : $user->getPHID());
     }
 

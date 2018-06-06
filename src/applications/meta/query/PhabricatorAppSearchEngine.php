@@ -201,65 +201,64 @@ final class PhabricatorAppSearchEngine
         $results[] = phutil_tag(
           'h1',
           array(
-            'class' => 'launcher-header',
+            'class' => 'phui-oi-list-header',
           ),
           idx($group_names, $group, $group));
       }
 
       $list = new PHUIObjectItemListView();
-      $list->addClass('phui-object-item-launcher-list');
 
       foreach ($applications as $application) {
-        $icon = $application->getFontIcon();
+        $icon = $application->getIcon();
         if (!$icon) {
           $icon = 'application';
         }
 
-        // TODO: This sheet doesn't work the same way other sheets do so it
-        // ends up with the wrong classes if we try to use PHUIIconView. This
-        // is probably all changing in the redesign anyway.
+        $description = $application->getShortDescription();
 
-        $icon_view = javelin_tag(
-          'span',
-          array(
-            'class' => 'phui-icon-view phui-font-fa '.$icon,
-            'aural' => false,
-          ),
-          '');
+        $configure = id(new PHUIButtonView())
+          ->setTag('a')
+          ->setIcon('fa-gears')
+          ->setHref('/applications/view/'.get_class($application).'/')
+          ->setText(pht('Configure'))
+          ->setColor(PHUIButtonView::GREY);
 
-        $description = phutil_tag(
-          'div',
-          array(
-            'style' => 'white-space: nowrap; '.
-                       'overflow: hidden; '.
-                       'text-overflow: ellipsis;',
-          ),
-          $application->getShortDescription());
+        $name = $application->getName();
 
         $item = id(new PHUIObjectItemView())
-          ->setHeader($application->getName())
-          ->setImageIcon($icon_view)
-          ->addAttribute($description)
-          ->addAction(
-            id(new PHUIListItemView())
-              ->setName(pht('Help/Options'))
-              ->setIcon('fa-cog')
-              ->setHref('/applications/view/'.get_class($application).'/'));
+          ->setHeader($name)
+          ->setImageIcon($icon)
+          ->setSideColumn($configure);
+
+        if (!$application->isFirstParty()) {
+          $tag = id(new PHUITagView())
+            ->setName(pht('Extension'))
+            ->setIcon('fa-puzzle-piece')
+            ->setColor(PHUITagView::COLOR_BLUE)
+            ->setType(PHUITagView::TYPE_SHADE)
+            ->setSlimShady(true);
+          $item->addAttribute($tag);
+        }
+
+        if ($application->isPrototype()) {
+          $prototype_tag = id(new PHUITagView())
+            ->setName(pht('Prototype'))
+            ->setIcon('fa-exclamation-circle')
+            ->setColor(PHUITagView::COLOR_ORANGE)
+            ->setType(PHUITagView::TYPE_SHADE)
+            ->setSlimShady(true);
+          $item->addAttribute($prototype_tag);
+        }
+
+        $item->addAttribute($description);
 
         if ($application->getBaseURI() && $application->isInstalled()) {
           $item->setHref($application->getBaseURI());
         }
 
         if (!$application->isInstalled()) {
-          $item->addIcon('fa-times', pht('Uninstalled'));
-        }
-
-        if ($application->isPrototype()) {
-          $item->addIcon('fa-bomb grey', pht('Prototype'));
-        }
-
-        if (!$application->isFirstParty()) {
-          $item->addIcon('fa-puzzle-piece', pht('Extension'));
+          $item->addAttribute(pht('Uninstalled'));
+          $item->setDisabled(true);
         }
 
         $list->addItem($item);
@@ -268,7 +267,10 @@ final class PhabricatorAppSearchEngine
       $results[] = $list;
     }
 
-    return $results;
+    $result = new PhabricatorApplicationSearchResultView();
+    $result->setContent($results);
+
+    return $result;
   }
 
 }

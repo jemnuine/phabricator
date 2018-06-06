@@ -39,8 +39,8 @@ final class LegalpadDocumentBody extends LegalpadDAO
 
 
   public function getMarkupFieldKey($field) {
-    $hash = PhabricatorHash::digest($this->getMarkupText($field));
-    return 'LEGB:'.$hash;
+    $content = $this->getMarkupText($field);
+    return PhabricatorMarkupEngine::digestRemarkupContent($this, $content);
   }
 
   public function newMarkupEngine($field) {
@@ -52,11 +52,8 @@ final class LegalpadDocumentBody extends LegalpadDAO
       case self::MARKUP_FIELD_TEXT:
         $text = $this->getText();
         break;
-      case self::MARKUP_FIELD_TITLE:
-        $text = $this->getTitle();
-        break;
       default:
-        throw new Exception('Unknown field: '.$field);
+        throw new Exception(pht('Unknown field: %s', $field));
         break;
     }
 

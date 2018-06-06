@@ -39,9 +39,6 @@ final class PhabricatorMetaMTAActorQuery extends PhabricatorQuery {
         case PhabricatorPeopleExternalPHIDType::TYPECONST:
           $this->loadExternalUserActors($actors, $phids);
           break;
-        case PhabricatorMailingListListPHIDType::TYPECONST:
-          $this->loadMailingListActors($actors, $phids);
-          break;
         default:
           $this->loadUnknownActors($actors, $phids);
           break;
@@ -62,6 +59,7 @@ final class PhabricatorMetaMTAActorQuery extends PhabricatorQuery {
     $users = id(new PhabricatorPeopleQuery())
       ->setViewer($this->getViewer())
       ->withPHIDs($phids)
+      ->needUserSettings(true)
       ->execute();
     $users = mpull($users, null, 'getPHID');
 
@@ -91,6 +89,7 @@ final class PhabricatorMetaMTAActorQuery extends PhabricatorQuery {
         $actor->setUndeliverable(PhabricatorMetaMTAActor::REASON_NO_ADDRESS);
       } else {
         $actor->setEmailAddress($email->getAddress());
+        $actor->setIsVerified($email->getIsVerified());
       }
     }
   }
@@ -121,31 +120,16 @@ final class PhabricatorMetaMTAActorQuery extends PhabricatorQuery {
       }
 
       $actor->setEmailAddress($xuser->getAccountID());
+
+      // NOTE: This effectively drops all outbound mail to unrecognized
+      // addresses unless "phabricator.allow-email-users" is set. See T12237
+      // for context.
+      $allow_key = 'phabricator.allow-email-users';
+      $allow_value = PhabricatorEnv::getEnvConfig($allow_key);
+      $actor->setIsVerified((bool)$allow_value);
     }
   }
 
-  private function loadMailingListActors(array $actors, array $phids) {
-    assert_instances_of($actors, 'PhabricatorMetaMTAActor');
-
-    $lists = id(new PhabricatorMailingListQuery())
-      ->setViewer($this->getViewer())
-      ->withPHIDs($phids)
-      ->execute();
-    $lists = mpull($lists, null, 'getPHID');
-
-    foreach ($phids as $phid) {
-      $actor = $actors[$phid];
-
-      $list = idx($lists, $phid);
-      if (!$list) {
-        $actor->setUndeliverable(PhabricatorMetaMTAActor::REASON_UNLOADABLE);
-        continue;
-      }
-
-      $actor->setName($list->getName());
-      $actor->setEmailAddress($list->getEmail());
-    }
-  }
 
   private function loadUnknownActors(array $actors, array $phids) {
     foreach ($phids as $phid) {

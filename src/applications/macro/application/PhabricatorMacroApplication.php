@@ -14,7 +14,7 @@ final class PhabricatorMacroApplication extends PhabricatorApplication {
     return pht('Image Macros and Memes');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-file-image-o';
   }
 
@@ -32,20 +32,13 @@ final class PhabricatorMacroApplication extends PhabricatorApplication {
         '(query/(?P<key>[^/]+)/)?' => 'PhabricatorMacroListController',
         'create/' => 'PhabricatorMacroEditController',
         'view/(?P<id>[1-9]\d*)/' => 'PhabricatorMacroViewController',
-        'comment/(?P<id>[1-9]\d*)/' => 'PhabricatorMacroCommentController',
-        'edit/(?P<id>[1-9]\d*)/' => 'PhabricatorMacroEditController',
+        $this->getEditRoutePattern('edit/')
+          => 'PhabricatorMacroEditController',
         'audio/(?P<id>[1-9]\d*)/' => 'PhabricatorMacroAudioController',
         'disable/(?P<id>[1-9]\d*)/' => 'PhabricatorMacroDisableController',
         'meme/' => 'PhabricatorMacroMemeController',
         'meme/create/' => 'PhabricatorMacroMemeDialogController',
       ),
-    );
-  }
-
-  public function getRemarkupRules() {
-    return array(
-      new PhabricatorIconRemarkupRule(),
-      new PhabricatorEmojiRemarkupRule(),
     );
   }
 

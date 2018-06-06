@@ -10,6 +10,16 @@ final class PhrictionInfoConduitAPIMethod extends PhrictionConduitAPIMethod {
     return pht('Retrieve information about a Phriction document.');
   }
 
+  public function getMethodStatus() {
+    return self::METHOD_STATUS_FROZEN;
+  }
+
+  public function getMethodStatusDescription() {
+    return pht(
+      'This method is frozen and will eventually be deprecated. New code '.
+      'should use "phriction.document.search" instead.');
+  }
+
   protected function defineParamTypes() {
     return array(
       'slug' => 'required string',
@@ -22,7 +32,7 @@ final class PhrictionInfoConduitAPIMethod extends PhrictionConduitAPIMethod {
 
   protected function defineErrorTypes() {
     return array(
-      'ERR-BAD-DOCUMENT' => 'No such document exists.',
+      'ERR-BAD-DOCUMENT' => pht('No such document exists.'),
     );
   }
 
@@ -38,9 +48,7 @@ final class PhrictionInfoConduitAPIMethod extends PhrictionConduitAPIMethod {
       throw new ConduitException('ERR-BAD-DOCUMENT');
     }
 
-    return $this->buildDocumentInfoDictionary(
-      $document,
-      $document->getContent());
+    return $this->buildDocumentInfoDictionary($document);
   }
 
 }

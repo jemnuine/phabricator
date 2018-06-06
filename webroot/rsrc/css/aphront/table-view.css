@@ -2,26 +2,51 @@
  * @provides aphront-table-view-css
  */
 
-.device-phone .aphront-table-wrap,
-.device-tablet .aphront-table-wrap {
+.aphront-table-wrap {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .aphront-table-view {
   width: 100%;
   border-collapse:  collapse;
-  background: #fff;
+  background: {$page.content};
   border: 1px solid {$lightblueborder};
   border-bottom: 1px solid {$blueborder};
+}
+
+.aphront-table-view-fixed {
+  table-layout: fixed;
+}
+
+.aphront-table-view-fixed th {
+  box-sizing: border-box;
+}
+
+.aphront-table-notice {
+  padding: 12px 16px;
+  color: {$darkbluetext};
+  border-bottom: 1px solid {$thinblueborder};
+}
+
+.phui-two-column-view .aphront-table-notice .phui-info-view {
+  margin: 0;
 }
 
 .aphront-table-view tr.alt {
   background: {$lightgreybackground};
 }
 
+.device-desktop .aphront-table-view tr:hover {
+  background: {$bluebackground};
+}
+
+.device-desktop .aphront-table-view tr.no-data:hover {
+  background: inherit;
+}
+
 .aphront-table-view th {
   font-weight: bold;
-  font-size: 13px;
   white-space: nowrap;
   color: {$bluetext};
   text-shadow: 0 1px 0 white;
@@ -54,11 +79,13 @@ th.aphront-table-view-sortable-selected {
   text-align: right;
   color: {$bluetext};
   font-weight: bold;
+  vertical-align: top;
 }
 
 .aphront-table-view td {
   white-space: nowrap;
   vertical-align: middle;
+  color: {$darkbluetext};
 }
 
 .aphront-table-down-sort {
@@ -95,34 +122,16 @@ th.aphront-table-view-sortable-selected {
 */
 
 .aphront-table-view th {
-  padding: 10px 10px;
-  font-size: 13px;
+  padding: 8px 10px;
 }
 
 .aphront-table-view td {
   padding: 8px 10px;
-  font-size: 12px;
-}
-
-.device-tablet .aphront-table-view td,
-.device-phone .aphront-table-view td {
-  padding: 6px;
-}
-
-.device-tablet .aphront-table-view td + td,
-.device-phone .aphront-table-view td + td {
-  padding-left: 0px;
 }
 
 .device-tablet .aphront-table-view th,
 .device-phone .aphront-table-view th {
-  padding: 6px;
   overflow: hidden;
-}
-
-.device-tablet .aphront-table-view th + th,
-.device-phone .aphront-table-view th + th {
-  padding-left: 0px;
 }
 
 .aphront-table-view td.sorted-column {
@@ -139,12 +148,16 @@ th.aphront-table-view-sortable-selected {
 }
 
 .aphront-table-view td.larger {
-  font-size: 14px;
+  font-size: {$biggerfontsize};
 }
 
 .aphront-table-view td.pri {
   font-weight: bold;
   color: {$darkbluetext};
+}
+
+.aphront-table-view td.top {
+  vertical-align: top;
 }
 
 .aphront-table-view td.wide {
@@ -159,22 +172,26 @@ th.aphront-table-view-sortable-selected {
 
 .aphront-table-view td.mono {
   font-family: "Monaco", monospace;
-  font-size: 11px;
+  font-size: {$smallestfontsize};
 }
 
 .aphront-table-view td.n {
   font-family: "Monaco", monospace;
-  font-size: 11px;
+  font-size: {$smallestfontsize};
   text-align: right;
 }
 
+.aphront-table-view td.nudgeright, .aphront-table-view th.nudgeright {
+  padding-right: 0;
+}
+
 .aphront-table-view td.wrap {
-  white-space:      normal;
+  white-space: normal;
 }
 
 .aphront-table-view td.prewrap {
   font-family: "Monaco", monospace;
-  font-size: 11px;
+  font-size: {$smallestfontsize};
   white-space: pre-wrap;
 }
 
@@ -185,6 +202,10 @@ th.aphront-table-view-sortable-selected {
 .aphront-table-view td.icon, .aphront-table-view th.icon {
   width: 1px;
   padding: 0px;
+}
+
+.aphront-table-view td.icon + td.icon {
+  padding-left: 8px;
 }
 
 div.single-display-line-bounds {
@@ -203,16 +224,51 @@ span.single-display-line-content {
   position: static;
 }
 
+.aphront-table-view td.object-link {
+  white-space: nowrap;
+  word-wrap: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 0;
+}
+
+.aphront-table-view tr.closed td.object-link .object-name,
+.aphront-table-view tr.alt-closed td.object-link .object-name {
+  text-decoration: line-through;
+  color: rgba({$alphablack}, 0.5);
+}
+
+.aphront-table-view tr.closed td.object-link a,
+.aphront-table-view tr.alt-closed td.object-link a {
+  color: rgba({$alphablack}, 0.5);
+}
+
+.aphront-table-view tr.closed td.graph-status,
+.aphront-table-view tr.alt-closed td.graph-status,
+.object-graph-table em {
+  color: {$lightgreytext};
+}
+
 .aphront-table-view tr.highlighted {
-  background: #fcf8e2;
+  background: #fdf9e4;
 }
 
 .aphront-table-view tr.alt-highlighted {
-  background: #fcf2bb;
+  background: {$sh-yellowbackground};
+}
+
+.aphront-table-view tr.diff-removed,
+.aphront-table-view tr.alt-diff-removed {
+  background: {$lightred}
+}
+
+.aphront-table-view tr.diff-added,
+.aphront-table-view tr.alt-diff-added {
+  background: {$lightgreen}
 }
 
 .aphront-table-view tr.no-data td {
-  padding: 12px;
+  padding: 16px;
   text-align: center;
   color: {$lightgreytext};
   font-style: italic;
@@ -256,11 +312,6 @@ span.single-display-line-content {
 .device-tablet .aphront-table-view-nodevice,
 .device-phone .aphront-table-view-nodevice {
   display: none;
-}
-
-.aphront-table-view-device-ready {
-  width: 99%;
-  margin: 8px auto;
 }
 
 .aphront-table-view td.link {

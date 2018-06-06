@@ -1,7 +1,10 @@
 <?php
 
-final class HarbormasterBuildTarget extends HarbormasterDAO
-  implements PhabricatorPolicyInterface {
+final class HarbormasterBuildTarget
+  extends HarbormasterDAO
+  implements
+    PhabricatorPolicyInterface,
+    PhabricatorDestructibleInterface {
 
   protected $name;
   protected $buildPHID;
@@ -175,8 +178,16 @@ final class HarbormasterBuildTarget extends HarbormasterDAO
     return $this->implementation;
   }
 
+  public function isAutotarget() {
+    try {
+      return (bool)$this->getImplementation()->getBuildStepAutotargetPlanKey();
+    } catch (Exception $e) {
+      return false;
+    }
+  }
+
   public function getName() {
-    if (strlen($this->name)) {
+    if (strlen($this->name) && !$this->isAutotarget()) {
       return $this->name;
     }
 
@@ -192,6 +203,89 @@ final class HarbormasterBuildTarget extends HarbormasterDAO
       'target.phid' => $this->getPHID(),
     );
   }
+
+  public function createArtifact(
+    PhabricatorUser $actor,
+    $artifact_key,
+    $artifact_type,
+    array $artifact_data) {
+
+    $impl = HarbormasterArtifact::getArtifactType($artifact_type);
+    if (!$impl) {
+      throw new Exception(
+        pht(
+          'There is no implementation available for artifacts of type "%s".',
+          $artifact_type));
+    }
+
+    $impl->validateArtifactData($artifact_data);
+
+    $artifact = HarbormasterBuildArtifact::initializeNewBuildArtifact($this)
+      ->setArtifactKey($artifact_key)
+      ->setArtifactType($artifact_type)
+      ->setArtifactData($artifact_data);
+
+    $impl = $artifact->getArtifactImplementation();
+    $impl->willCreateArtifact($actor);
+
+    return $artifact->save();
+  }
+
+  public function loadArtifact($artifact_key) {
+    $indexes = array();
+
+    $indexes[] = HarbormasterBuildArtifact::getArtifactIndex(
+      $this,
+      $artifact_key);
+
+    $artifact = id(new HarbormasterBuildArtifactQuery())
+      ->setViewer(PhabricatorUser::getOmnipotentUser())
+      ->withArtifactIndexes($indexes)
+      ->executeOne();
+    if ($artifact === null) {
+      throw new Exception(
+        pht(
+          'Artifact "%s" not found!',
+          $artifact_key));
+    }
+
+    return $artifact;
+  }
+
+  public function newLog($log_source, $log_type) {
+    $log_source = id(new PhutilUTF8StringTruncator())
+      ->setMaximumBytes(250)
+      ->truncateString($log_source);
+
+    $log = HarbormasterBuildLog::initializeNewBuildLog($this)
+      ->setLogSource($log_source)
+      ->setLogType($log_type)
+      ->openBuildLog();
+
+    return $log;
+  }
+
+  public function getFieldValue($key) {
+    $field_list = PhabricatorCustomField::getObjectFields(
+      $this->getBuildStep(),
+      PhabricatorCustomField::ROLE_VIEW);
+
+    $fields = $field_list->getFields();
+    $full_key = "std:harbormaster:core:{$key}";
+
+    $field = idx($fields, $full_key);
+    if (!$field) {
+      throw new Exception(
+        pht(
+          'Unknown build step field "%s"!',
+          $key));
+    }
+
+    $field = clone $field;
+    $field->setValueFromStorage($this->getDetail($key));
+    return $field->getBuildTargetFieldValue();
+  }
+
 
 
 /* -(  Status  )------------------------------------------------------------- */
@@ -212,6 +306,7 @@ final class HarbormasterBuildTarget extends HarbormasterDAO
   public function isFailed() {
     switch ($this->getTargetStatus()) {
       case self::STATUS_FAILED:
+      case self::STATUS_ABORTED:
         return true;
     }
 
@@ -261,5 +356,60 @@ final class HarbormasterBuildTarget extends HarbormasterDAO
   public function describeAutomaticCapability($capability) {
     return pht('Users must be able to see a build to view its build targets.');
   }
+
+
+/* -(  PhabricatorDestructibleInterface  )----------------------------------- */
+
+
+  public function destroyObjectPermanently(
+    PhabricatorDestructionEngine $engine) {
+    $viewer = $engine->getViewer();
+
+    $this->openTransaction();
+
+      $lint_message = new HarbormasterBuildLintMessage();
+      $conn = $lint_message->establishConnection('w');
+      queryfx(
+        $conn,
+        'DELETE FROM %T WHERE buildTargetPHID = %s',
+        $lint_message->getTableName(),
+        $this->getPHID());
+
+      $unit_message = new HarbormasterBuildUnitMessage();
+      $conn = $unit_message->establishConnection('w');
+      queryfx(
+        $conn,
+        'DELETE FROM %T WHERE buildTargetPHID = %s',
+        $unit_message->getTableName(),
+        $this->getPHID());
+
+      $logs = id(new HarbormasterBuildLogQuery())
+        ->setViewer($viewer)
+        ->withBuildTargetPHIDs(array($this->getPHID()))
+        ->execute();
+      foreach ($logs as $log) {
+        $engine->destroyObject($log);
+      }
+
+      $artifacts = id(new HarbormasterBuildArtifactQuery())
+        ->setViewer($viewer)
+        ->withBuildTargetPHIDs(array($this->getPHID()))
+        ->execute();
+      foreach ($artifacts as $artifact) {
+        $engine->destroyObject($artifact);
+      }
+
+      $messages = id(new HarbormasterBuildMessageQuery())
+        ->setViewer($viewer)
+        ->withReceiverPHIDs(array($this->getPHID()))
+        ->execute();
+      foreach ($messages as $message) {
+        $engine->destroyObject($message);
+      }
+
+      $this->delete();
+    $this->saveTransaction();
+  }
+
 
 }

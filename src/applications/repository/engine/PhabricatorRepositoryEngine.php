@@ -4,7 +4,7 @@
  * @task config     Configuring Repository Engines
  * @task internal   Internals
  */
-abstract class PhabricatorRepositoryEngine {
+abstract class PhabricatorRepositoryEngine extends Phobject {
 
   private $repository;
   private $verbose;
@@ -23,7 +23,7 @@ abstract class PhabricatorRepositoryEngine {
    */
   protected function getRepository() {
     if ($this->repository === null) {
-      throw new Exception('Call setRepository() to provide a repository!');
+      throw new PhutilInvalidStateException('setRepository');
     }
 
     return $this->repository;
@@ -51,6 +51,26 @@ abstract class PhabricatorRepositoryEngine {
     return PhabricatorUser::getOmnipotentUser();
   }
 
+  protected function newRepositoryLock(
+    PhabricatorRepository $repository,
+    $lock_key,
+    $lock_device_only) {
+
+    $lock_parts = array(
+      'repositoryPHID' => $repository->getPHID(),
+    );
+
+    if ($lock_device_only) {
+      $device = AlmanacKeys::getLiveDevice();
+      if ($device) {
+        $lock_parts['devicePHID'] = $device->getPHID();
+      }
+    }
+
+    return PhabricatorGlobalLock::newLock($lock_key, $lock_parts);
+  }
+
+
   /**
    * Verify that the "origin" remote exists, and points at the correct URI.
    *
@@ -62,13 +82,29 @@ abstract class PhabricatorRepositoryEngine {
    * @return  void
    */
   protected function verifyGitOrigin(PhabricatorRepository $repository) {
-    list($remotes) = $repository->execxLocalCommand(
-      'remote show -n origin');
+    try {
+      list($remotes) = $repository->execxLocalCommand(
+        'remote show -n origin');
+    } catch (CommandException $ex) {
+      throw new PhutilProxyException(
+        pht(
+          'Expected to find a Git working copy at path "%s", but the '.
+          'path exists and is not a valid working copy. If you remove '.
+          'this directory, the daemons will automatically recreate it '.
+          'correctly. Phabricator will not destroy the directory for you '.
+          'because it can not be sure that it does not contain important '.
+          'data.',
+          $repository->getLocalPath()),
+        $ex);
+    }
 
     $matches = null;
     if (!preg_match('/^\s*Fetch URL:\s*(.*?)\s*$/m', $remotes, $matches)) {
       throw new Exception(
-        "Expected 'Fetch URL' in 'git remote show -n origin'.");
+        pht(
+          "Expected '%s' in '%s'.",
+          'Fetch URL',
+          'git remote show -n origin'));
     }
 
     $remote_uri = $matches[1];
@@ -97,6 +133,11 @@ abstract class PhabricatorRepositoryEngine {
       $valid = ($remote_normal == $expect_normal);
       $exists = true;
     }
+
+    // These URIs may have plaintext HTTP credentials. If they do, censor
+    // them for display. See T12945.
+    $display_remote = phutil_censor_credentials($remote_uri);
+    $display_expect = phutil_censor_credentials($expect_remote);
 
     if (!$valid) {
       if (!$exists) {
@@ -135,8 +176,8 @@ abstract class PhabricatorRepositoryEngine {
             'set the remote URI correctly. To avoid breaking anything, '.
             'Phabricator will not automatically fix this.',
             $repository->getLocalPath(),
-            $remote_uri,
-            $expect_remote);
+            $display_remote,
+            $display_expect);
           throw new Exception($message);
         }
       }

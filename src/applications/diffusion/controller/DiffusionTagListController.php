@@ -6,22 +6,26 @@ final class DiffusionTagListController extends DiffusionController {
     return true;
   }
 
-  protected function processDiffusionRequest(AphrontRequest $request) {
-    $drequest = $this->getDiffusionRequest();
-    $viewer = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $response = $this->loadDiffusionContext();
+    if ($response) {
+      return $response;
+    }
+    require_celerity_resource('diffusion-css');
 
+    $viewer = $this->getViewer();
+    $drequest = $this->getDiffusionRequest();
     $repository = $drequest->getRepository();
 
-    $pager = new AphrontPagerView();
-    $pager->setURI($request->getRequestURI(), 'offset');
-    $pager->setOffset($request->getInt('offset'));
+    $pager = id(new PHUIPagerView())
+      ->readFromRequest($request);
 
     $params = array(
       'limit' => $pager->getPageSize() + 1,
       'offset' => $pager->getOffset(),
     );
 
-    if ($drequest->getSymbolicCommit()) {
+    if (strlen($drequest->getSymbolicCommit())) {
       $is_commit = true;
       $params['commit'] = $drequest->getSymbolicCommit();
     } else {
@@ -42,6 +46,16 @@ final class DiffusionTagListController extends DiffusionController {
     $tags = $pager->sliceResults($tags);
 
     $content = null;
+
+    $header = id(new PHUIHeaderView())
+      ->setHeader(pht('Tags'))
+      ->setHeaderIcon('fa-tags');
+
+    if (!$repository->isSVN()) {
+      $branch_tag = $this->renderBranchTag($drequest);
+      $header->addTag($branch_tag);
+    }
+
     if (!$tags) {
       $content = $this->renderStatusMessage(
         pht('No Tags'),
@@ -56,21 +70,21 @@ final class DiffusionTagListController extends DiffusionController {
         ->needCommitData(true)
         ->execute();
 
-      $view = id(new DiffusionTagListView())
+      $tag_list = id(new DiffusionTagListView())
         ->setTags($tags)
         ->setUser($viewer)
         ->setCommits($commits)
         ->setDiffusionRequest($drequest);
 
-      $phids = $view->getRequiredHandlePHIDs();
+      $phids = $tag_list->getRequiredHandlePHIDs();
       $handles = $this->loadViewerHandles($phids);
-      $view->setHandles($handles);
+      $tag_list->setHandles($handles);
 
-      $panel = id(new PHUIObjectBoxView())
-        ->setHeaderText(pht('Tags'))
-        ->appendChild($view);
-
-      $content = $panel;
+      $content = id(new PHUIObjectBoxView())
+        ->setHeaderText($repository->getDisplayName())
+        ->setBackground(PHUIObjectBoxView::BLUE_PROPERTY)
+        ->setTable($tag_list)
+        ->setPager($pager);
     }
 
     $crumbs = $this->buildCrumbs(
@@ -78,19 +92,24 @@ final class DiffusionTagListController extends DiffusionController {
         'tags' => true,
         'commit' => $drequest->getSymbolicCommit(),
       ));
+    $crumbs->setBorder(true);
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
-        $content,
-        $pager,
-      ),
-      array(
-        'title' => array(
+    $tabs = $this->buildTabsView('tags');
+
+    $view = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->setTabs($tabs)
+      ->setFooter($content);
+
+    return $this->newPage()
+      ->setTitle(
+        array(
           pht('Tags'),
-          pht('%s Repository', $repository->getCallsign()),
-        ),
-      ));
+          $repository->getDisplayName(),
+        ))
+      ->setCrumbs($crumbs)
+      ->appendChild($view)
+      ->addClass('diffusion-history-view');
   }
 
 }

@@ -12,9 +12,12 @@ JX.install('PHUIXActionView', {
     _node: null,
     _name: null,
     _icon: 'none',
+    _iconColor: null,
     _disabled: false,
+    _label: false,
     _handler: null,
     _selected: false,
+    _divider: false,
 
     _iconNode: null,
     _nameNode: null,
@@ -28,6 +31,28 @@ JX.install('PHUIXActionView', {
 
       this._buildIconNode(true);
 
+      return this;
+    },
+
+    getDisabled: function() {
+      return this._disabled;
+    },
+
+    setLabel: function(label) {
+      this._label = label;
+      JX.DOM.alterClass(
+        this.getNode(),
+        'phabricator-action-view-label',
+        label);
+      return this;
+    },
+
+    setDivider: function(divider) {
+      this._divider = divider;
+      JX.DOM.alterClass(
+        this.getNode(),
+        'phabricator-action-view-type-divider',
+        divider);
       return this;
     },
 
@@ -59,6 +84,12 @@ JX.install('PHUIXActionView', {
       return this;
     },
 
+    setIconColor: function(color) {
+      this._iconColor = color;
+      this._buildIconNode(true);
+      return this;
+    },
+
     setHref: function(href) {
       this._href = href;
       this._buildNameNode(true);
@@ -67,16 +98,27 @@ JX.install('PHUIXActionView', {
 
     getNode: function() {
       if (!this._node) {
-        var attr = {
-          className: 'phabricator-action-view'
-        };
+        var classes = ['phabricator-action-view'];
+
+        if (this._href || this._handler) {
+          classes.push('phabricator-action-view-href');
+        }
+
+        if (this._icon) {
+          classes.push('action-has-icon');
+        }
 
         var content = [
           this._buildIconNode(),
           this._buildNameNode()
         ];
 
+        var attr = {
+          className: classes.join(' ')
+        };
         this._node = JX.$N('li', attr, content);
+
+        JX.Stratcom.addSigil(this._node, 'phuix-action-view');
       }
 
       return this._node;
@@ -96,6 +138,10 @@ JX.install('PHUIXActionView', {
         var icon_class = this._icon;
         if (this._disabled) {
           icon_class = icon_class + ' grey';
+        }
+
+        if (this._iconColor) {
+          icon_class = icon_class + ' ' + this._iconColor;
         }
 
         JX.DOM.alterClass(node, icon_class, true);

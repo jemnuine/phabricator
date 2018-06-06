@@ -3,19 +3,13 @@
 final class PhabricatorSlowvoteCloseController
   extends PhabricatorSlowvoteController {
 
-  private $id;
-
-  public function willProcessRequest(array $data) {
-    $this->id = $data['id'];
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $id = $request->getURIData('id');
 
     $poll = id(new PhabricatorSlowvoteQuery())
-      ->setViewer($user)
-      ->withIDs(array($this->id))
+      ->setViewer($viewer)
+      ->withIDs(array($id))
       ->requireCapabilities(
         array(
           PhabricatorPolicyCapability::CAN_VIEW,
@@ -38,11 +32,12 @@ final class PhabricatorSlowvoteCloseController
       $xactions = array();
 
       $xactions[] = id(new PhabricatorSlowvoteTransaction())
-        ->setTransactionType(PhabricatorSlowvoteTransaction::TYPE_CLOSE)
+        ->setTransactionType(
+            PhabricatorSlowvoteCloseTransaction::TRANSACTIONTYPE)
         ->setNewValue($new_status);
 
       id(new PhabricatorSlowvoteEditor())
-        ->setActor($user)
+        ->setActor($viewer)
         ->setContentSourceFromRequest($request)
         ->setContinueOnNoEffect(true)
         ->setContinueOnMissingFields(true)

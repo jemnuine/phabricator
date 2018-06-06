@@ -25,13 +25,19 @@ abstract class PhabricatorObjectRemarkupRule extends PhutilRemarkupRule {
     return true;
   }
 
+  protected function getObjectNameText(
+    $object,
+    PhabricatorObjectHandle $handle,
+    $id) {
+    return $this->getObjectNamePrefix().$id;
+  }
+
   protected function loadHandles(array $objects) {
     $phids = mpull($objects, 'getPHID');
 
-    $handles = id(new PhabricatorHandleQuery($phids))
-      ->withPHIDs($phids)
-      ->setViewer($this->getEngine()->getConfig('viewer'))
-      ->execute();
+    $viewer = $this->getEngine()->getConfig('viewer');
+    $handles = $viewer->loadHandles($phids);
+    $handles = iterator_to_array($handles);
 
     $result = array();
     foreach ($objects as $id => $object) {
@@ -40,17 +46,28 @@ abstract class PhabricatorObjectRemarkupRule extends PhutilRemarkupRule {
     return $result;
   }
 
-  protected function getObjectHref($object, $handle, $id) {
-    return $handle->getURI();
+  protected function getObjectHref(
+    $object,
+    PhabricatorObjectHandle $handle,
+    $id) {
+
+    $uri = $handle->getURI();
+
+    if ($this->getEngine()->getConfig('uri.full')) {
+      $uri = PhabricatorEnv::getURI($uri);
+    }
+
+    return $uri;
   }
 
-  protected function renderObjectRefForAnyMedia (
-      $object,
-      $handle,
-      $anchor,
-      $id) {
+  protected function renderObjectRefForAnyMedia(
+    $object,
+    PhabricatorObjectHandle $handle,
+    $anchor,
+    $id) {
+
     $href = $this->getObjectHref($object, $handle, $id);
-    $text = $this->getObjectNamePrefix().$id;
+    $text = $this->getObjectNameText($object, $handle, $id);
 
     if ($anchor) {
       $href = $href.'#'.$anchor;
@@ -58,7 +75,7 @@ abstract class PhabricatorObjectRemarkupRule extends PhutilRemarkupRule {
     }
 
     if ($this->getEngine()->isTextMode()) {
-      return PhabricatorEnv::getProductionURI($href);
+      return $text.' <'.PhabricatorEnv::getProductionURI($href).'>';
     } else if ($this->getEngine()->isHTMLMailMode()) {
       $href = PhabricatorEnv::getProductionURI($href);
       return $this->renderObjectTagForMail($text, $href, $handle);
@@ -68,10 +85,15 @@ abstract class PhabricatorObjectRemarkupRule extends PhutilRemarkupRule {
 
   }
 
-  protected function renderObjectRef($object, $handle, $anchor, $id) {
+  protected function renderObjectRef(
+    $object,
+    PhabricatorObjectHandle $handle,
+    $anchor,
+    $id) {
+
     $href = $this->getObjectHref($object, $handle, $id);
-    $text = $this->getObjectNamePrefix().$id;
-    $status_closed = PhabricatorObjectHandleStatus::STATUS_CLOSED;
+    $text = $this->getObjectNameText($object, $handle, $id);
+    $status_closed = PhabricatorObjectHandle::STATUS_CLOSED;
 
     if ($anchor) {
       $href = $href.'#'.$anchor;
@@ -86,7 +108,11 @@ abstract class PhabricatorObjectRemarkupRule extends PhutilRemarkupRule {
     return $this->renderHovertag($text, $href, $attr);
   }
 
-  protected function renderObjectEmbedForAnyMedia($object, $handle, $options) {
+  protected function renderObjectEmbedForAnyMedia(
+    $object,
+    PhabricatorObjectHandle $handle,
+    $options) {
+
     $name = $handle->getFullName();
     $href = $handle->getURI();
 
@@ -100,10 +126,14 @@ abstract class PhabricatorObjectRemarkupRule extends PhutilRemarkupRule {
     return $this->renderObjectEmbed($object, $handle, $options);
   }
 
-  protected function renderObjectEmbed($object, $handle, $options) {
+  protected function renderObjectEmbed(
+    $object,
+    PhabricatorObjectHandle $handle,
+    $options) {
+
     $name = $handle->getFullName();
     $href = $handle->getURI();
-    $status_closed = PhabricatorObjectHandleStatus::STATUS_CLOSED;
+    $status_closed = PhabricatorObjectHandle::STATUS_CLOSED;
     $attr = array(
       'phid' => $handle->getPHID(),
       'closed'  => ($handle->getStatus() == $status_closed),
@@ -115,9 +145,9 @@ abstract class PhabricatorObjectRemarkupRule extends PhutilRemarkupRule {
   protected function renderObjectTagForMail(
     $text,
     $href,
-    $handle) {
+    PhabricatorObjectHandle $handle) {
 
-    $status_closed = PhabricatorObjectHandleStatus::STATUS_CLOSED;
+    $status_closed = PhabricatorObjectHandle::STATUS_CLOSED;
     $strikethrough = $handle->getStatus() == $status_closed ?
       'text-decoration: line-through;' :
       'text-decoration: none;';
@@ -186,13 +216,14 @@ abstract class PhabricatorObjectRemarkupRule extends PhutilRemarkupRule {
       $boundary = '\\B';
     }
 
-    // The "(?<![#-])" prevents us from linking "#abcdef" or similar, and
-    // "ABC-T1" (see T5714).
+    // The "(?<![#@-])" prevents us from linking "#abcdef" or similar, and
+    // "ABC-T1" (see T5714), and from matching "@T1" as a task (it is a user)
+    // (see T9479).
 
     // The "\b" allows us to link "(abcdef)" or similar without linking things
     // in the middle of words.
 
-    return '((?<![#-])'.$boundary.$prefix.'('.$id.')(?:#([-\w\d]+))?(?!\w))u';
+    return '((?<![#@-])'.$boundary.$prefix.'('.$id.')(?:#([-\w\d]+))?(?!\w))u';
   }
 
 
@@ -243,8 +274,17 @@ abstract class PhabricatorObjectRemarkupRule extends PhutilRemarkupRule {
     return $results;
   }
 
-  public function markupObjectEmbed($matches) {
+  public function markupObjectEmbed(array $matches) {
     if (!$this->isFlatText($matches[0])) {
+      return $matches[0];
+    }
+
+    // If we're rendering a table of contents, just render the raw input.
+    // This could perhaps be handled more gracefully but it seems unusual to
+    // put something like "{P123}" in a header and it's not obvious what users
+    // expect? See T8845.
+    $engine = $this->getEngine();
+    if ($engine->getState('toc')) {
       return $matches[0];
     }
 
@@ -256,8 +296,14 @@ abstract class PhabricatorObjectRemarkupRule extends PhutilRemarkupRule {
     ));
   }
 
-  public function markupObjectReference($matches) {
+  public function markupObjectReference(array $matches) {
     if (!$this->isFlatText($matches[0])) {
+      return $matches[0];
+    }
+
+    // If we're rendering a table of contents, just render the monogram.
+    $engine = $this->getEngine();
+    if ($engine->getState('toc')) {
       return $matches[0];
     }
 

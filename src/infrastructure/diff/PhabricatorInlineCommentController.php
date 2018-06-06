@@ -12,8 +12,18 @@ abstract class PhabricatorInlineCommentController
     PhabricatorInlineCommentInterface $inline);
   abstract protected function deleteComment(
     PhabricatorInlineCommentInterface $inline);
+  abstract protected function undeleteComment(
+    PhabricatorInlineCommentInterface $inline);
   abstract protected function saveComment(
     PhabricatorInlineCommentInterface $inline);
+
+  protected function hideComments(array $ids) {
+    throw new PhutilMethodNotImplementedException();
+  }
+
+  protected function showComments(array $ids) {
+    throw new PhutilMethodNotImplementedException();
+  }
 
   private $changesetID;
   private $isNewFile;
@@ -84,6 +94,22 @@ abstract class PhabricatorInlineCommentController
 
     $op = $this->getOperation();
     switch ($op) {
+      case 'hide':
+      case 'show':
+        if (!$request->validateCSRF()) {
+          return new Aphront404Response();
+        }
+
+        $ids = $request->getStrList('ids');
+        if ($ids) {
+          if ($op == 'hide') {
+            $this->hideComments($ids);
+          } else {
+            $this->showComments($ids);
+          }
+        }
+
+        return id(new AphrontAjaxResponse())->setContent(array());
       case 'done':
         if (!$request->validateCSRF()) {
           return new Aphront404Response();
@@ -91,12 +117,14 @@ abstract class PhabricatorInlineCommentController
         $inline = $this->loadCommentForDone($this->getCommentID());
 
         $is_draft_state = false;
+        $is_checked = false;
         switch ($inline->getFixedState()) {
           case PhabricatorInlineCommentInterface::STATE_DRAFT:
             $next_state = PhabricatorInlineCommentInterface::STATE_UNDONE;
             break;
           case PhabricatorInlineCommentInterface::STATE_UNDRAFT:
             $next_state = PhabricatorInlineCommentInterface::STATE_DONE;
+            $is_checked = true;
             break;
           case PhabricatorInlineCommentInterface::STATE_DONE:
             $next_state = PhabricatorInlineCommentInterface::STATE_UNDRAFT;
@@ -106,6 +134,7 @@ abstract class PhabricatorInlineCommentController
           case PhabricatorInlineCommentInterface::STATE_UNDONE:
             $next_state = PhabricatorInlineCommentInterface::STATE_DRAFT;
             $is_draft_state = true;
+            $is_checked = true;
             break;
         }
 
@@ -114,6 +143,7 @@ abstract class PhabricatorInlineCommentController
         return id(new AphrontAjaxResponse())
           ->setContent(
             array(
+              'isChecked' => $is_checked,
               'draftState' => $is_draft_state,
             ));
       case 'delete':
@@ -143,7 +173,12 @@ abstract class PhabricatorInlineCommentController
         $is_delete = ($op == 'delete' || $op == 'refdelete');
 
         $inline = $this->loadCommentForEdit($this->getCommentID());
-        $inline->setIsDeleted((int)$is_delete)->save();
+
+        if ($is_delete) {
+          $this->deleteComment($inline);
+        } else {
+          $this->undeleteComment($inline);
+        }
 
         return $this->buildEmptyResponse();
       case 'edit':
@@ -206,20 +241,20 @@ abstract class PhabricatorInlineCommentController
         $edit_dialog = $this->buildEditDialog();
 
         if ($this->getOperation() == 'reply') {
-          $inline = $this->loadComment($this->getCommentID());
-
           $edit_dialog->setTitle(pht('Reply to Inline Comment'));
-          $changeset = $inline->getChangesetID();
-          $is_new = $inline->getIsNewFile();
-          $number = $inline->getLineNumber();
-          $length = $inline->getLineLength();
         } else {
           $edit_dialog->setTitle(pht('New Inline Comment'));
-          $changeset = $this->getChangesetID();
-          $is_new = $this->getIsNewFile();
-          $number = $this->getLineNumber();
-          $length = $this->getLineLength();
         }
+
+        // NOTE: We read the values from the client (the display values), not
+        // the values from the database (the original values) when replying.
+        // In particular, when replying to a ghost comment which was moved
+        // across diffs and then moved backward to the most recent visible
+        // line, we want to reply on the display line (which exists), not on
+        // the comment's original line (which may not exist in this changeset).
+        $is_new = $this->getIsNewFile();
+        $number = $this->getLineNumber();
+        $length = $this->getLineLength();
 
         $edit_dialog->addHiddenInput('op', 'create');
         $edit_dialog->addHiddenInput('is_new', $is_new);
@@ -261,14 +296,18 @@ abstract class PhabricatorInlineCommentController
           pht('Failed to load comment "%s".', $reply_phid));
       }
 
-      if ($reply_comment->getChangesetID() != $this->getChangesetID()) {
-        throw new Exception(
-          pht(
-            'Comment "%s" belongs to wrong changeset (%s vs %s).',
-            $reply_phid,
-            $reply_comment->getChangesetID(),
-            $this->getChangesetID()));
-      }
+      // When replying, force the new comment into the same location as the
+      // old comment. If we don't do this, replying to a ghost comment from
+      // diff A while viewing diff B can end up placing the two comments in
+      // different places while viewing diff C, because the porting algorithm
+      // makes a different decision. Forcing the comments to bind to the same
+      // place makes sure they stick together no matter which diff is being
+      // viewed. See T10562 for discussion.
+
+      $this->changesetID = $reply_comment->getChangesetID();
+      $this->isNewFile = $reply_comment->getIsNewFile();
+      $this->lineNumber = $reply_comment->getLineNumber();
+      $this->lineLength = $reply_comment->getLineLength();
     }
   }
 

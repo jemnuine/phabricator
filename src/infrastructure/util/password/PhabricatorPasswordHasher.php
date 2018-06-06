@@ -70,7 +70,7 @@ abstract class PhabricatorPasswordHasher extends Phobject {
 
   /**
    * Return an indicator of this hasher's strength. When choosing to hash
-   * new passwords, the strongest available hasher which is usuable for new
+   * new passwords, the strongest available hasher which is usable for new
    * passwords will be used, and the presence of a stronger hasher will
    * prompt users to update their hashes.
    *
@@ -126,7 +126,7 @@ abstract class PhabricatorPasswordHasher extends Phobject {
     $actual_hash = $this->getPasswordHash($password)->openEnvelope();
     $expect_hash = $hash->openEnvelope();
 
-    return ($actual_hash === $expect_hash);
+    return phutil_hashes_are_identical($actual_hash, $expect_hash);
   }
 
 
@@ -208,15 +208,15 @@ abstract class PhabricatorPasswordHasher extends Phobject {
    * Get all available password hashers. This may include hashers which can not
    * actually be used (for example, a required extension is missing).
    *
-   * @return list<PhabicatorPasswordHasher> Hasher objects.
+   * @return list<PhabricatorPasswordHasher> Hasher objects.
    * @task hashing
    */
   public static function getAllHashers() {
-    $objects = id(new PhutilSymbolLoader())
-      ->setAncestorClass('PhabricatorPasswordHasher')
-      ->loadObjects();
+    $objects = id(new PhutilClassMapQuery())
+      ->setAncestorClass(__CLASS__)
+      ->setUniqueMethod('getHashName')
+      ->execute();
 
-    $map = array();
     foreach ($objects as $object) {
       $name = $object->getHashName();
 
@@ -233,20 +233,9 @@ abstract class PhabricatorPasswordHasher extends Phobject {
             $maximum_length,
             $potential_length));
       }
-
-      if (isset($map[$name])) {
-        throw new Exception(
-          pht(
-            'Two hashers use the same hash name ("%s"), "%s" and "%s". Each '.
-            'hasher must have a unique name.',
-            $name,
-            get_class($object),
-            get_class($map[$name])));
-      }
-      $map[$name] = $object;
     }
 
-    return $map;
+    return $objects;
   }
 
 
@@ -254,7 +243,7 @@ abstract class PhabricatorPasswordHasher extends Phobject {
    * Get all usable password hashers. This may include hashers which are
    * not desirable or advisable.
    *
-   * @return list<PhabicatorPasswordHasher> Hasher objects.
+   * @return list<PhabricatorPasswordHasher> Hasher objects.
    * @task hashing
    */
   public static function getAllUsableHashers() {
@@ -271,7 +260,7 @@ abstract class PhabricatorPasswordHasher extends Phobject {
   /**
    * Get the best (strongest) available hasher.
    *
-   * @return PhabicatorPasswordHasher Best hasher.
+   * @return PhabricatorPasswordHasher Best hasher.
    * @task hashing
    */
   public static function getBestHasher() {
@@ -291,9 +280,9 @@ abstract class PhabricatorPasswordHasher extends Phobject {
 
 
   /**
-   * Get the hashser for a given stored hash.
+   * Get the hasher for a given stored hash.
    *
-   * @return PhabicatorPasswordHasher Corresponding hasher.
+   * @return PhabricatorPasswordHasher Corresponding hasher.
    * @task hashing
    */
   public static function getHasherForHash(PhutilOpaqueEnvelope $hash) {
@@ -404,7 +393,7 @@ abstract class PhabricatorPasswordHasher extends Phobject {
     }
 
     try {
-      $current_hasher = PhabricatorPasswordHasher::getHasherForHash($hash);
+      $current_hasher = self::getHasherForHash($hash);
       return $current_hasher->getHumanReadableName();
     } catch (Exception $ex) {
       $info = self::parseHashFromStorage($hash);
@@ -421,7 +410,7 @@ abstract class PhabricatorPasswordHasher extends Phobject {
    */
   public static function getBestAlgorithmName() {
     try {
-      $best_hasher = PhabricatorPasswordHasher::getBestHasher();
+      $best_hasher = self::getBestHasher();
       return $best_hasher->getHumanReadableName();
     } catch (Exception $ex) {
       return pht('Unknown');

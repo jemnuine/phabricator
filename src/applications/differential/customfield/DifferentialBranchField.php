@@ -19,12 +19,20 @@ final class DifferentialBranchField
     return true;
   }
 
-  public function renderPropertyViewLabel() {
+  public function renderPropertyViewValue(array $handles) {
+    return null;
+  }
+
+  public function shouldAppearInDiffPropertyView() {
+    return true;
+  }
+
+  public function renderDiffPropertyViewLabel(DifferentialDiff $diff) {
     return $this->getFieldName();
   }
 
-  public function renderPropertyViewValue(array $handles) {
-    return $this->getBranchDescription($this->getObject()->getActiveDiff());
+  public function renderDiffPropertyViewValue(DifferentialDiff $diff) {
+    return $this->getBranchDescription($diff);
   }
 
   private function getBranchDescription(DifferentialDiff $diff) {
@@ -36,7 +44,15 @@ final class DifferentialBranchField
     } else if (strlen($bookmark)) {
       return pht('%s (bookmark)', $bookmark);
     } else if (strlen($branch)) {
-      return $branch;
+      $onto = $diff->loadTargetBranch();
+      if (strlen($onto) && ($onto !== $branch)) {
+        return pht(
+          '%s (branched from %s)',
+          $branch,
+          $onto);
+      } else {
+        return $branch;
+      }
     } else {
       return null;
     }
@@ -45,8 +61,9 @@ final class DifferentialBranchField
   public function getProTips() {
     return array(
       pht(
-        'In Git and Mercurial, use a branch like "T123" to automatically '.
-        'associate changes with the corresponding task.'),
+        'In Git and Mercurial, use a branch like "%s" to automatically '.
+        'associate changes with the corresponding task.',
+        'T123'),
     );
   }
 
@@ -59,16 +76,17 @@ final class DifferentialBranchField
     PhabricatorApplicationTransactionEditor $editor,
     array $xactions) {
 
-    $status_accepted = ArcanistDifferentialRevisionStatus::ACCEPTED;
+    $revision = $this->getObject();
 
     // Show the "BRANCH" section only if there's a new diff or the revision
     // is "Accepted".
-    if ((!$editor->getDiffUpdateTransaction($xactions)) &&
-        ($this->getObject()->getStatus() != $status_accepted)) {
+    $is_update = (bool)$editor->getDiffUpdateTransaction($xactions);
+    $is_accepted = $revision->isAccepted();
+    if (!$is_update && !$is_accepted) {
       return;
     }
 
-    $branch = $this->getBranchDescription($this->getObject()->getActiveDiff());
+    $branch = $this->getBranchDescription($revision->getActiveDiff());
     if ($branch === null) {
       return;
     }

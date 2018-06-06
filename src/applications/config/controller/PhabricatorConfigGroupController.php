@@ -3,42 +3,47 @@
 final class PhabricatorConfigGroupController
   extends PhabricatorConfigController {
 
-  private $groupKey;
-
-  public function willProcessRequest(array $data) {
-    $this->groupKey = $data['key'];
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $group_key = $request->getURIData('key');
 
     $groups = PhabricatorApplicationConfigOptions::loadAll();
-    $options = idx($groups, $this->groupKey);
+    $options = idx($groups, $group_key);
     if (!$options) {
       return new Aphront404Response();
     }
 
+    $group_uri = PhabricatorConfigGroupConstants::getGroupFullURI(
+      $options->getGroup());
+    $group_name = PhabricatorConfigGroupConstants::getGroupShortName(
+      $options->getGroup());
+
+    $nav = $this->buildSideNavView();
+    $nav->selectFilter($group_uri);
+
     $title = pht('%s Configuration', $options->getName());
+    $header = $this->buildHeaderView($title);
     $list = $this->buildOptionList($options->getOptions());
+    $group_url = phutil_tag('a', array('href' => $group_uri), $group_name);
 
-    $box = id(new PHUIObjectBoxView())
-      ->setHeaderText($title)
-      ->appendChild($list);
+    $box_header = pht("%s \xC2\xBB %s", $group_url, $options->getName());
+    $view = $this->buildConfigBoxView($box_header, $list);
 
-    $crumbs = $this
-      ->buildApplicationCrumbs()
-      ->addTextCrumb(pht('Config'), $this->getApplicationURI())
-      ->addTextCrumb($options->getName(), $this->getApplicationURI());
+    $crumbs = $this->buildApplicationCrumbs()
+      ->addTextCrumb($group_name, $this->getApplicationURI($group_uri))
+      ->addTextCrumb($options->getName())
+      ->setBorder(true);
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
-        $box,
-      ),
-      array(
-        'title' => $title,
-      ));
+    $content = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->setNavigation($nav)
+      ->setFixed(true)
+      ->setMainColumn($view);
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($content);
   }
 
   private function buildOptionList(array $options) {
@@ -63,7 +68,7 @@ final class PhabricatorConfigGroupController
     $engine->process();
 
     $list = new PHUIObjectItemListView();
-    $list->setStackable(true);
+    $list->setBig(true);
     foreach ($options as $option) {
       $summary = $engine->getOutput($option, 'summary');
 
@@ -72,6 +77,24 @@ final class PhabricatorConfigGroupController
         ->setHref('/config/edit/'.$option->getKey().'/')
         ->addAttribute($summary);
 
+      $color = null;
+      $db_value = idx($db_values, $option->getKey());
+      if ($db_value && !$db_value->getIsDeleted()) {
+        $item->setEffect('visited');
+        $color = 'violet';
+      }
+
+      if ($option->getHidden()) {
+        $item->setStatusIcon('fa-eye-slash grey', pht('Hidden'));
+        $item->setDisabled(true);
+      } else if ($option->getLocked()) {
+        $item->setStatusIcon('fa-lock '.$color, pht('Locked'));
+      } else if ($color) {
+        $item->setStatusIcon('fa-pencil '.$color, pht('Editable'));
+      } else {
+        $item->setStatusIcon('fa-pencil-square-o '.$color, pht('Editable'));
+      }
+
       if (!$option->getHidden()) {
         $current_value = PhabricatorEnv::getEnvConfig($option->getKey());
         $current_value = PhabricatorConfigJSON::prettyPrintJSON(
@@ -79,25 +102,13 @@ final class PhabricatorConfigGroupController
         $current_value = phutil_tag(
           'div',
           array(
-            'class' => 'config-options-current-value',
+            'class' => 'config-options-current-value '.$color,
           ),
           array(
-            phutil_tag('span', array(), pht('Current Value:')),
-            ' '.$current_value,
+            $current_value,
           ));
 
-        $item->appendChild($current_value);
-      }
-
-      $db_value = idx($db_values, $option->getKey());
-      if ($db_value && !$db_value->getIsDeleted()) {
-        $item->addIcon('edit', pht('Customized'));
-      }
-
-      if ($option->getHidden()) {
-        $item->addIcon('unpublish', pht('Hidden'));
-      } else if ($option->getLocked()) {
-        $item->addIcon('lock', pht('Locked'));
+        $item->setSideColumn($current_value);
       }
 
       $list->addItem($item);

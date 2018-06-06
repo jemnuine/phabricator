@@ -9,9 +9,26 @@ final class PhabricatorAuthNeedsMultiFactorController
     return false;
   }
 
-  public function processRequest() {
-    $request = $this->getRequest();
-    $viewer = $request->getUser();
+  public function shouldRequireEnabledUser() {
+    // Users who haven't been approved yet are allowed to enroll in MFA. We'll
+    // kick disabled users out later.
+    return false;
+  }
+
+  public function shouldRequireEmailVerification() {
+    // Users who haven't verified their email addresses yet can still enroll
+    // in MFA.
+    return false;
+  }
+
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $this->getViewer();
+
+    if ($viewer->getIsDisabled()) {
+      // We allowed unapproved and disabled users to hit this controller, but
+      // want to kick out disabled users now.
+      return new Aphront400Response();
+    }
 
     $panel = id(new PhabricatorMultiFactorSettingsPanel())
       ->setUser($viewer)
@@ -40,7 +57,7 @@ final class PhabricatorAuthNeedsMultiFactorController
             pht(
               'Multi-factor authentication helps secure your account by '.
               'making it more difficult for attackers to gain access or '.
-              'take senstive actions.'),
+              'take sensitive actions.'),
             pht(
               'To learn more about multi-factor authentication, click the '.
               '%s button below.',
@@ -77,15 +94,16 @@ final class PhabricatorAuthNeedsMultiFactorController
           ));
     }
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
-        $help,
-        $panel,
-      ),
-      array(
-        'title' => pht('Add Multi-Factor Authentication'),
-      ));
+    $view = array(
+      $help,
+      $panel,
+    );
+
+    return $this->newPage()
+      ->setTitle(pht('Add Multi-Factor Authentication'))
+      ->setCrumbs($crumbs)
+      ->appendChild($view);
+
   }
 
 }

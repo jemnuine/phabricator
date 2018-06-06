@@ -1,6 +1,6 @@
 <?php
 
-final class DifferentialChangesetParser {
+final class DifferentialChangesetParser extends Phobject {
 
   const HIGHLIGHT_BYTE_LIMIT = 262144;
 
@@ -50,10 +50,14 @@ final class DifferentialChangesetParser {
   private $showEditAndReplyLinks = true;
   private $canMarkDone;
   private $objectOwnerPHID;
+  private $offsetMode;
 
   private $rangeStart;
   private $rangeEnd;
   private $mask;
+  private $linesOfContext = 8;
+
+  private $highlightEngine;
 
   public function setRange($start, $end) {
     $this->rangeStart = $start;
@@ -136,12 +140,24 @@ final class DifferentialChangesetParser {
     return $this->objectOwnerPHID;
   }
 
+  public function setOffsetMode($offset_mode) {
+    $this->offsetMode = $offset_mode;
+    return $this;
+  }
+
+  public function getOffsetMode() {
+    return $this->offsetMode;
+  }
+
   public static function getDefaultRendererForViewer(PhabricatorUser $viewer) {
-    $prefs = $viewer->loadPreferences();
-    $pref_unified = PhabricatorUserPreferences::PREFERENCE_DIFF_UNIFIED;
-    if ($prefs->getPreference($pref_unified) == 'unified') {
+    $is_unified = $viewer->compareUserSetting(
+      PhabricatorUnifiedDiffsSetting::SETTINGKEY,
+      PhabricatorUnifiedDiffsSetting::VALUE_ALWAYS_UNIFIED);
+
+    if ($is_unified) {
       return '1up';
     }
+
     return null;
   }
 
@@ -183,8 +199,6 @@ final class DifferentialChangesetParser {
   const ATTR_WHITELINES = 'attr:white';
   const ATTR_MOVEAWAY   = 'attr:moveaway';
 
-  const LINES_CONTEXT = 8;
-
   const WHITESPACE_SHOW_ALL         = 'show-all';
   const WHITESPACE_IGNORE_TRAILING  = 'ignore-trailing';
   const WHITESPACE_IGNORE_MOST      = 'ignore-most';
@@ -214,6 +228,16 @@ final class DifferentialChangesetParser {
     $this->visible = $mask;
     return $this;
   }
+
+  public function setLinesOfContext($lines_of_context) {
+    $this->linesOfContext = $lines_of_context;
+    return $this;
+  }
+
+  public function getLinesOfContext() {
+    return $this->linesOfContext;
+  }
+
 
   /**
    * Configure which Changeset comments added to the right side of the visible
@@ -255,6 +279,7 @@ final class DifferentialChangesetParser {
 
     $this->originalLeft = $left;
     $this->originalRight = $right;
+    return $this;
   }
 
   public function diffOriginals() {
@@ -436,6 +461,10 @@ final class DifferentialChangesetParser {
   }
 
   public function saveCache() {
+    if (PhabricatorEnv::isReadOnly()) {
+      return false;
+    }
+
     if ($this->highlightErrors) {
       return false;
     }
@@ -513,6 +542,12 @@ final class DifferentialChangesetParser {
     PhutilEventEngine::dispatchEvent($event);
 
     $generated = $event->getValue('is_generated');
+
+    $attribute = $this->changeset->isGeneratedChangeset();
+    if ($attribute) {
+      $generated = true;
+    }
+
     $this->specialAttributes[self::ATTR_GENERATED] = $generated;
   }
 
@@ -670,7 +705,7 @@ final class DifferentialChangesetParser {
     $hunk_parser->parseHunksForLineData($changeset->getHunks());
 
     // Depending on the whitespace mode, we may need to compute a different
-    // set of changes than the set of changes in the hunk data (specificaly,
+    // set of changes than the set of changes in the hunk data (specifically,
     // we might want to consider changed lines which have only whitespace
     // changes as unchanged).
     if ($ignore_all) {
@@ -711,8 +746,10 @@ final class DifferentialChangesetParser {
       self::ATTR_MOVEAWAY   => $moveaway,
     ));
 
+    $lines_context = $this->getLinesOfContext();
+
     $hunk_parser->generateIntraLineDiffs();
-    $hunk_parser->generateVisibileLinesMask();
+    $hunk_parser->generateVisibileLinesMask($lines_context);
 
     $this->setOldLines($hunk_parser->getOldLines());
     $this->setNewLines($hunk_parser->getNewLines());
@@ -826,6 +863,22 @@ final class DifferentialChangesetParser {
     }
 
     $this->tryCacheStuff();
+
+    // If we're rendering in an offset mode, treat the range numbers as line
+    // numbers instead of rendering offsets.
+    $offset_mode = $this->getOffsetMode();
+    if ($offset_mode) {
+      if ($offset_mode == 'new') {
+        $offset_map = $this->new;
+      } else {
+        $offset_map = $this->old;
+      }
+
+      $range_end = $this->getOffset($offset_map, $range_start + $range_len);
+      $range_start = $this->getOffset($offset_map, $range_start);
+      $range_len = ($range_end - $range_start);
+    }
+
     $render_pch = $this->shouldRenderPropertyChangeHeader($this->changeset);
 
     $rows = max(
@@ -906,11 +959,10 @@ final class DifferentialChangesetParser {
         $shield = $renderer->renderShield(
           pht('This file was completely deleted.'));
       } else if ($this->changeset->getAffectedLineCount() > 2500) {
-        $lines = number_format($this->changeset->getAffectedLineCount());
         $shield = $renderer->renderShield(
           pht(
             'This file has a very large number of changes (%s lines).',
-            $lines));
+            new PhutilNumber($this->changeset->getAffectedLineCount())));
       }
     }
 
@@ -931,14 +983,53 @@ final class DifferentialChangesetParser {
     $old_mask = array();
     $new_mask = array();
     $feedback_mask = array();
+    $lines_context = $this->getLinesOfContext();
 
     if ($this->comments) {
+      // If there are any comments which appear in sections of the file which
+      // we don't have, we're going to move them backwards to the closest
+      // earlier line. Two cases where this may happen are:
+      //
+      //   - Porting ghost comments forward into a file which was mostly
+      //     deleted.
+      //   - Porting ghost comments forward from a full-context diff to a
+      //     partial-context diff.
+
+      list($old_backmap, $new_backmap) = $this->buildLineBackmaps();
+
       foreach ($this->comments as $comment) {
-        $start = max($comment->getLineNumber() - self::LINES_CONTEXT, 0);
+        $new_side = $this->isCommentOnRightSideWhenDisplayed($comment);
+
+        $line = $comment->getLineNumber();
+        if ($new_side) {
+          $back_line = $new_backmap[$line];
+        } else {
+          $back_line = $old_backmap[$line];
+        }
+
+        if ($back_line != $line) {
+          // TODO: This should probably be cleaner, but just be simple and
+          // obvious for now.
+          $ghost = $comment->getIsGhost();
+          if ($ghost) {
+            $moved = pht(
+              'This comment originally appeared on line %s, but that line '.
+              'does not exist in this version of the diff. It has been '.
+              'moved backward to the nearest line.',
+              new PhutilNumber($line));
+            $ghost['reason'] = $ghost['reason']."\n\n".$moved;
+            $comment->setIsGhost($ghost);
+          }
+
+          $comment->setLineNumber($back_line);
+          $comment->setLineLength(0);
+
+        }
+
+        $start = max($comment->getLineNumber() - $lines_context, 0);
         $end = $comment->getLineNumber() +
           $comment->getLineLength() +
-          self::LINES_CONTEXT;
-        $new_side = $this->isCommentOnRightSideWhenDisplayed($comment);
+          $lines_context;
         for ($ii = $start; $ii <= $end; $ii++) {
           if ($new_side) {
             $new_mask[$ii] = true;
@@ -959,7 +1050,10 @@ final class DifferentialChangesetParser {
           $feedback_mask[$ii] = true;
         }
       }
-      $this->comments = msort($this->comments, 'getID');
+
+      $this->comments = id(new PHUIDiffInlineThreader())
+        ->reorderAndThreadCommments($this->comments);
+
       foreach ($this->comments as $comment) {
         $final = $comment->getLineNumber() +
           $comment->getLineLength();
@@ -1104,21 +1198,24 @@ final class DifferentialChangesetParser {
    * Mask - compute the actual lines that need to be shown (because they
    * are near changes lines, near inline comments, or the request has
    * explicitly asked for them, i.e. resulting from the user clicking
-   * "show more"). The $mask returned is a sparesely populated dictionary
+   * "show more"). The $mask returned is a sparsely populated dictionary
    * of $visible_line_number => true.
    *
    * Depths - compute how indented any given line is. The $depths returned
-   * is a sparesely populated dictionary of $visible_line_number => $depth.
+   * is a sparsely populated dictionary of $visible_line_number => $depth.
    *
    * This function also has the side effect of modifying member variable
    * new such that tabs are normalized to spaces for each line of the diff.
    *
    * @return array($gaps, $mask, $depths)
    */
-  private function calculateGapsMaskAndDepths($mask_force,
-                                              $feedback_mask,
-                                              $range_start,
-                                              $range_len) {
+  private function calculateGapsMaskAndDepths(
+    $mask_force,
+    $feedback_mask,
+    $range_start,
+    $range_len) {
+
+    $lines_context = $this->getLinesOfContext();
 
     // Calculate gaps and mask first
     $gaps = array();
@@ -1130,7 +1227,7 @@ final class DifferentialChangesetParser {
       if (isset($base_mask[$ii])) {
         if ($in_gap) {
           $gap_length = $ii - $gap_start;
-          if ($gap_length <= self::LINES_CONTEXT) {
+          if ($gap_length <= $lines_context) {
             for ($jj = $gap_start; $jj <= $gap_start + $gap_length; $jj++) {
               $base_mask[$jj] = true;
             }
@@ -1224,7 +1321,7 @@ final class DifferentialChangesetParser {
     PhabricatorInlineCommentInterface $comment) {
 
     if (!$this->isCommentVisibleOnRenderedDiff($comment)) {
-      throw new Exception('Comment is not visible on changeset!');
+      throw new Exception(pht('Comment is not visible on changeset!'));
     }
 
     $changeset_id = $comment->getChangesetID();
@@ -1322,165 +1419,65 @@ final class DifferentialChangesetParser {
     return sprintf('%d%%', 100 * ($covered / ($covered + $not_covered)));
   }
 
-  public function detectCopiedCode(
-    array $changesets,
-    $min_width = 30,
-    $min_lines = 3) {
+  /**
+   * Build maps from lines comments appear on to actual lines.
+   */
+  private function buildLineBackmaps() {
+    $old_back = array();
+    $new_back = array();
+    foreach ($this->old as $ii => $old) {
+      $old_back[$old['line']] = $old['line'];
+    }
+    foreach ($this->new as $ii => $new) {
+      $new_back[$new['line']] = $new['line'];
+    }
 
-    assert_instances_of($changesets, 'DifferentialChangeset');
+    $max_old_line = 0;
+    $max_new_line = 0;
+    foreach ($this->comments as $comment) {
+      if ($this->isCommentOnRightSideWhenDisplayed($comment)) {
+        $max_new_line = max($max_new_line, $comment->getLineNumber());
+      } else {
+        $max_old_line = max($max_old_line, $comment->getLineNumber());
+      }
+    }
 
-    $map = array();
-    $files = array();
-    $types = array();
-    foreach ($changesets as $changeset) {
-      $file = $changeset->getFilename();
-      foreach ($changeset->getHunks() as $hunk) {
-        $lines = $hunk->getStructuredOldFile();
-        foreach ($lines as $line => $info) {
-          $type = $info['type'];
-          if ($type == '\\') {
-            continue;
-          }
-          $types[$file][$line] = $type;
+    $cursor = 1;
+    for ($ii = 1; $ii <= $max_old_line; $ii++) {
+      if (empty($old_back[$ii])) {
+        $old_back[$ii] = $cursor;
+      } else {
+        $cursor = $old_back[$ii];
+      }
+    }
 
-          $text = $info['text'];
-          $text = trim($text);
-          $files[$file][$line] = $text;
+    $cursor = 1;
+    for ($ii = 1; $ii <= $max_new_line; $ii++) {
+      if (empty($new_back[$ii])) {
+        $new_back[$ii] = $cursor;
+      } else {
+        $cursor = $new_back[$ii];
+      }
+    }
 
-          if (strlen($text) >= $min_width) {
-            $map[$text][] = array($file, $line);
-          }
+    return array($old_back, $new_back);
+  }
+
+  private function getOffset(array $map, $line) {
+    if (!$map) {
+      return null;
+    }
+
+    $line = (int)$line;
+    foreach ($map as $key => $spec) {
+      if ($spec && isset($spec['line'])) {
+        if ((int)$spec['line'] >= $line) {
+          return $key;
         }
       }
     }
 
-    foreach ($changesets as $changeset) {
-      $copies = array();
-      foreach ($changeset->getHunks() as $hunk) {
-        $added = $hunk->getStructuredNewFile();
-        $atype = array();
-
-        foreach ($added as $line => $info) {
-          $atype[$line] = $info['type'];
-          $added[$line] = trim($info['text']);
-        }
-
-        $skip_lines = 0;
-        foreach ($added as $line => $code) {
-          if ($skip_lines) {
-            // We're skipping lines that we already processed because we
-            // extended a block above them downward to include them.
-            $skip_lines--;
-            continue;
-          }
-
-          if ($atype[$line] !== '+') {
-            // This line hasn't been changed in the new file, so don't try
-            // to figure out where it came from.
-            continue;
-          }
-
-          if (empty($map[$code])) {
-            // This line was too short to trigger copy/move detection.
-            continue;
-          }
-
-          if (count($map[$code]) > 16) {
-            // If there are a large number of identical lines in this diff,
-            // don't try to figure out where this block came from: the analysis
-            // is O(N^2), since we need to compare every line against every
-            // other line. Even if we arrive at a result, it is unlikely to be
-            // meaningful. See T5041.
-            continue;
-          }
-
-          $best_length = 0;
-
-          // Explore all candidates.
-          foreach ($map[$code] as $val) {
-            list($file, $orig_line) = $val;
-            $length = 1;
-
-            // Search backward and forward to find all of the adjacent lines
-            // which match.
-            foreach (array(-1, 1) as $direction) {
-              $offset = $direction;
-              while (true) {
-                if (isset($copies[$line + $offset])) {
-                  // If we run into a block above us which we've already
-                  // attributed to a move or copy from elsewhere, stop
-                  // looking.
-                  break;
-                }
-
-                if (!isset($added[$line + $offset])) {
-                  // If we've run off the beginning or end of the new file,
-                  // stop looking.
-                  break;
-                }
-
-                if (!isset($files[$file][$orig_line + $offset])) {
-                  // If we've run off the beginning or end of the original
-                  // file, we also stop looking.
-                  break;
-                }
-
-                $old = $files[$file][$orig_line + $offset];
-                $new = $added[$line + $offset];
-                if ($old !== $new) {
-                  // If the old line doesn't match the new line, stop
-                  // looking.
-                  break;
-                }
-
-                $length++;
-                $offset += $direction;
-              }
-            }
-
-            if ($length < $best_length) {
-              // If we already know of a better source (more matching lines)
-              // for this move/copy, stick with that one. We prefer long
-              // copies/moves which match a lot of context over short ones.
-              continue;
-            }
-
-            if ($length == $best_length) {
-              if (idx($types[$file], $orig_line) != '-') {
-                // If we already know of an equally good source (same number
-                // of matching lines) and this isn't a move, stick with the
-                // other one. We prefer moves over copies.
-                continue;
-              }
-            }
-
-            $best_length = $length;
-            // ($offset - 1) contains number of forward matching lines.
-            $best_offset = $offset - 1;
-            $best_file = $file;
-            $best_line = $orig_line;
-          }
-
-          $file = ($best_file == $changeset->getFilename() ? '' : $best_file);
-          for ($i = $best_length; $i--; ) {
-            $type = idx($types[$best_file], $best_line + $best_offset - $i);
-            $copies[$line + $best_offset - $i] = ($best_length < $min_lines
-              ? array() // Ignore short blocks.
-              : array($file, $best_line + $best_offset - $i, $type));
-          }
-
-          $skip_lines = $best_offset;
-        }
-      }
-
-      $copies = array_filter($copies);
-      if ($copies) {
-        $metadata = $changeset->getMetadata();
-        $metadata['copy:lines'] = $copies;
-        $changeset->setMetadata($metadata);
-      }
-    }
-    return $changesets;
+    return $key;
   }
 
 }

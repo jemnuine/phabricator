@@ -16,6 +16,7 @@ final class PhabricatorUserLog extends PhabricatorUserDAO
 
   const ACTION_ADMIN          = 'admin';
   const ACTION_SYSTEM_AGENT   = 'system-agent';
+  const ACTION_MAILING_LIST   = 'mailing-list';
   const ACTION_DISABLE        = 'disable';
   const ACTION_APPROVE        = 'approve';
   const ACTION_DELETE         = 'delete';
@@ -62,6 +63,7 @@ final class PhabricatorUserLog extends PhabricatorUserDAO
       self::ACTION_EDIT => pht('Edit Account'),
       self::ACTION_ADMIN => pht('Add/Remove Administrator'),
       self::ACTION_SYSTEM_AGENT => pht('Add/Remove System Agent'),
+      self::ACTION_MAILING_LIST => pht('Add/Remove Mailing List'),
       self::ACTION_DISABLE => pht('Enable/Disable'),
       self::ACTION_APPROVE => pht('Approve Registration'),
       self::ACTION_DELETE => pht('Delete User'),
@@ -87,8 +89,8 @@ final class PhabricatorUserLog extends PhabricatorUserDAO
 
   public static function initializeNewLog(
     PhabricatorUser $actor = null,
-    $object_phid,
-    $action) {
+    $object_phid = null,
+    $action = null) {
 
     $log = new PhabricatorUserLog();
 
@@ -106,18 +108,28 @@ final class PhabricatorUserLog extends PhabricatorUserDAO
     $log->setUserPHID((string)$object_phid);
     $log->setAction($action);
 
-    $log->remoteAddr = idx($_SERVER, 'REMOTE_ADDR', '');
+    $address = PhabricatorEnv::getRemoteAddress();
+    if ($address) {
+      $log->remoteAddr = $address->getAddress();
+    } else {
+      $log->remoteAddr = '';
+    }
 
     return $log;
   }
 
   public static function loadRecentEventsFromThisIP($action, $timespan) {
+    $address = PhabricatorEnv::getRemoteAddress();
+    if (!$address) {
+      return array();
+    }
+
     return id(new PhabricatorUserLog())->loadAllWhere(
       'action = %s AND remoteAddr = %s AND dateCreated > %d
         ORDER BY dateCreated DESC',
       $action,
-      idx($_SERVER, 'REMOTE_ADDR'),
-      time() - $timespan);
+      $address->getAddress(),
+      PhabricatorTime::getNow() - $timespan);
   }
 
   public function save() {

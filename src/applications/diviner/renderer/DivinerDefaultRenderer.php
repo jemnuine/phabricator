@@ -94,7 +94,7 @@ final class DivinerDefaultRenderer extends DivinerRenderer {
 
     $this->pushAtomStack($atom);
       $description = $engine->markupText($text);
-    $this->popAtomStack($atom);
+    $this->popAtomStack();
 
     return phutil_tag(
       'div',
@@ -202,8 +202,8 @@ final class DivinerDefaultRenderer extends DivinerRenderer {
     }
 
     if ($ref->getBook() != $this->getConfig('name')) {
-      // If the ref is from a different book, we can't normalize it. Just return
-      // it as-is if it has enough information to resolve.
+      // If the ref is from a different book, we can't normalize it.
+      // Just return it as-is if it has enough information to resolve.
       if ($ref->getName() && $ref->getType()) {
         return $ref;
       } else {
@@ -259,6 +259,5 @@ final class DivinerDefaultRenderer extends DivinerRenderer {
       ),
       $ref->getTitle());
   }
-
 
 }

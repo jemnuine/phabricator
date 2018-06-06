@@ -55,14 +55,65 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
       $object->getSchemaKeys());
   }
 
+  protected function buildFerretIndexSchema(PhabricatorFerretEngine $engine) {
+    $index_options = array(
+      'persistence' => PhabricatorConfigTableSchema::PERSISTENCE_INDEX,
+    );
+
+    $this->buildRawSchema(
+      $engine->getApplicationName(),
+      $engine->getDocumentTableName(),
+      $engine->getDocumentSchemaColumns(),
+      $engine->getDocumentSchemaKeys(),
+      $index_options);
+
+    $this->buildRawSchema(
+      $engine->getApplicationName(),
+      $engine->getFieldTableName(),
+      $engine->getFieldSchemaColumns(),
+      $engine->getFieldSchemaKeys(),
+      $index_options);
+
+    $this->buildRawSchema(
+      $engine->getApplicationName(),
+      $engine->getNgramsTableName(),
+      $engine->getNgramsSchemaColumns(),
+      $engine->getNgramsSchemaKeys(),
+      $index_options);
+
+    // NOTE: The common ngrams table is not marked as an index table. It is
+    // tiny and persisting it across a restore saves us a lot of work garbage
+    // collecting common ngrams from the index after it gets built.
+
+    $this->buildRawSchema(
+      $engine->getApplicationName(),
+      $engine->getCommonNgramsTableName(),
+      $engine->getCommonNgramsSchemaColumns(),
+      $engine->getCommonNgramsSchemaKeys());
+  }
+
   protected function buildRawSchema(
     $database_name,
     $table_name,
     array $columns,
-    array $keys) {
+    array $keys,
+    array $options = array()) {
+
+    PhutilTypeSpec::checkMap(
+      $options,
+      array(
+        'persistence' => 'optional string',
+      ));
+
     $database = $this->getDatabase($database_name);
 
     $table = $this->newTable($table_name);
+
+    if (PhabricatorSearchDocument::isInnoDBFulltextEngineAvailable()) {
+      $fulltext_engine = 'InnoDB';
+    } else {
+      $fulltext_engine = 'MyISAM';
+    }
 
     foreach ($columns as $name => $type) {
       if ($type === null) {
@@ -70,7 +121,12 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
       }
 
       $details = $this->getDetailsForDataType($type);
-      list($column_type, $charset, $collation, $nullable, $auto) = $details;
+
+      $column_type = $details['type'];
+      $charset = $details['charset'];
+      $collation = $details['collation'];
+      $nullable = $details['nullable'];
+      $auto = $details['auto'];
 
       $column = $this->newColumn($name)
         ->setDataType($type)
@@ -79,6 +135,15 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
         ->setCollation($collation)
         ->setNullable($nullable)
         ->setAutoIncrement($auto);
+
+      // If this table has any FULLTEXT fields, we expect it to use the best
+      // available FULLTEXT engine, which may not be InnoDB.
+      switch ($type) {
+        case 'fulltext':
+        case 'fulltext?':
+          $table->setEngine($fulltext_engine);
+          break;
+      }
 
       $table->addColumn($column);
     }
@@ -96,6 +161,11 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
       $key->setIndexType(idx($key_spec, 'type', 'BTREE'));
 
       $table->addKey($key);
+    }
+
+    $persistence_type = idx($options, 'persistence');
+    if ($persistence_type !== null) {
+      $table->setPersistenceType($persistence_type);
     }
 
     $database->addTable($table);
@@ -169,7 +239,8 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
   protected function newTable($name) {
     return id(new PhabricatorConfigTableSchema())
       ->setName($name)
-      ->setCollation($this->getUTF8BinaryCollation());
+      ->setCollation($this->getUTF8BinaryCollation())
+      ->setEngine('InnoDB');
   }
 
   protected function newColumn($name) {
@@ -182,11 +253,17 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
       ->setName($name);
   }
 
+  public function getMaximumByteLengthForDataType($data_type) {
+    $info = $this->getDetailsForDataType($data_type);
+    return idx($info, 'bytes');
+  }
+
   private function getDetailsForDataType($data_type) {
     $column_type = null;
     $charset = null;
     $collation = null;
     $auto = false;
+    $bytes = null;
 
     // If the type ends with "?", make the column nullable.
     $nullable = false;
@@ -201,7 +278,8 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
 
     $is_binary = ($this->getUTF8Charset() == 'binary');
     $matches = null;
-    if (preg_match('/^(fulltext|sort|text)(\d+)?\z/', $data_type, $matches)) {
+    $pattern = '/^(fulltext|sort|text|char)(\d+)?\z/';
+    if (preg_match($pattern, $data_type, $matches)) {
 
       // Limit the permitted column lengths under the theory that it would
       // be nice to eventually reduce this to a small set of standard lengths.
@@ -210,7 +288,6 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
         'text255' => true,
         'text160' => true,
         'text128' => true,
-        'text80' => true,
         'text64' => true,
         'text40' => true,
         'text32' => true,
@@ -220,6 +297,7 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
         'text8' => true,
         'text4' => true,
         'text' => true,
+        'char3' => true,
         'sort255' => true,
         'sort128' => true,
         'sort64' => true,
@@ -234,6 +312,10 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
 
       $type = $matches[1];
       $size = idx($matches, 2);
+
+      if ($size) {
+        $bytes = $size;
+      }
 
       switch ($type) {
         case 'text':
@@ -266,10 +348,14 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
           // the majority of cases.
           $column_type = 'longtext';
           break;
+        case 'char':
+          $column_type = 'char('.$size.')';
+          break;
       }
 
       switch ($type) {
         case 'text':
+        case 'char':
           if ($is_binary) {
             // We leave collation and character set unspecified in order to
             // generate valid SQL.
@@ -315,6 +401,8 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
           break;
         case 'phid':
         case 'policy';
+        case 'hashpath64':
+        case 'ipaddress':
           $column_type = 'varbinary(64)';
           break;
         case 'bytes64':
@@ -355,7 +443,14 @@ abstract class PhabricatorConfigSchemaSpec extends Phobject {
       }
     }
 
-    return array($column_type, $charset, $collation, $nullable, $auto);
+    return array(
+      'type' => $column_type,
+      'charset' => $charset,
+      'collation' => $collation,
+      'nullable' => $nullable,
+      'auto' => $auto,
+      'bytes' => $bytes,
+    );
   }
 
 }

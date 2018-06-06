@@ -41,8 +41,22 @@ final class DifferentialChangesetOneUpRenderer
 
     $column_width = 4;
 
+    $aural_minus = javelin_tag(
+      'span',
+      array(
+        'aural' => true,
+      ),
+      '- ');
+
+    $aural_plus = javelin_tag(
+      'span',
+      array(
+        'aural' => true,
+      ),
+      '+ ');
+
     $out = array();
-    foreach ($primitives as $p) {
+    foreach ($primitives as $k => $p) {
       $type = $p['type'];
       switch ($type) {
         case 'old':
@@ -55,8 +69,10 @@ final class DifferentialChangesetOneUpRenderer
           if ($is_old) {
             if ($p['htype']) {
               $class = 'left old';
+              $aural = $aural_minus;
             } else {
               $class = 'left';
+              $aural = null;
             }
 
             if ($type == 'old-file') {
@@ -68,16 +84,31 @@ final class DifferentialChangesetOneUpRenderer
             } else {
               $left_id = null;
             }
-            $cells[] = phutil_tag('th', array('id' => $left_id), $p['line']);
 
-            $cells[] = phutil_tag('th', array());
+            $line = $p['line'];
+
+            $cells[] = phutil_tag(
+              'th',
+              array(
+                'id' => $left_id,
+                'class' => $class,
+              ),
+              $line);
+
+            $render = $p['render'];
+            if ($aural !== null) {
+              $render = array($aural, $render);
+            }
+
+            $cells[] = phutil_tag('th', array('class' => $class));
             $cells[] = $no_copy;
-            $cells[] = phutil_tag('td', array('class' => $class), $p['render']);
+            $cells[] = phutil_tag('td', array('class' => $class), $render);
             $cells[] = $no_coverage;
           } else {
             if ($p['htype']) {
               $class = 'right new';
-              $cells[] = phutil_tag('th', array());
+              $cells[] = phutil_tag('th', array('class' => $class));
+              $aural = $aural_plus;
             } else {
               $class = 'right';
               if ($left_prefix) {
@@ -85,7 +116,11 @@ final class DifferentialChangesetOneUpRenderer
               } else {
                 $left_id = null;
               }
-              $cells[] = phutil_tag('th', array('id' => $left_id), $p['oline']);
+
+              $oline = $p['oline'];
+
+              $cells[] = phutil_tag('th', array('id' => $left_id), $oline);
+              $aural = null;
             }
 
             if ($type == 'new-file') {
@@ -97,11 +132,24 @@ final class DifferentialChangesetOneUpRenderer
             } else {
               $right_id = null;
             }
-            $cells[] = phutil_tag('th', array('id' => $right_id), $p['line']);
 
+            $line = $p['line'];
+
+            $cells[] = phutil_tag(
+              'th',
+              array(
+                'id' => $right_id,
+                'class' => $class,
+              ),
+              $line);
+
+            $render = $p['render'];
+            if ($aural !== null) {
+              $render = array($aural, $render);
+            }
 
             $cells[] = $no_copy;
-            $cells[] = phutil_tag('td', array('class' => $class), $p['render']);
+            $cells[] = phutil_tag('td', array('class' => $class), $render);
             $cells[] = $no_coverage;
           }
 
@@ -185,7 +233,7 @@ final class DifferentialChangesetOneUpRenderer
         'file' => $new_file,
         'line' => 1,
         'oline' => ($old_file ? 1 : null),
-        'render' => $this->renderImageStage($old_file),
+        'render' => $this->renderImageStage($new_file),
       );
     }
 

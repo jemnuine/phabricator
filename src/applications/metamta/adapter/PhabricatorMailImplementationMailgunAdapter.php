@@ -6,6 +6,8 @@
 final class PhabricatorMailImplementationMailgunAdapter
   extends PhabricatorMailImplementationAdapter {
 
+  const ADAPTERTYPE = 'mailgun';
+
   private $params = array();
   private $attachments = array();
 
@@ -19,7 +21,7 @@ final class PhabricatorMailImplementationMailgunAdapter
     if (empty($this->params['reply-to'])) {
       $this->params['reply-to'] = array();
     }
-    $this->params['reply-to'][] = "{$name} <{$email}>";
+    $this->params['reply-to'][] = $this->renderAddress($email, $name);
     return $this;
   }
 
@@ -71,9 +73,32 @@ final class PhabricatorMailImplementationMailgunAdapter
     return true;
   }
 
+  protected function validateOptions(array $options) {
+    PhutilTypeSpec::checkMap(
+      $options,
+      array(
+        'api-key' => 'string',
+        'domain' => 'string',
+      ));
+  }
+
+  public function newDefaultOptions() {
+    return array(
+      'api-key' => null,
+      'domain' => null,
+    );
+  }
+
+  public function newLegacyOptions() {
+    return array(
+      'api-key' => PhabricatorEnv::getEnvConfig('mailgun.api-key'),
+      'domain' => PhabricatorEnv::getEnvConfig('mailgun.domain'),
+    );
+  }
+
   public function send() {
-    $key = PhabricatorEnv::getEnvConfig('mailgun.api-key');
-    $domain = PhabricatorEnv::getEnvConfig('mailgun.domain');
+    $key = $this->getOption('api-key');
+    $domain = $this->getOption('domain');
     $params = array();
 
     $params['to'] = implode(', ', idx($this->params, 'tos', array()));
@@ -85,11 +110,8 @@ final class PhabricatorMailImplementationMailgunAdapter
     }
 
     $from = idx($this->params, 'from');
-    if (idx($this->params, 'from-name')) {
-      $params['from'] = "{$this->params['from-name']} <{$from}>";
-    } else {
-      $params['from'] = $from;
-    }
+    $from_name = idx($this->params, 'from-name');
+    $params['from'] = $this->renderAddress($from, $from_name);
 
     if (idx($this->params, 'reply-to')) {
       $replyto = $this->params['reply-to'];
@@ -120,14 +142,21 @@ final class PhabricatorMailImplementationMailgunAdapter
 
     list($body) = $future->resolvex();
 
-    $response = json_decode($body, true);
-    if (!is_array($response)) {
-      throw new Exception("Failed to JSON decode response: {$body}");
+    $response = null;
+    try {
+      $response = phutil_json_decode($body);
+    } catch (PhutilJSONParserException $ex) {
+      throw new PhutilProxyException(
+        pht('Failed to JSON decode response.'),
+        $ex);
     }
 
     if (!idx($response, 'id')) {
       $message = $response['message'];
-      throw new Exception("Request failed with errors: {$message}.");
+      throw new Exception(
+        pht(
+          'Request failed with errors: %s.',
+          $message));
     }
 
     return true;

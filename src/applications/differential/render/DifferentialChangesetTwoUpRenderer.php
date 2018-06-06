@@ -235,32 +235,9 @@ final class DifferentialChangesetTwoUpRenderer
         $n_id = null;
       }
 
-      // NOTE: This is a unicode zero-width space, which we use as a hint when
-      // intercepting 'copy' events to make sure sensible text ends up on the
-      // clipboard. See the 'phabricator-oncopy' behavior.
-      $zero_space = "\xE2\x80\x8B";
-
-      $html[] = phutil_tag('tr', array(), array(
-        phutil_tag('th', array('id' => $o_id), $o_num),
-        phutil_tag('td', array('class' => $o_classes), $o_text),
-        phutil_tag('th', array('id' => $n_id), $n_num),
-        $n_copy,
-        phutil_tag(
-          'td',
-          array('class' => $n_classes, 'colspan' => $n_colspan),
-          array(
-            phutil_tag('span', array('class' => 'zwsp'), $zero_space),
-            $n_text,
-          )),
-        $n_cov,
-      ));
-
-      if ($context_not_available && ($ii == $rows - 1)) {
-        $html[] = $context_not_available;
-      }
-
       $old_comments = $this->getOldComments();
       $new_comments = $this->getNewComments();
+      $scaffolds = array();
 
       if ($o_num && isset($old_comments[$o_num])) {
         foreach ($old_comments[$o_num] as $comment) {
@@ -278,30 +255,64 @@ final class DifferentialChangesetTwoUpRenderer
 
                 $scaffold->addInlineView($companion);
                 unset($new_comments[$n_num][$key]);
+                break;
               }
             }
           }
 
-          $html[] = $scaffold;
+
+          $scaffolds[] = $scaffold;
         }
       }
+
       if ($n_num && isset($new_comments[$n_num])) {
         foreach ($new_comments[$n_num] as $comment) {
           $inline = $this->buildInlineComment(
             $comment,
             $on_right = true);
-          $html[] = $this->getRowScaffoldForInline($inline);
+
+          $scaffolds[] = $this->getRowScaffoldForInline($inline);
         }
+      }
+
+      // NOTE: This is a unicode zero-width space, which we use as a hint when
+      // intercepting 'copy' events to make sure sensible text ends up on the
+      // clipboard. See the 'phabricator-oncopy' behavior.
+      $zero_space = "\xE2\x80\x8B";
+
+      $html[] = phutil_tag('tr', array(), array(
+        phutil_tag('th', array('id' => $o_id, 'class' => $o_classes), $o_num),
+        phutil_tag('td', array('class' => $o_classes), $o_text),
+        phutil_tag('th', array('id' => $n_id, 'class' => $n_classes), $n_num),
+        $n_copy,
+        phutil_tag(
+          'td',
+          array('class' => $n_classes, 'colspan' => $n_colspan),
+          array(
+            phutil_tag('span', array('class' => 'zwsp'), $zero_space),
+            $n_text,
+          )),
+        $n_cov,
+      ));
+
+      if ($context_not_available && ($ii == $rows - 1)) {
+        $html[] = $context_not_available;
+      }
+
+      foreach ($scaffolds as $scaffold) {
+        $html[] = $scaffold;
       }
     }
 
     return $this->wrapChangeInTable(phutil_implode_html('', $html));
   }
 
-  public function renderFileChange($old_file = null,
-                                   $new_file = null,
-                                   $id = 0,
-                                   $vs = 0) {
+  public function renderFileChange(
+    $old_file = null,
+    $new_file = null,
+    $id = 0,
+    $vs = 0) {
+
     $old = null;
     if ($old_file) {
       $old = $this->renderImageStage($old_file);
@@ -310,6 +321,12 @@ final class DifferentialChangesetTwoUpRenderer
     $new = null;
     if ($new_file) {
       $new = $this->renderImageStage($new_file);
+    }
+
+    // If we don't have an explicit "vs" changeset, it's the left side of the
+    // "id" changeset.
+    if (!$vs) {
+      $vs = $id;
     }
 
     $html_old = array();
@@ -340,7 +357,7 @@ final class DifferentialChangesetTwoUpRenderer
     if (!$new) {
       $th_new = phutil_tag('th', array());
     } else {
-      $th_new = phutil_tag('th', array('id' => "C{$id}OL1"), 1);
+      $th_new = phutil_tag('th', array('id' => "C{$id}NL1"), 1);
     }
 
     $output = hsprintf(

@@ -8,6 +8,7 @@ final class PHUICrumbView extends AphrontView {
   private $isLastCrumb;
   private $workflow;
   private $aural;
+  private $alwaysVisible;
 
   public function setAural($aural) {
     $this->aural = $aural;
@@ -16,6 +17,22 @@ final class PHUICrumbView extends AphrontView {
 
   public function getAural() {
     return $this->aural;
+  }
+
+  /**
+   * Make this crumb always visible, even on devices where it would normally
+   * be hidden.
+   *
+   * @param bool True to make the crumb always visible.
+   * @return this
+   */
+  public function setAlwaysVisible($always_visible) {
+    $this->alwaysVisible = $always_visible;
+    return $this;
+  }
+
+  public function getAlwaysVisible() {
+    return $this->alwaysVisible;
   }
 
   public function setWorkflow($workflow) {
@@ -70,24 +87,36 @@ final class PHUICrumbView extends AphrontView {
     if ($this->icon) {
       $classes[] = 'phui-crumb-has-icon';
       $icon = id(new PHUIIconView())
-        ->setIconFont($this->icon);
+        ->setIcon($this->icon);
     }
+
+    // Surround the crumb name with spaces so that double clicking it only
+    // selects the crumb itself.
+    $name = array(' ', $this->name);
 
     $name = phutil_tag(
       'span',
       array(
         'class' => 'phui-crumb-name',
       ),
-      $this->name);
+      $name);
+
+    // Because of text-overflow and safari, put the second space on the
+    // outside of the element.
+    $name = array($name, ' ');
 
     $divider = null;
     if (!$this->isLastCrumb) {
       $divider = id(new PHUIIconView())
-        ->setIconFont('fa-angle-right')
+        ->setIcon('fa-angle-right')
         ->addClass('phui-crumb-divider')
         ->addClass('phui-crumb-view');
     } else {
       $classes[] = 'phabricator-last-crumb';
+    }
+
+    if ($this->getAlwaysVisible()) {
+      $classes[] = 'phui-crumb-always-visible';
     }
 
     $tag = javelin_tag(

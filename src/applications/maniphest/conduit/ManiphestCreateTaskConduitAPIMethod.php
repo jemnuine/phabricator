@@ -8,7 +8,17 @@ final class ManiphestCreateTaskConduitAPIMethod
   }
 
   public function getMethodDescription() {
-    return 'Create a new Maniphest task.';
+    return pht('Create a new Maniphest task.');
+  }
+
+  public function getMethodStatus() {
+    return self::METHOD_STATUS_FROZEN;
+  }
+
+  public function getMethodStatusDescription() {
+    return pht(
+      'This method is frozen and will eventually be deprecated. New code '.
+      'should use "maniphest.edit" instead.');
   }
 
   protected function defineParamTypes() {
@@ -21,7 +31,7 @@ final class ManiphestCreateTaskConduitAPIMethod
 
   protected function defineErrorTypes() {
     return array(
-      'ERR-INVALID-PARAMETER' => 'Missing or malformed parameter.',
+      'ERR-INVALID-PARAMETER' => pht('Missing or malformed parameter.'),
     );
   }
 

@@ -32,14 +32,14 @@ $root = dirname(dirname(dirname(__FILE__)));
 require_once $root.'/scripts/__init_script__.php';
 
 if ($argc < 2) {
-  throw new Exception(pht('usage: commit-hook <callsign>'));
+  throw new Exception(pht('usage: commit-hook <repository>'));
 }
 
 $engine = new DiffusionCommitHookEngine();
 
 $repository = id(new PhabricatorRepositoryQuery())
   ->setViewer(PhabricatorUser::getOmnipotentUser())
-  ->withCallsigns(array($argv[1]))
+  ->withIdentifiers(array($argv[1]))
   ->needProjectPHIDs(true)
   ->executeOne();
 
@@ -48,20 +48,80 @@ if (!$repository) {
 }
 
 if (!$repository->isHosted()) {
-  // This should be redundant, but double check just in case.
-  throw new Exception(pht('Repository "%s" is not hosted!', $argv[1]));
+  // In Mercurial, the "pretxnchangegroup" hook fires for both pulls and
+  // pushes. Normally we only install the hook for hosted repositories, but
+  // if a hosted repository is later converted into an observed repository we
+  // can end up with an observed repository that has the hook installed.
+  // If we're running hooks from an observed repository, just exit without
+  // taking action. For more discussion, see PHI24.
+  return 0;
 }
 
 $engine->setRepository($repository);
 
+$args = new PhutilArgumentParser($argv);
+$args->parsePartial(
+  array(
+    array(
+      'name' => 'hook-mode',
+      'param' => 'mode',
+      'help' => pht('Hook execution mode.'),
+    ),
+  ));
+
+$argv = array_merge(
+  array($argv[0]),
+  $args->getUnconsumedArgumentVector());
 
 // Figure out which user is writing the commit.
+$hook_mode = $args->getArg('hook-mode');
+if ($hook_mode !== null) {
+  $known_modes = array(
+    'svn-revprop' => true,
+  );
 
-if ($repository->isGit() || $repository->isHg()) {
+  if (empty($known_modes[$hook_mode])) {
+    throw new Exception(
+      pht(
+        'Invalid Hook Mode: This hook was invoked in "%s" mode, but this '.
+        'is not a recognized hook mode. Valid modes are: %s.',
+        $hook_mode,
+        implode(', ', array_keys($known_modes))));
+  }
+}
+
+$is_svnrevprop = ($hook_mode == 'svn-revprop');
+
+if ($is_svnrevprop) {
+  // For now, we let these through if the repository allows dangerous changes
+  // and prevent them if it doesn't. See T11208 for discussion.
+
+  $revprop_key = $argv[5];
+
+  if ($repository->shouldAllowDangerousChanges()) {
+    $err = 0;
+  } else {
+    $err = 1;
+
+    $console = PhutilConsole::getConsole();
+    $console->writeErr(
+      pht(
+        "DANGEROUS CHANGE: Dangerous change protection is enabled for this ".
+        "repository, so you can not change revision properties (you are ".
+        "attempting to edit \"%s\").\n".
+        "Edit the repository configuration before making dangerous changes.",
+        $revprop_key));
+  }
+
+  exit($err);
+} else if ($repository->isGit() || $repository->isHg()) {
   $username = getenv(DiffusionCommitHookEngine::ENV_USER);
   if (!strlen($username)) {
     throw new Exception(
-      pht('usage: %s should be defined!', DiffusionCommitHookEngine::ENV_USER));
+      pht(
+        'No Direct Pushes: You are pushing directly to a repository hosted '.
+        'by Phabricator. This will not work. See "No Direct Pushes" in the '.
+        'documentation for more information.'));
   }
 
   if ($repository->isHg()) {
@@ -75,7 +135,7 @@ if ($repository->isGit() || $repository->isHg()) {
   // specify the correct user; read this user out of the commit log.
 
   if ($argc < 4) {
-    throw new Exception(pht('usage: commit-hook <callsign> <repo> <txn>'));
+    throw new Exception(pht('usage: commit-hook <repository> <repo> <txn>'));
   }
 
   $svn_repo = $argv[2];
@@ -125,6 +185,11 @@ if (strlen($remote_address)) {
 $remote_protocol = getenv(DiffusionCommitHookEngine::ENV_REMOTE_PROTOCOL);
 if (strlen($remote_protocol)) {
   $engine->setRemoteProtocol($remote_protocol);
+}
+
+$request_identifier = getenv(DiffusionCommitHookEngine::ENV_REQUEST);
+if (strlen($request_identifier)) {
+  $engine->setRequestIdentifier($request_identifier);
 }
 
 try {

@@ -6,10 +6,18 @@ final class PhabricatorConfigDatabaseSchema
   private $characterSet;
   private $collation;
   private $tables = array();
+  private $accessDenied;
 
   public function addTable(PhabricatorConfigTableSchema $table) {
     $key = $table->getName();
     if (isset($this->tables[$key])) {
+
+      if ($key == 'application_application') {
+        // NOTE: This is a terrible hack to allow Application subclasses to
+        // extend LiskDAO so we can apply transactions to them.
+        return $this;
+      }
+
       throw new Exception(
         pht('Trying to add duplicate table "%s"!', $key));
     }
@@ -33,12 +41,16 @@ final class PhabricatorConfigDatabaseSchema
     PhabricatorConfigStorageSchema $expect) {
 
     $issues = array();
-    if ($this->getCharacterSet() != $expect->getCharacterSet()) {
-      $issues[] = self::ISSUE_CHARSET;
-    }
+    if ($this->getAccessDenied()) {
+      $issues[] = self::ISSUE_ACCESSDENIED;
+    } else {
+      if ($this->getCharacterSet() != $expect->getCharacterSet()) {
+        $issues[] = self::ISSUE_CHARSET;
+      }
 
-    if ($this->getCollation() != $expect->getCollation()) {
-      $issues[] = self::ISSUE_COLLATION;
+      if ($this->getCollation() != $expect->getCollation()) {
+        $issues[] = self::ISSUE_COLLATION;
+      }
     }
 
     return $issues;
@@ -66,6 +78,15 @@ final class PhabricatorConfigDatabaseSchema
 
   public function getCharacterSet() {
     return $this->characterSet;
+  }
+
+  public function setAccessDenied($access_denied) {
+    $this->accessDenied = $access_denied;
+    return $this;
+  }
+
+  public function getAccessDenied() {
+    return $this->accessDenied;
   }
 
 }

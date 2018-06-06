@@ -44,12 +44,7 @@ final class DifferentialRevertPlanField
       return null;
     }
 
-    return PhabricatorMarkupEngine::renderOneObject(
-      id(new PhabricatorMarkupOneOff())
-        ->setPreserveLinebreaks(true)
-        ->setContent($this->getValue()),
-      'default',
-      $this->getViewer());
+    return new PHUIRemarkupView($this->getViewer(), $this->getValue());
   }
 
   public function shouldAppearInGlobalSearch() {
@@ -135,16 +130,16 @@ final class DifferentialRevertPlanField
     return array($xaction->getNewValue());
   }
 
-  public function shouldAppearInCommitMessage() {
-    return true;
-  }
-
-  public function renderCommitMessageValue(array $handles) {
-    return $this->getValue();
-  }
-
   public function shouldAppearInConduitDictionary() {
     return true;
+  }
+
+  public function shouldAppearInConduitTransactions() {
+    return true;
+  }
+
+  protected function newConduitEditParameterType() {
+    return new ConduitStringParameterType();
   }
 
 }

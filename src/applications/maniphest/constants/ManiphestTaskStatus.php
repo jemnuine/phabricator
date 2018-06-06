@@ -82,27 +82,22 @@ final class ManiphestTaskStatus extends ManiphestConstants {
     return self::getStatusAttribute($status, 'name', pht('Unknown Status'));
   }
 
-  public static function renderFullDescription($status) {
+  public static function renderFullDescription($status, $priority) {
     if (self::isOpenStatus($status)) {
-      $color = 'status';
-      $icon = 'fa-square-o bluegrey';
+      $name = pht('%s, %s', self::getTaskStatusFullName($status), $priority);
+      $color = 'grey';
+      $icon = 'fa-square-o';
     } else {
-      $color = 'status-dark';
+      $name = self::getTaskStatusFullName($status);
+      $color = 'indigo';
       $icon = 'fa-check-square-o';
     }
 
-    $img = id(new PHUIIconView())
-      ->setIconFont($icon);
-
-    $tag = phutil_tag(
-      'span',
-      array(
-        'class' => 'phui-header-'.$color.' plr',
-      ),
-      array(
-        $img,
-        self::getTaskStatusFullName($status),
-      ));
+    $tag = id(new PHUITagView())
+      ->setName($name)
+      ->setIcon($icon)
+      ->setType(PHUITagView::TYPE_SHADE)
+      ->setColor($color);
 
     return $tag;
   }
@@ -153,8 +148,16 @@ final class ManiphestTaskStatus extends ManiphestConstants {
     return false;
   }
 
+  public static function isClaimStatus($status) {
+    return self::getStatusAttribute($status, 'claim', true);
+  }
+
   public static function isClosedStatus($status) {
     return !self::isOpenStatus($status);
+  }
+
+  public static function isLockedStatus($status) {
+    return self::getStatusAttribute($status, 'locked', false);
   }
 
   public static function getStatusActionName($status) {
@@ -165,8 +168,21 @@ final class ManiphestTaskStatus extends ManiphestConstants {
     return self::getStatusAttribute($status, 'transaction.color');
   }
 
+  public static function isDisabledStatus($status) {
+    return self::getStatusAttribute($status, 'disabled');
+  }
+
   public static function getStatusIcon($status) {
-    return self::getStatusAttribute($status, 'transaction.icon');
+    $icon = self::getStatusAttribute($status, 'transaction.icon');
+    if ($icon) {
+      return $icon;
+    }
+
+    if (self::isOpenStatus($status)) {
+      return 'fa-exclamation-circle';
+    } else {
+      return 'fa-check-square-o';
+    }
   }
 
   public static function getStatusPrefixMap() {
@@ -216,15 +232,16 @@ final class ManiphestTaskStatus extends ManiphestConstants {
    * @task validate
    */
   public static function isValidStatusConstant($constant) {
-    if (strlen($constant) > 12) {
+    if (!strlen($constant) || strlen($constant) > 64) {
       return false;
     }
-    if (!preg_match('/^[a-z0-9]+\z/', $constant)) {
+
+    // Alphanumeric, but not exclusively numeric
+    if (!preg_match('/^(?![0-9]*$)[a-zA-Z0-9]+$/', $constant)) {
       return false;
     }
     return true;
   }
-
 
   /**
    * @task validate
@@ -234,10 +251,9 @@ final class ManiphestTaskStatus extends ManiphestConstants {
       if (!self::isValidStatusConstant($key)) {
         throw new Exception(
           pht(
-            'Key "%s" is not a valid status constant. Status constants must '.
-            'be 1-12 characters long and contain only lowercase letters (a-z) '.
-            'and digits (0-9). For example, "%s" or "%s" are reasonable '.
-            'choices.',
+            'Key "%s" is not a valid status constant. Status constants '.
+            'must be 1-64 alphanumeric characters and cannot be exclusively '.
+            'digits. For example, "%s" or "%s" are reasonable choices.',
             $key,
             'open',
             'closed'));
@@ -263,6 +279,9 @@ final class ManiphestTaskStatus extends ManiphestConstants {
           'prefixes' => 'optional list<string>',
           'suffixes' => 'optional list<string>',
           'keywords' => 'optional list<string>',
+          'disabled' => 'optional bool',
+          'claim' => 'optional bool',
+          'locked' => 'optional bool',
         ));
     }
 

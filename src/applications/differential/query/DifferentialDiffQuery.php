@@ -6,8 +6,12 @@ final class DifferentialDiffQuery
   private $ids;
   private $phids;
   private $revisionIDs;
+  private $revisionPHIDs;
+  private $commitPHIDs;
+  private $hasRevision;
+
   private $needChangesets = false;
-  private $needArcanistProjects = false;
+  private $needProperties;
 
   public function withIDs(array $ids) {
     $this->ids = $ids;
@@ -24,29 +28,37 @@ final class DifferentialDiffQuery
     return $this;
   }
 
+  public function withRevisionPHIDs(array $revision_phids) {
+    $this->revisionPHIDs = $revision_phids;
+    return $this;
+  }
+
+  public function withCommitPHIDs(array $phids) {
+    $this->commitPHIDs = $phids;
+    return $this;
+  }
+
+  public function withHasRevision($has_revision) {
+    $this->hasRevision = $has_revision;
+    return $this;
+  }
+
   public function needChangesets($bool) {
     $this->needChangesets = $bool;
     return $this;
   }
 
-  public function needArcanistProjects($bool) {
-    $this->needArcanistProjects = $bool;
+  public function needProperties($need_properties) {
+    $this->needProperties = $need_properties;
     return $this;
   }
 
+  public function newResultObject() {
+    return new DifferentialDiff();
+  }
+
   protected function loadPage() {
-    $table = new DifferentialDiff();
-    $conn_r = $table->establishConnection('r');
-
-    $data = queryfx_all(
-      $conn_r,
-      'SELECT * FROM %T %Q %Q %Q',
-      $table->getTableName(),
-      $this->buildWhereClause($conn_r),
-      $this->buildOrderClause($conn_r),
-      $this->buildLimitClause($conn_r));
-
-    return $table->loadAllFromArray($data);
+    return $this->loadStandardPage($this->newResultObject());
   }
 
   protected function willFilterPage(array $diffs) {
@@ -79,8 +91,21 @@ final class DifferentialDiffQuery
       $diffs = $this->loadChangesets($diffs);
     }
 
-    if ($diffs && $this->needArcanistProjects) {
-      $diffs = $this->loadArcanistProjects($diffs);
+    return $diffs;
+  }
+
+  protected function didFilterPage(array $diffs) {
+    if ($this->needProperties) {
+      $properties = id(new DifferentialDiffProperty())->loadAllWhere(
+        'diffID IN (%Ld)',
+        mpull($diffs, 'getID'));
+
+      $properties = mgroup($properties, 'getDiffID');
+      foreach ($diffs as $diff) {
+        $map = idx($properties, $diff->getID(), array());
+        $map = mpull($map, 'getData', 'getName');
+        $diff->attachDiffProperties($map);
+      }
     }
 
     return $diffs;
@@ -98,55 +123,69 @@ final class DifferentialDiffQuery
     return $diffs;
   }
 
-  private function loadArcanistProjects(array $diffs) {
-    $phids = array_filter(mpull($diffs, 'getArcanistProjectPHID'));
-    $projects = array();
-    $project_map = array();
-    if ($phids) {
-      $projects = id(new PhabricatorRepositoryArcanistProject())
-        ->loadAllWhere(
-          'phid IN (%Ls)',
-          $phids);
-      $project_map = mpull($projects, null, 'getPHID');
-    }
+  protected function buildWhereClauseParts(AphrontDatabaseConnection $conn) {
+    $where = parent::buildWhereClauseParts($conn);
 
-    foreach ($diffs as $diff) {
-      $project = null;
-      if ($diff->getArcanistProjectPHID()) {
-        $project = idx($project_map, $diff->getArcanistProjectPHID());
-      }
-      $diff->attachArcanistProject($project);
-    }
-
-    return $diffs;
-  }
-
-  private function buildWhereClause(AphrontDatabaseConnection $conn_r) {
-    $where = array();
-
-    if ($this->ids) {
+    if ($this->ids !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'id IN (%Ld)',
         $this->ids);
     }
 
-    if ($this->phids) {
+    if ($this->phids !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'phid IN (%Ls)',
         $this->phids);
     }
 
-    if ($this->revisionIDs) {
+    if ($this->revisionIDs !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'revisionID IN (%Ld)',
         $this->revisionIDs);
     }
 
-    $where[] = $this->buildPagingClause($conn_r);
-    return $this->formatWhereClause($where);
+    if ($this->commitPHIDs !== null) {
+      $where[] = qsprintf(
+        $conn,
+        'commitPHID IN (%Ls)',
+        $this->commitPHIDs);
+    }
+
+    if ($this->hasRevision !== null) {
+      if ($this->hasRevision) {
+        $where[] = qsprintf(
+          $conn,
+          'revisionID IS NOT NULL');
+      } else {
+        $where[] = qsprintf(
+          $conn,
+          'revisionID IS NULL');
+      }
+    }
+
+    if ($this->revisionPHIDs !== null) {
+      $viewer = $this->getViewer();
+
+      $revisions = id(new DifferentialRevisionQuery())
+        ->setViewer($viewer)
+        ->setParentQuery($this)
+        ->withPHIDs($this->revisionPHIDs)
+        ->execute();
+      $revision_ids = mpull($revisions, 'getID');
+      if (!$revision_ids) {
+        throw new PhabricatorEmptyQueryException();
+      }
+
+      $where[] = qsprintf(
+        $conn,
+        'revisionID IN (%Ls)',
+        $revision_ids);
+    }
+
+    return $where;
   }
 
   public function getQueryApplicationClass() {

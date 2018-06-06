@@ -3,202 +3,94 @@
 final class PhabricatorCalendarEventEditController
   extends PhabricatorCalendarController {
 
-  private $id;
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $this->getViewer();
 
-  public function willProcessRequest(array $data) {
-    $this->id = idx($data, 'id');
-  }
+    $engine = id(new PhabricatorCalendarEventEditEngine())
+      ->setController($this);
 
-  public function isCreate() {
-    return !$this->id;
-  }
-
-  public function processRequest() {
-    $request  = $this->getRequest();
-    $user     = $request->getUser();
-
-    $start_time = id(new AphrontFormDateControl())
-      ->setUser($user)
-      ->setName('start')
-      ->setLabel(pht('Start'))
-      ->setInitialTime(AphrontFormDateControl::TIME_START_OF_DAY);
-
-    $end_time = id(new AphrontFormDateControl())
-      ->setUser($user)
-      ->setName('end')
-      ->setLabel(pht('End'))
-      ->setInitialTime(AphrontFormDateControl::TIME_END_OF_DAY);
-
-    if ($this->isCreate()) {
-      $status       = new PhabricatorCalendarEvent();
-      $end_value    = $end_time->readValueFromRequest($request);
-      $start_value  = $start_time->readValueFromRequest($request);
-      $submit_label = pht('Create');
-      $filter       = 'status/create/';
-      $page_title   = pht('Create Event');
-      $redirect     = 'created';
-    } else {
-      $status = id(new PhabricatorCalendarEventQuery())
-        ->setViewer($user)
-        ->withIDs(array($this->id))
-        ->requireCapabilities(
-          array(
-            PhabricatorPolicyCapability::CAN_VIEW,
-            PhabricatorPolicyCapability::CAN_EDIT,
-          ))
+    $id = $request->getURIData('id');
+    if ($id) {
+      $event = id(new PhabricatorCalendarEventQuery())
+        ->setViewer($viewer)
+        ->withIDs(array($id))
         ->executeOne();
-      if (!$status) {
-        return new Aphront404Response();
-      }
-
-      $end_time->setValue($status->getDateTo());
-      $start_time->setValue($status->getDateFrom());
-      $submit_label = pht('Update');
-      $filter       = 'event/edit/'.$status->getID().'/';
-      $page_title   = pht('Update Event');
-      $redirect     = 'updated';
-    }
-
-    $errors = array();
-    if ($request->isFormPost()) {
-      $type        = $request->getInt('status');
-      $start_value = $start_time->readValueFromRequest($request);
-      $end_value   = $end_time->readValueFromRequest($request);
-      $description = $request->getStr('description');
-
-      if ($start_time->getError()) {
-        $errors[] = pht('Invalid start time; reset to default.');
-      }
-      if ($end_time->getError()) {
-        $errors[] = pht('Invalid end time; reset to default.');
-      }
-      if (!$errors) {
-        try {
-          $status
-            ->setUserPHID($user->getPHID())
-            ->setStatus($type)
-            ->setDateFrom($start_value)
-            ->setDateTo($end_value)
-            ->setDescription($description)
-            ->save();
-        } catch (PhabricatorCalendarEventInvalidEpochException $e) {
-          $errors[] = pht('Start must be before end.');
-        }
-      }
-
-      if (!$errors) {
-        $uri = new PhutilURI($this->getApplicationURI());
-        $uri->setQueryParams(
-          array(
-            'month'   => phabricator_format_local_time($status->getDateFrom(),
-                                                       $user,
-                                                       'm'),
-            'year'    => phabricator_format_local_time($status->getDateFrom(),
-                                                       $user,
-                                                       'Y'),
-            $redirect => true,
-          ));
-        if ($request->isAjax()) {
-          $response = id(new AphrontAjaxResponse())
-            ->setContent(array('redirect_uri' => $uri));
-        } else {
-          $response = id(new AphrontRedirectResponse())
-            ->setURI($uri);
-        }
+      $response = $this->newImportedEventResponse($event);
+      if ($response) {
         return $response;
       }
-    }
 
-    $error_view = null;
-    if ($errors) {
-      $error_view = id(new PHUIInfoView())
-        ->setTitle(pht('Status can not be set!'))
-        ->setErrors($errors);
-    }
+      $cancel_uri = $event->getURI();
 
-    $status_select = id(new AphrontFormSelectControl())
-      ->setLabel(pht('Status'))
-      ->setName('status')
-      ->setValue($status->getStatus())
-      ->setOptions($status->getStatusOptions());
+      $page = $request->getURIData('pageKey');
+      if ($page == 'recurring') {
+        if ($event->isChildEvent()) {
+          return $this->newDialog()
+            ->setTitle(pht('Series Event'))
+            ->appendParagraph(
+              pht(
+                'This event is an instance in an event series. To change '.
+                'the behavior for the series, edit the parent event.'))
+            ->addCancelButton($cancel_uri);
+        }
+      } else if ($event->getIsRecurring()) {
 
-    $description = id(new AphrontFormTextAreaControl())
-      ->setLabel(pht('Description'))
-      ->setName('description')
-      ->setValue($status->getDescription());
+        // If the user submits a comment or makes an edit via comment actions,
+        // always target only the current event. It doesn't make sense to add
+        // comments to every instance of an event, and the other actions don't
+        // make much sense to apply to all instances either.
+        if ($engine->isCommentAction()) {
+          $mode = PhabricatorCalendarEventEditEngine::MODE_THIS;
+        } else {
+          $mode = $request->getStr('mode');
+        }
 
-    if ($request->isAjax()) {
-      $dialog = id(new AphrontDialogView())
-        ->setUser($user)
-        ->setTitle($page_title)
-        ->setWidth(AphrontDialogView::WIDTH_FORM);
-      if ($this->isCreate()) {
-        $dialog->setSubmitURI($this->getApplicationURI('event/create/'));
-      } else {
-        $dialog->setSubmitURI(
-          $this->getApplicationURI('event/edit/'.$status->getID().'/'));
+        if (!$mode) {
+          $start_time = phutil_tag(
+            'strong',
+            array(),
+            phabricator_datetime($event->getStartDateTimeEpoch(), $viewer));
+
+          $form = id(new AphrontFormView())
+            ->setViewer($viewer)
+            ->appendControl(
+              id(new AphrontFormRadioButtonControl())
+                ->setName('mode')
+                ->setValue(PhabricatorCalendarEventEditEngine::MODE_THIS)
+                ->addButton(
+                  PhabricatorCalendarEventEditEngine::MODE_THIS,
+                  pht('Edit Only This Event'),
+                  pht(
+                    'Edit only the event which occurs at %s.',
+                    $start_time))
+                ->addButton(
+                  PhabricatorCalendarEventEditEngine::MODE_FUTURE,
+                  pht('Edit This And All Later Events'),
+                  pht(
+                    'Edit this event and all events in the series which '.
+                    'occur on or after %s. This will overwrite previous '.
+                    'edits!',
+                    $start_time)));
+          return $this->newDialog()
+            ->setTitle(pht('Edit Event'))
+            ->setWidth(AphrontDialogView::WIDTH_FORM)
+            ->appendParagraph(
+              pht(
+                'This event is part of a series. Which events do you '.
+                'want to edit?'))
+            ->appendForm($form)
+            ->addSubmitButton(pht('Continue'))
+            ->addCancelButton($cancel_uri)
+            ->setDisableWorkflowOnSubmit(true);
+        }
+
+        $engine
+          ->addContextParameter('mode', $mode)
+          ->setSeriesEditMode($mode);
       }
-      $form = new PHUIFormLayoutView();
-      if ($error_view) {
-        $form->appendChild($error_view);
-      }
-    } else {
-      $form = id(new AphrontFormView())
-        ->setUser($user);
     }
 
-    $form
-      ->appendChild($status_select)
-      ->appendChild($start_time)
-      ->appendChild($end_time)
-      ->appendChild($description);
-
-    if ($request->isAjax()) {
-      $dialog->addSubmitButton($submit_label);
-      $submit = $dialog;
-    } else {
-      $submit = id(new AphrontFormSubmitControl())
-        ->setValue($submit_label);
-    }
-    if ($this->isCreate()) {
-      $submit->addCancelButton($this->getApplicationURI());
-    } else {
-      $submit->addCancelButton(
-        $this->getApplicationURI('event/view/'.$status->getID().'/'));
-    }
-
-    if ($request->isAjax()) {
-      $dialog->appendChild($form);
-      return id(new AphrontDialogResponse())
-        ->setDialog($dialog);
-    }
-    $form->appendChild($submit);
-
-
-
-    $form_box = id(new PHUIObjectBoxView())
-      ->setHeaderText($page_title)
-      ->setFormErrors($errors)
-      ->setForm($form);
-
-    $nav = $this->buildSideNavView($status);
-    $nav->selectFilter($filter);
-
-    $crumbs = $this
-      ->buildApplicationCrumbs()
-      ->addTextCrumb($page_title);
-
-    $nav->appendChild(
-      array(
-        $crumbs,
-        $form_box,
-      ));
-
-    return $this->buildApplicationPage(
-      $nav,
-      array(
-        'title' => $page_title,
-      ));
+    return $engine->buildResponse();
   }
 
 }

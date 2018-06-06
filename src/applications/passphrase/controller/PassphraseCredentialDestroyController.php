@@ -3,19 +3,13 @@
 final class PassphraseCredentialDestroyController
   extends PassphraseController {
 
-  private $id;
-
-  public function willProcessRequest(array $data) {
-    $this->id = $data['id'];
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $viewer = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $id = $request->getURIData('id');
 
     $credential = id(new PassphraseCredentialQuery())
       ->setViewer($viewer)
-      ->withIDs(array($this->id))
+      ->withIDs(array($id))
       ->requireCapabilities(
         array(
           PhabricatorPolicyCapability::CAN_VIEW,
@@ -38,7 +32,8 @@ final class PassphraseCredentialDestroyController
 
       $xactions = array();
       $xactions[] = id(new PassphraseCredentialTransaction())
-        ->setTransactionType(PassphraseCredentialTransaction::TYPE_DESTROY)
+        ->setTransactionType(
+          PassphraseCredentialDestroyTransaction::TRANSACTIONTYPE)
         ->setNewValue(1);
 
       $editor = id(new PassphraseCredentialTransactionEditor())

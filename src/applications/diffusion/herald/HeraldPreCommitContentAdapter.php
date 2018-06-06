@@ -7,6 +7,8 @@ final class HeraldPreCommitContentAdapter extends HeraldPreCommitAdapter {
   private $fields;
   private $revision = false;
 
+  private $affectedPackages;
+
   public function getAdapterContentName() {
     return pht('Commit Hook: Commit Content');
   }
@@ -21,114 +23,23 @@ final class HeraldPreCommitContentAdapter extends HeraldPreCommitAdapter {
       "Hook rules can block changes and send push summary mail.");
   }
 
-  public function getFields() {
-    return array_merge(
-      array(
-        self::FIELD_BODY,
-        self::FIELD_AUTHOR,
-        self::FIELD_AUTHOR_RAW,
-        self::FIELD_COMMITTER,
-        self::FIELD_COMMITTER_RAW,
-        self::FIELD_BRANCHES,
-        self::FIELD_DIFF_FILE,
-        self::FIELD_DIFF_CONTENT,
-        self::FIELD_DIFF_ADDED_CONTENT,
-        self::FIELD_DIFF_REMOVED_CONTENT,
-        self::FIELD_DIFF_ENORMOUS,
-        self::FIELD_REPOSITORY,
-        self::FIELD_REPOSITORY_PROJECTS,
-        self::FIELD_PUSHER,
-        self::FIELD_PUSHER_PROJECTS,
-        self::FIELD_PUSHER_IS_COMMITTER,
-        self::FIELD_DIFFERENTIAL_REVISION,
-        self::FIELD_DIFFERENTIAL_ACCEPTED,
-        self::FIELD_DIFFERENTIAL_REVIEWERS,
-        self::FIELD_DIFFERENTIAL_CCS,
-        self::FIELD_IS_MERGE_COMMIT,
-      ),
-      parent::getFields());
+  public function isPreCommitRefAdapter() {
+    return false;
   }
 
   public function getHeraldName() {
     return pht('Push Log (Content)');
   }
 
-  public function getHeraldField($field) {
-    $log = $this->getObject();
-    switch ($field) {
-      case self::FIELD_BODY:
-        return $this->getCommitRef()->getMessage();
-      case self::FIELD_AUTHOR:
-        return $this->getAuthorPHID();
-      case self::FIELD_AUTHOR_RAW:
-        return $this->getAuthorRaw();
-      case self::FIELD_COMMITTER:
-        return $this->getCommitterPHID();
-      case self::FIELD_COMMITTER_RAW:
-        return $this->getCommitterRaw();
-      case self::FIELD_BRANCHES:
-        return $this->getBranches();
-      case self::FIELD_DIFF_FILE:
-        return $this->getDiffContent('name');
-      case self::FIELD_DIFF_CONTENT:
-        return $this->getDiffContent('*');
-      case self::FIELD_DIFF_ADDED_CONTENT:
-        return $this->getDiffContent('+');
-      case self::FIELD_DIFF_REMOVED_CONTENT:
-        return $this->getDiffContent('-');
-      case self::FIELD_DIFF_ENORMOUS:
-        $this->getDiffContent('*');
-        return ($this->changesets instanceof Exception);
-      case self::FIELD_REPOSITORY:
-        return $this->getHookEngine()->getRepository()->getPHID();
-      case self::FIELD_REPOSITORY_PROJECTS:
-        return $this->getHookEngine()->getRepository()->getProjectPHIDs();
-      case self::FIELD_PUSHER:
-        return $this->getHookEngine()->getViewer()->getPHID();
-      case self::FIELD_PUSHER_PROJECTS:
-        return $this->getHookEngine()->loadViewerProjectPHIDsForHerald();
-      case self::FIELD_DIFFERENTIAL_REVISION:
-        $revision = $this->getRevision();
-        if (!$revision) {
-          return null;
-        }
-        return $revision->getPHID();
-      case self::FIELD_DIFFERENTIAL_ACCEPTED:
-        $revision = $this->getRevision();
-        if (!$revision) {
-          return null;
-        }
-        $status_accepted = ArcanistDifferentialRevisionStatus::ACCEPTED;
-        if ($revision->getStatus() != $status_accepted) {
-          return null;
-        }
-        return $revision->getPHID();
-      case self::FIELD_DIFFERENTIAL_REVIEWERS:
-        $revision = $this->getRevision();
-        if (!$revision) {
-          return array();
-        }
-        return $revision->getReviewers();
-      case self::FIELD_DIFFERENTIAL_CCS:
-        $revision = $this->getRevision();
-        if (!$revision) {
-          return array();
-        }
-        return $revision->getCCPHIDs();
-      case self::FIELD_IS_MERGE_COMMIT:
-        return $this->getIsMergeCommit();
-      case self::FIELD_PUSHER_IS_COMMITTER:
-        $pusher_phid = $this->getHookEngine()->getViewer()->getPHID();
-        return ($this->getCommitterPHID() == $pusher_phid);
-    }
-
-    return parent::getHeraldField($field);
+  public function isDiffEnormous() {
+    $this->getDiffContent('*');
+    return ($this->changesets instanceof Exception);
   }
 
-  private function getDiffContent($type) {
+  public function getDiffContent($type) {
     if ($this->changesets === null) {
       try {
-        $this->changesets = $this->getHookEngine()->loadChangesetsForCommit(
+        $this->changesets = $this->getHookEngine()->getChangesetsForCommit(
           $this->getObject()->getRefNew());
       } catch (Exception $ex) {
         $this->changesets = $ex;
@@ -137,7 +48,7 @@ final class HeraldPreCommitContentAdapter extends HeraldPreCommitAdapter {
 
     if ($this->changesets instanceof Exception) {
       $ex_class = get_class($this->changesets);
-      $ex_message = $this->changesets->getmessage();
+      $ex_message = $this->changesets->getMessage();
       if ($type === 'name') {
         return array("<{$ex_class}: {$ex_message}>");
       } else {
@@ -174,7 +85,7 @@ final class HeraldPreCommitContentAdapter extends HeraldPreCommitAdapter {
     return $result;
   }
 
-  private function getCommitRef() {
+  public function getCommitRef() {
     if ($this->commitRef === null) {
       $this->commitRef = $this->getHookEngine()->loadCommitRefForCommit(
         $this->getObject()->getRefNew());
@@ -182,7 +93,7 @@ final class HeraldPreCommitContentAdapter extends HeraldPreCommitAdapter {
     return $this->commitRef;
   }
 
-  private function getAuthorPHID() {
+  public function getAuthorPHID() {
     $repository = $this->getHookEngine()->getRepository();
     $vcs = $repository->getVersionControlSystem();
     switch ($vcs) {
@@ -200,7 +111,7 @@ final class HeraldPreCommitContentAdapter extends HeraldPreCommitAdapter {
     }
   }
 
-  private function getCommitterPHID() {
+  public function getCommitterPHID() {
     $repository = $this->getHookEngine()->getRepository();
     $vcs = $repository->getVersionControlSystem();
     switch ($vcs) {
@@ -221,7 +132,7 @@ final class HeraldPreCommitContentAdapter extends HeraldPreCommitAdapter {
     }
   }
 
-  private function getAuthorRaw() {
+  public function getAuthorRaw() {
     $repository = $this->getHookEngine()->getRepository();
     $vcs = $repository->getVersionControlSystem();
     switch ($vcs) {
@@ -235,7 +146,7 @@ final class HeraldPreCommitContentAdapter extends HeraldPreCommitAdapter {
     }
   }
 
-  private function getCommitterRaw() {
+  public function getCommitterRaw() {
     $repository = $this->getHookEngine()->getRepository();
     $vcs = $repository->getVersionControlSystem();
     switch ($vcs) {
@@ -271,7 +182,7 @@ final class HeraldPreCommitContentAdapter extends HeraldPreCommitAdapter {
     return $this->fields;
   }
 
-  private function getRevision() {
+  public function getRevision() {
     if ($this->revision === false) {
       $fields = $this->getCommitFields();
       $revision_id = idx($fields, 'revisionID');
@@ -281,7 +192,7 @@ final class HeraldPreCommitContentAdapter extends HeraldPreCommitAdapter {
         $this->revision = id(new DifferentialRevisionQuery())
           ->setViewer(PhabricatorUser::getOmnipotentUser())
           ->withIDs(array($revision_id))
-          ->needRelationships(true)
+          ->needReviewers(true)
           ->executeOne();
       }
     }
@@ -289,7 +200,7 @@ final class HeraldPreCommitContentAdapter extends HeraldPreCommitAdapter {
     return $this->revision;
   }
 
-  private function getIsMergeCommit() {
+  public function getIsMergeCommit() {
     $repository = $this->getHookEngine()->getRepository();
     $vcs = $repository->getVersionControlSystem();
     switch ($vcs) {
@@ -309,9 +220,21 @@ final class HeraldPreCommitContentAdapter extends HeraldPreCommitAdapter {
     }
   }
 
-  private function getBranches() {
+  public function getBranches() {
     return $this->getHookEngine()->loadBranches(
       $this->getObject()->getRefNew());
   }
+
+  public function loadAffectedPackages() {
+    if ($this->affectedPackages === null) {
+      $packages = PhabricatorOwnersPackage::loadAffectedPackages(
+        $this->getHookEngine()->getRepository(),
+        $this->getDiffContent('name'));
+      $this->affectedPackages = $packages;
+    }
+
+    return $this->affectedPackages;
+  }
+
 
 }

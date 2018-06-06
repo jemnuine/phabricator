@@ -13,15 +13,15 @@ final class PhabricatorFactManagementAnalyzeWorkflow
             'name'    => 'iterator',
             'param'   => 'name',
             'repeat'  => true,
-            'help'    => 'Process only iterator __name__.',
+            'help'    => pht('Process only iterator __name__.'),
           ),
           array(
             'name'    => 'all',
-            'help'    => 'Analyze from the beginning, ignoring cursors.',
+            'help'    => pht('Analyze from the beginning, ignoring cursors.'),
           ),
           array(
             'name'    => 'skip-aggregates',
-            'help'    => 'Skip analysis of aggreate facts.',
+            'help'    => pht('Skip analysis of aggregate facts.'),
           ),
         ));
   }
@@ -56,10 +56,6 @@ final class PhabricatorFactManagementAnalyzeWorkflow
       } else {
         $daemon->processIteratorWithCursor($iterator_name, $iterator);
       }
-    }
-
-    if (!$args->getArg('skip-aggregates')) {
-      $daemon->processAggregates();
     }
 
     return 0;

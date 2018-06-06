@@ -5,10 +5,11 @@ final class PhamePostQuery extends PhabricatorCursorPagedPolicyAwareQuery {
   private $ids;
   private $blogPHIDs;
   private $bloggerPHIDs;
-  private $phameTitles;
   private $visibility;
   private $publishedAfter;
   private $phids;
+
+  private $needHeaderImage;
 
   public function withIDs(array $ids) {
     $this->ids = $ids;
@@ -30,12 +31,7 @@ final class PhamePostQuery extends PhabricatorCursorPagedPolicyAwareQuery {
     return $this;
   }
 
-  public function withPhameTitles(array $phame_titles) {
-    $this->phameTitles = $phame_titles;
-    return $this;
-  }
-
-  public function withVisibility($visibility) {
+  public function withVisibility(array $visibility) {
     $this->visibility = $visibility;
     return $this;
   }
@@ -45,35 +41,61 @@ final class PhamePostQuery extends PhabricatorCursorPagedPolicyAwareQuery {
     return $this;
   }
 
+  public function needHeaderImage($need) {
+    $this->needHeaderImage = $need;
+    return $this;
+  }
+
+  public function newResultObject() {
+    return new PhamePost();
+  }
+
   protected function loadPage() {
-    $table  = new PhamePost();
-    $conn_r = $table->establishConnection('r');
+    return $this->loadStandardPage($this->newResultObject());
+  }
 
-    $where_clause = $this->buildWhereClause($conn_r);
-    $order_clause = $this->buildOrderClause($conn_r);
-    $limit_clause = $this->buildLimitClause($conn_r);
+  protected function willFilterPage(array $posts) {
+    // We require blogs to do visibility checks, so load them unconditionally.
+    $blog_phids = mpull($posts, 'getBlogPHID');
 
-    $data = queryfx_all(
-      $conn_r,
-      'SELECT * FROM %T p %Q %Q %Q',
-      $table->getTableName(),
-      $where_clause,
-      $order_clause,
-      $limit_clause);
+    $blogs = id(new PhameBlogQuery())
+      ->setViewer($this->getViewer())
+      ->needProfileImage(true)
+      ->withPHIDs($blog_phids)
+      ->execute();
 
-    $posts = $table->loadAllFromArray($data);
+    $blogs = mpull($blogs, null, 'getPHID');
+    foreach ($posts as $key => $post) {
+      $blog_phid = $post->getBlogPHID();
 
-    if ($posts) {
-      // We require these to do visibility checks, so load them unconditionally.
-      $blog_phids = mpull($posts, 'getBlogPHID');
-      $blogs = id(new PhameBlogQuery())
-        ->setViewer($this->getViewer())
-        ->withPHIDs($blog_phids)
-        ->execute();
-      $blogs = mpull($blogs, null, 'getPHID');
+      $blog = idx($blogs, $blog_phid);
+      if (!$blog) {
+        $this->didRejectResult($post);
+        unset($posts[$key]);
+        continue;
+      }
+
+      $post->attachBlog($blog);
+    }
+
+    if ($this->needHeaderImage) {
+      $file_phids = mpull($posts, 'getHeaderImagePHID');
+      $file_phids = array_filter($file_phids);
+      if ($file_phids) {
+        $files = id(new PhabricatorFileQuery())
+          ->setParentQuery($this)
+          ->setViewer($this->getViewer())
+          ->withPHIDs($file_phids)
+          ->execute();
+        $files = mpull($files, null, 'getPHID');
+      } else {
+        $files = array();
+      }
+
       foreach ($posts as $post) {
-        if (isset($blogs[$post->getBlogPHID()])) {
-          $post->setBlog($blogs[$post->getBlogPHID()]);
+        $file = idx($files, $post->getHeaderImagePHID());
+        if ($file) {
+          $post->attachHeaderImageFile($file);
         }
       }
     }
@@ -81,66 +103,92 @@ final class PhamePostQuery extends PhabricatorCursorPagedPolicyAwareQuery {
     return $posts;
   }
 
-  private function buildWhereClause(AphrontDatabaseConnection $conn_r) {
-    $where = array();
+  protected function buildWhereClauseParts(AphrontDatabaseConnection $conn) {
+    $where = parent::buildWhereClauseParts($conn);
 
-    if ($this->ids) {
+    if ($this->ids !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'p.id IN (%Ld)',
         $this->ids);
     }
 
-    if ($this->phids) {
+    if ($this->phids !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'p.phid IN (%Ls)',
         $this->phids);
     }
 
-    if ($this->bloggerPHIDs) {
+    if ($this->bloggerPHIDs !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'p.bloggerPHID IN (%Ls)',
         $this->bloggerPHIDs);
     }
 
-    if ($this->phameTitles) {
-      $where[] = qsprintf(
-        $conn_r,
-        'p.phameTitle IN (%Ls)',
-        $this->phameTitles);
-    }
-
     if ($this->visibility !== null) {
       $where[] = qsprintf(
-        $conn_r,
-        'p.visibility = %d',
+        $conn,
+        'p.visibility IN (%Ld)',
         $this->visibility);
     }
 
     if ($this->publishedAfter !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'p.datePublished > %d',
         $this->publishedAfter);
     }
 
-    if ($this->blogPHIDs) {
+    if ($this->blogPHIDs !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'p.blogPHID in (%Ls)',
         $this->blogPHIDs);
     }
 
-    $where[] = $this->buildPagingClause($conn_r);
+    return $where;
+  }
 
-    return $this->formatWhereClause($where);
+  public function getBuiltinOrders() {
+    return array(
+      'datePublished' => array(
+        'vector' => array('datePublished', 'id'),
+        'name' => pht('Publish Date'),
+      ),
+    ) + parent::getBuiltinOrders();
+  }
+
+  public function getOrderableColumns() {
+    return parent::getOrderableColumns() + array(
+      'datePublished' => array(
+        'table' => $this->getPrimaryTableAlias(),
+        'column' => 'datePublished',
+        'type' => 'int',
+        'reverse' => false,
+      ),
+    );
+  }
+
+  protected function getPagingValueMap($cursor, array $keys) {
+    $post = $this->loadCursorObject($cursor);
+
+    $map = array(
+      'datePublished' => $post->getDatePublished(),
+      'id' => $post->getID(),
+    );
+
+    return $map;
   }
 
   public function getQueryApplicationClass() {
     // TODO: Does setting this break public blogs?
     return null;
+  }
+
+  protected function getPrimaryTableAlias() {
+    return 'p';
   }
 
 }

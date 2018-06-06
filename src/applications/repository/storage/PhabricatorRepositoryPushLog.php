@@ -23,17 +23,20 @@ final class PhabricatorRepositoryPushLog
   const CHANGEFLAG_APPEND = 4;
   const CHANGEFLAG_REWRITE = 8;
   const CHANGEFLAG_DANGEROUS = 16;
+  const CHANGEFLAG_ENORMOUS = 32;
 
   const REJECT_ACCEPT = 0;
   const REJECT_DANGEROUS = 1;
   const REJECT_HERALD = 2;
   const REJECT_EXTERNAL = 3;
   const REJECT_BROKEN = 4;
+  const REJECT_ENORMOUS = 5;
 
   protected $repositoryPHID;
   protected $epoch;
   protected $pusherPHID;
   protected $pushEventPHID;
+  protected $devicePHID;
   protected $refType;
   protected $refNameHash;
   protected $refNameRaw;
@@ -52,15 +55,37 @@ final class PhabricatorRepositoryPushLog
       ->setPusherPHID($viewer->getPHID());
   }
 
+  public static function getFlagDisplayNames() {
+    return array(
+      self::CHANGEFLAG_ADD => pht('Create'),
+      self::CHANGEFLAG_DELETE => pht('Delete'),
+      self::CHANGEFLAG_APPEND => pht('Append'),
+      self::CHANGEFLAG_REWRITE => pht('Rewrite'),
+      self::CHANGEFLAG_DANGEROUS => pht('Dangerous'),
+      self::CHANGEFLAG_ENORMOUS => pht('Enormous'),
+    );
+  }
+
+  public static function getRejectCodeDisplayNames() {
+    return array(
+      self::REJECT_ACCEPT => pht('Accepted'),
+      self::REJECT_DANGEROUS => pht('Rejected: Dangerous'),
+      self::REJECT_HERALD => pht('Rejected: Herald'),
+      self::REJECT_EXTERNAL => pht('Rejected: External Hook'),
+      self::REJECT_BROKEN => pht('Rejected: Broken'),
+      self::REJECT_ENORMOUS => pht('Rejected: Enormous'),
+    );
+  }
+
   public static function getHeraldChangeFlagConditionOptions() {
     return array(
-      PhabricatorRepositoryPushLog::CHANGEFLAG_ADD =>
+      self::CHANGEFLAG_ADD =>
         pht('change creates ref'),
-      PhabricatorRepositoryPushLog::CHANGEFLAG_DELETE =>
+      self::CHANGEFLAG_DELETE =>
         pht('change deletes ref'),
-      PhabricatorRepositoryPushLog::CHANGEFLAG_REWRITE =>
+      self::CHANGEFLAG_REWRITE =>
         pht('change rewrites ref'),
-      PhabricatorRepositoryPushLog::CHANGEFLAG_DANGEROUS =>
+      self::CHANGEFLAG_DANGEROUS =>
         pht('dangerous change'),
     );
   }
@@ -81,6 +106,7 @@ final class PhabricatorRepositoryPushLog
         'refNew' => 'text40',
         'mergeBase' => 'text40?',
         'changeFlags' => 'uint32',
+        'devicePHID' => 'phid?',
       ),
       self::CONFIG_KEY_SCHEMA => array(
         'key_repository' => array(
@@ -97,6 +123,9 @@ final class PhabricatorRepositoryPushLog
         ),
         'key_pusher' => array(
           'columns' => array('pusherPHID'),
+        ),
+        'key_epoch' => array(
+          'columns' => array('epoch'),
         ),
       ),
     ) + parent::getConfiguration();

@@ -6,7 +6,7 @@
  *
  * By default, the daemon pulls **every** repository. If you want it to be
  * responsible for only some repositories, you can launch it with a list of
- * PHIDs or callsigns:
+ * repositories:
  *
  *   ./phd launch repositorypulllocal -- X Q Z
  *
@@ -43,18 +43,18 @@ final class PhabricatorRepositoryPullLocalDaemon
       array(
         array(
           'name'      => 'no-discovery',
-          'help'      => 'Pull only, without discovering commits.',
+          'help'      => pht('Pull only, without discovering commits.'),
         ),
         array(
           'name'      => 'not',
           'param'     => 'repository',
           'repeat'    => true,
-          'help'      => 'Do not pull __repository__.',
+          'help'      => pht('Do not pull __repository__.'),
         ),
         array(
           'name'      => 'repositories',
           'wildcard'  => true,
-          'help'      => 'Pull specific __repositories__ instead of all.',
+          'help'      => pht('Pull specific __repositories__ instead of all.'),
         ),
       ));
 
@@ -68,12 +68,16 @@ final class PhabricatorRepositoryPullLocalDaemon
     $retry_after = array();
 
     $min_sleep = 15;
+    $max_sleep = phutil_units('5 minutes in seconds');
     $max_futures = 4;
     $futures = array();
     $queue = array();
 
     while (!$this->shouldExit()) {
-      $pullable = $this->loadPullableRepositories($include, $exclude);
+      PhabricatorCaches::destroyRequestCache();
+      $device = AlmanacKeys::getLiveDevice();
+
+      $pullable = $this->loadPullableRepositories($include, $exclude, $device);
 
       // If any repositories have the NEEDS_UPDATE flag set, pull them
       // as soon as possible.
@@ -99,43 +103,58 @@ final class PhabricatorRepositoryPullLocalDaemon
         $retry_after,
         array_keys($pullable));
 
-
       // Figure out which repositories we need to queue for an update.
       foreach ($pullable as $id => $repository) {
-        $monogram = $repository->getMonogram();
+        $now = PhabricatorTime::getNow();
+        $display_name = $repository->getDisplayName();
 
         if (isset($futures[$id])) {
-          $this->log(pht('Repository "%s" is currently updating.', $monogram));
+          $this->log(
+            pht(
+              'Repository "%s" is currently updating.',
+              $display_name));
           continue;
         }
 
         if (isset($queue[$id])) {
-          $this->log(pht('Repository "%s" is already queued.', $monogram));
+          $this->log(
+            pht(
+              'Repository "%s" is already queued.',
+              $display_name));
           continue;
         }
 
-        $after = idx($retry_after, $id, 0);
+        $after = idx($retry_after, $id);
+        if (!$after) {
+          $smart_wait = $repository->loadUpdateInterval($min_sleep);
+          $last_update = $this->loadLastUpdate($repository);
+
+          $after = $last_update + $smart_wait;
+          $retry_after[$id] = $after;
+
+          $this->log(
+            pht(
+              'Scheduling repository "%s" with an update window of %s '.
+              'second(s). Last update was %s second(s) ago.',
+              $display_name,
+              new PhutilNumber($smart_wait),
+              new PhutilNumber($now - $last_update)));
+        }
+
         if ($after > time()) {
           $this->log(
             pht(
               'Repository "%s" is not due for an update for %s second(s).',
-              $monogram,
-              new PhutilNumber($after - time())));
+              $display_name,
+              new PhutilNumber($after - $now)));
           continue;
         }
 
-        if (!$after) {
-          $this->log(
-            pht(
-              'Scheduling repository "%s" for an initial update.',
-              $monogram));
-        } else {
-          $this->log(
-            pht(
-              'Scheduling repository "%s" for an update (%s seconds overdue).',
-              $monogram,
-              new PhutilNumber(time() - $after)));
-        }
+        $this->log(
+          pht(
+            'Scheduling repository "%s" for an update (%s seconds overdue).',
+            $display_name,
+            new PhutilNumber($now - $after)));
 
         $queue[$id] = $after;
       }
@@ -150,11 +169,15 @@ final class PhabricatorRepositoryPullLocalDaemon
           if (!$repository) {
             $this->log(
               pht('Repository %s is no longer pullable; skipping.', $id));
-            break;
+            unset($queue[$id]);
+            continue;
           }
 
-          $monogram = $repository->getMonogram();
-          $this->log(pht('Starting update for repository "%s".', $monogram));
+          $display_name = $repository->getDisplayName();
+          $this->log(
+            pht(
+              'Starting update for repository "%s".',
+              $display_name));
 
           unset($queue[$id]);
           $futures[$id] = $this->buildUpdateFuture(
@@ -170,7 +193,7 @@ final class PhabricatorRepositoryPullLocalDaemon
           pht(
             'Not enough process slots to schedule the other %s '.
             'repository(s) for updates yet.',
-            new PhutilNumber(count($queue))));
+            phutil_count($queue)));
       }
 
       if ($futures) {
@@ -206,7 +229,10 @@ final class PhabricatorRepositoryPullLocalDaemon
         continue;
       }
 
-      $this->waitForUpdates($min_sleep, $retry_after);
+      $should_hibernate = $this->waitForUpdates($max_sleep, $retry_after);
+      if ($should_hibernate) {
+        break;
+      }
     }
 
   }
@@ -226,9 +252,8 @@ final class PhabricatorRepositoryPullLocalDaemon
       $flags[] = '--no-discovery';
     }
 
-    $callsign = $repository->getCallsign();
-
-    $future = new ExecFuture('%s update %Ls -- %s', $bin, $flags, $callsign);
+    $monogram = $repository->getMonogram();
+    $future = new ExecFuture('%s update %Ls -- %s', $bin, $flags, $monogram);
 
     // Sometimes, the underlying VCS commands will hang indefinitely. We've
     // observed this occasionally with GitHub, and other users have observed
@@ -250,6 +275,11 @@ final class PhabricatorRepositoryPullLocalDaemon
     }
 
     $future->setTimeout($timeout);
+
+    // The default TERM inherited by this process is "unknown", which causes PHP
+    // to produce a warning upon startup.  Override it to squash this output to
+    // STDERR.
+    $future->updateEnv('TERM', 'dumb');
 
     return $future;
   }
@@ -296,32 +326,78 @@ final class PhabricatorRepositoryPullLocalDaemon
   /**
    * @task pull
    */
-  private function loadPullableRepositories(array $include, array $exclude) {
+  private function loadLastUpdate(PhabricatorRepository $repository) {
+    $table = new PhabricatorRepositoryStatusMessage();
+    $conn = $table->establishConnection('r');
+
+    $epoch = queryfx_one(
+      $conn,
+      'SELECT MAX(epoch) last_update FROM %T
+        WHERE repositoryID = %d
+          AND statusType IN (%Ls)',
+      $table->getTableName(),
+      $repository->getID(),
+      array(
+        PhabricatorRepositoryStatusMessage::TYPE_INIT,
+        PhabricatorRepositoryStatusMessage::TYPE_FETCH,
+      ));
+
+    if ($epoch) {
+      return (int)$epoch['last_update'];
+    }
+
+    return PhabricatorTime::getNow();
+  }
+
+  /**
+   * @task pull
+   */
+  private function loadPullableRepositories(
+    array $include,
+    array $exclude,
+    AlmanacDevice $device = null) {
+
     $query = id(new PhabricatorRepositoryQuery())
       ->setViewer($this->getViewer());
 
     if ($include) {
-      $query->withCallsigns($include);
+      $query->withIdentifiers($include);
     }
 
     $repositories = $query->execute();
+    $repositories = mpull($repositories, null, 'getPHID');
 
     if ($include) {
-      $by_callsign = mpull($repositories, null, 'getCallsign');
-      foreach ($include as $name) {
-        if (empty($by_callsign[$name])) {
+      $map = $query->getIdentifierMap();
+      foreach ($include as $identifier) {
+        if (empty($map[$identifier])) {
           throw new Exception(
-            "No repository exists with callsign '{$name}'!");
+            pht(
+              'No repository "%s" exists!',
+              $identifier));
         }
       }
     }
 
     if ($exclude) {
-      $exclude = array_fuse($exclude);
-      foreach ($repositories as $key => $repository) {
-        if (isset($exclude[$repository->getCallsign()])) {
-          unset($repositories[$key]);
+      $xquery = id(new PhabricatorRepositoryQuery())
+        ->setViewer($this->getViewer())
+        ->withIdentifiers($exclude);
+
+      $excluded_repos = $xquery->execute();
+      $xmap = $xquery->getIdentifierMap();
+
+      foreach ($exclude as $identifier) {
+        if (empty($xmap[$identifier])) {
+          throw new Exception(
+            pht(
+              'No repository "%s" exists!',
+              $identifier));
         }
+      }
+
+      foreach ($excluded_repos as $excluded_repo) {
+        unset($repositories[$excluded_repo->getPHID()]);
       }
     }
 
@@ -329,6 +405,19 @@ final class PhabricatorRepositoryPullLocalDaemon
       if (!$repository->isTracked()) {
         unset($repositories[$key]);
       }
+    }
+
+    $viewer = $this->getViewer();
+
+    $filter = id(new DiffusionLocalRepositoryFilter())
+      ->setViewer($viewer)
+      ->setDevice($device)
+      ->setRepositories($repositories);
+
+    $repositories = $filter->execute();
+
+    foreach ($filter->getRejectionReasons() as $reason) {
+      $this->log($reason);
     }
 
     // Shuffle the repositories, then re-key the array since shuffle()
@@ -349,9 +438,9 @@ final class PhabricatorRepositoryPullLocalDaemon
     ExecFuture $future,
     $min_sleep) {
 
-    $monogram = $repository->getMonogram();
+    $display_name = $repository->getDisplayName();
 
-    $this->log(pht('Resolving update for "%s".', $monogram));
+    $this->log(pht('Resolving update for "%s".', $display_name));
 
     try {
       list($stdout, $stderr) = $future->resolvex();
@@ -359,17 +448,18 @@ final class PhabricatorRepositoryPullLocalDaemon
       $proxy = new PhutilProxyException(
         pht(
           'Error while updating the "%s" repository.',
-          $repository->getMonogram()),
+          $display_name),
         $ex);
       phlog($proxy);
 
-      return time() + $min_sleep;
+      $smart_wait = $repository->loadUpdateInterval($min_sleep);
+      return PhabricatorTime::getNow() + $smart_wait;
     }
 
     if (strlen($stderr)) {
       $stderr_msg = pht(
         'Unexpected output while updating repository "%s": %s',
-        $monogram,
+        $display_name,
         $stderr);
       phlog($stderr_msg);
     }
@@ -380,10 +470,10 @@ final class PhabricatorRepositoryPullLocalDaemon
       pht(
         'Based on activity in repository "%s", considering a wait of %s '.
         'seconds before update.',
-        $repository->getMonogram(),
+        $display_name,
         new PhutilNumber($smart_wait)));
 
-    return time() + $smart_wait;
+    return PhabricatorTime::getNow() + $smart_wait;
   }
 
 
@@ -406,6 +496,10 @@ final class PhabricatorRepositoryPullLocalDaemon
     while (($sleep_until - time()) > 0) {
       $sleep_duration = ($sleep_until - time());
 
+      if ($this->shouldHibernate($sleep_duration)) {
+        return true;
+      }
+
       $this->log(
         pht(
           'Sleeping for %s more second(s)...',
@@ -415,7 +509,7 @@ final class PhabricatorRepositoryPullLocalDaemon
 
       if ($this->shouldExit()) {
         $this->log(pht('Awakened from sleep by graceful shutdown!'));
-        return;
+        return false;
       }
 
       if ($this->loadRepositoryUpdateMessages()) {
@@ -423,6 +517,8 @@ final class PhabricatorRepositoryPullLocalDaemon
         break;
       }
     }
+
+    return false;
   }
 
 }

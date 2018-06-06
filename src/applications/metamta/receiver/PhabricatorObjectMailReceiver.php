@@ -49,7 +49,7 @@ abstract class PhabricatorObjectMailReceiver extends PhabricatorMailReceiver {
       return $handler
         ->setMailReceiver($object)
         ->setActor($sender)
-        ->setExcludeMailRecipientPHIDs($mail->loadExcludeMailRecipientPHIDs())
+        ->setExcludeMailRecipientPHIDs($mail->loadAllRecipientPHIDs())
         ->processEmail($mail);
     }
 
@@ -124,9 +124,10 @@ abstract class PhabricatorObjectMailReceiver extends PhabricatorMailReceiver {
       $check_phid = $sender->getPHID();
     }
 
-    $expect_hash = self::computeMailHash($object->getMailKey(), $check_phid);
+    $mail_key = PhabricatorMetaMTAMailProperties::loadMailKey($object);
+    $expect_hash = self::computeMailHash($mail_key, $check_phid);
 
-    if ($expect_hash != $parts['hash']) {
+    if (!phutil_hashes_are_identical($expect_hash, $parts['hash'])) {
       throw new PhabricatorMetaMTAReceivedMailProcessingException(
         MetaMTAReceivedMailStatus::STATUS_HASH_MISMATCH,
         pht(
@@ -201,7 +202,7 @@ abstract class PhabricatorObjectMailReceiver extends PhabricatorMailReceiver {
   public static function computeMailHash($mail_key, $phid) {
     $global_mail_key = PhabricatorEnv::getEnvConfig('phabricator.mail-key');
 
-    $hash = PhabricatorHash::digest($mail_key.$global_mail_key.$phid);
+    $hash = PhabricatorHash::weakDigest($mail_key.$global_mail_key.$phid);
     return substr($hash, 0, 16);
   }
 

@@ -57,6 +57,10 @@ abstract class PhabricatorController extends AphrontController {
     return false;
   }
 
+  public function isGlobalDragAndDropUploadEnabled() {
+    return false;
+  }
+
   public function willBeginExecution() {
     $request = $this->getRequest();
 
@@ -94,21 +98,18 @@ abstract class PhabricatorController extends AphrontController {
 
 
       if (!$user->isLoggedIn()) {
-        $user->attachAlternateCSRFString(PhabricatorHash::digest($phsid));
+        $user->attachAlternateCSRFString(PhabricatorHash::weakDigest($phsid));
       }
 
       $request->setUser($user);
     }
 
-    $locale_code = $user->getTranslation();
-    if ($locale_code) {
-      PhabricatorEnv::setLocaleCode($locale_code);
-    }
+    id(new PhabricatorAuthSessionEngine())
+      ->willServeRequestForUser($user);
 
-    $preferences = $user->loadPreferences();
     if (PhabricatorEnv::getEnvConfig('darkconsole.enabled')) {
-      $dark_console = PhabricatorUserPreferences::PREFERENCE_DARK_CONSOLE;
-      if ($preferences->getPreference($dark_console) ||
+      $dark_console = PhabricatorDarkConsoleSetting::SETTINGKEY;
+      if ($user->getUserSetting($dark_console) ||
          PhabricatorEnv::getEnvConfig('darkconsole.always-on')) {
         $console = new DarkConsoleCore();
         $request->getApplicationConfiguration()->setConsole($console);
@@ -136,27 +137,10 @@ abstract class PhabricatorController extends AphrontController {
     }
 
     if ($this->shouldRequireEnabledUser()) {
-      if ($user->isLoggedIn() && !$user->getIsApproved()) {
-        $controller = new PhabricatorAuthNeedsApprovalController();
-        return $this->delegateToController($controller);
-      }
       if ($user->getIsDisabled()) {
         $controller = new PhabricatorDisabledUserController();
         return $this->delegateToController($controller);
       }
-    }
-
-    $event = new PhabricatorEvent(
-      PhabricatorEventType::TYPE_CONTROLLER_CHECKREQUEST,
-      array(
-        'request' => $request,
-        'controller' => $this,
-      ));
-    $event->setUser($user);
-    PhutilEventEngine::dispatchEvent($event);
-    $checker_controller = $event->getValue('controller');
-    if ($checker_controller != $this) {
-      return $this->delegateToController($checker_controller);
     }
 
     $auth_class = 'PhabricatorAuthApplication';
@@ -170,6 +154,15 @@ abstract class PhabricatorController extends AphrontController {
         $this->setCurrentApplication($auth_application);
         return $this->delegateToController($login_controller);
       }
+    }
+
+    // Require users sign Legalpad documents before we check if they have
+    // MFA. If we don't do this, they can get stuck in a state where they
+    // can't add MFA until they sign, and can't sign until they add MFA.
+    // See T13024 and PHI223.
+    $result = $this->requireLegalpadSignatures();
+    if ($result !== null) {
+      return $result;
     }
 
     // Check if the user needs to configure MFA.
@@ -189,7 +182,8 @@ abstract class PhabricatorController extends AphrontController {
     if ($this->shouldRequireLogin()) {
       // This actually means we need either:
       //   - a valid user, or a public controller; and
-      //   - permission to see the application.
+      //   - permission to see the application; and
+      //   - permission to see at least one Space if spaces are configured.
 
       $allow_public = $this->shouldAllowPublic() &&
                       PhabricatorEnv::getEnvConfig('policy.allow-public');
@@ -212,10 +206,22 @@ abstract class PhabricatorController extends AphrontController {
         }
       }
 
+      // If Spaces are configured, require that the user have access to at
+      // least one. If we don't do this, they'll get confusing error messages
+      // later on.
+      $spaces = PhabricatorSpacesNamespaceQuery::getSpacesExist();
+      if ($spaces) {
+        $viewer_spaces = PhabricatorSpacesNamespaceQuery::getViewerSpaces(
+          $user);
+        if (!$viewer_spaces) {
+          $controller = new PhabricatorSpacesNoAccessController();
+          return $this->delegateToController($controller);
+        }
+      }
+
       // If the user doesn't have access to the application, don't let them use
       // any of its controllers. We query the application in order to generate
       // a policy exception if the viewer doesn't have permission.
-
       $application = $this->getCurrentApplication();
       if ($application) {
         id(new PhabricatorApplicationQuery())
@@ -223,46 +229,15 @@ abstract class PhabricatorController extends AphrontController {
           ->withPHIDs(array($application->getPHID()))
           ->executeOne();
       }
-    }
 
-
-    if (!$this->shouldAllowLegallyNonCompliantUsers()) {
-      $legalpad_class = 'PhabricatorLegalpadApplication';
-      $legalpad = id(new PhabricatorApplicationQuery())
-        ->setViewer($user)
-        ->withClasses(array($legalpad_class))
-        ->withInstalled(true)
-        ->execute();
-      $legalpad = head($legalpad);
-
-      $doc_query = id(new LegalpadDocumentQuery())
-        ->setViewer($user)
-        ->withSignatureRequired(1)
-        ->needViewerSignatures(true);
-
-      if ($user->hasSession() &&
-          !$user->getSession()->getIsPartial() &&
-          !$user->getSession()->getSignedLegalpadDocuments() &&
-          $user->isLoggedIn() &&
-          $legalpad) {
-
-        $sign_docs = $doc_query->execute();
-        $must_sign_docs = array();
-        foreach ($sign_docs as $sign_doc) {
-          if (!$sign_doc->getUserSignature($user->getPHID())) {
-            $must_sign_docs[] = $sign_doc;
-          }
-        }
-        if ($must_sign_docs) {
-          $controller = new LegalpadDocumentSignController();
-          $this->getRequest()->setURIMap(array(
-            'id' => head($must_sign_docs)->getID(),
-          ));
-          $this->setCurrentApplication($legalpad);
+      // If users need approval, require they wait here. We do this near the
+      // end so they can take other actions (like verifying email, signing
+      // documents, and enrolling in MFA) while waiting for an admin to take a
+      // look at things. See T13024 for more discussion.
+      if ($this->shouldRequireEnabledUser()) {
+        if ($user->isLoggedIn() && !$user->getIsApproved()) {
+          $controller = new PhabricatorAuthNeedsApprovalController();
           return $this->delegateToController($controller);
-        } else {
-          $engine = id(new PhabricatorAuthSessionEngine())
-            ->signLegalpadDocuments($user, $sign_docs);
         }
       }
     }
@@ -274,112 +249,15 @@ abstract class PhabricatorController extends AphrontController {
     }
   }
 
-  public function buildStandardPageView() {
-    $view = new PhabricatorStandardPageView();
-    $view->setRequest($this->getRequest());
-    $view->setController($this);
-    return $view;
-  }
-
-  public function buildStandardPageResponse($view, array $data) {
-    $page = $this->buildStandardPageView();
-    $page->appendChild($view);
-    return $this->buildPageResponse($page);
-  }
-
-  private function buildPageResponse($page) {
-    if ($this->getRequest()->isQuicksand()) {
-      $response = id(new AphrontAjaxResponse())
-        ->setContent($page->renderForQuicksand());
-    } else {
-      $response = id(new AphrontWebpageResponse())
-        ->setContent($page->render());
-    }
-
-    return $response;
-  }
-
   public function getApplicationURI($path = '') {
     if (!$this->getCurrentApplication()) {
-      throw new Exception('No application!');
+      throw new Exception(pht('No application!'));
     }
     return $this->getCurrentApplication()->getApplicationURI($path);
   }
 
-  public function buildApplicationPage($view, array $options) {
-    $page = $this->buildStandardPageView();
-
-    $title = PhabricatorEnv::getEnvConfig('phabricator.serious-business') ?
-      'Phabricator' :
-      pht('Bacon Ice Cream for Breakfast');
-
-    $application = $this->getCurrentApplication();
-    $page->setTitle(idx($options, 'title', $title));
-    if ($application) {
-      $page->setApplicationName($application->getName());
-      if ($application->getTitleGlyph()) {
-        $page->setGlyph($application->getTitleGlyph());
-      }
-    }
-
-    if (!($view instanceof AphrontSideNavFilterView)) {
-      $nav = new AphrontSideNavFilterView();
-      $nav->appendChild($view);
-      $view = $nav;
-    }
-
-    $user = $this->getRequest()->getUser();
-    $view->setUser($user);
-
-    $page->appendChild($view);
-
-    $object_phids = idx($options, 'pageObjects', array());
-    if ($object_phids) {
-      $page->appendPageObjects($object_phids);
-      foreach ($object_phids as $object_phid) {
-        PhabricatorFeedStoryNotification::updateObjectNotificationViews(
-          $user,
-          $object_phid);
-      }
-    }
-
-    if (idx($options, 'device', true)) {
-      $page->setDeviceReady(true);
-    }
-
-    $page->setShowFooter(idx($options, 'showFooter', true));
-    $page->setShowChrome(idx($options, 'chrome', true));
-
-    $application_menu = $this->buildApplicationMenu();
-    if ($application_menu) {
-      $page->setApplicationMenu($application_menu);
-    }
-
-    return $this->buildPageResponse($page);
-  }
-
-  public function didProcessRequest($response) {
-    // If a bare DialogView is returned, wrap it in a DialogResponse.
-    if ($response instanceof AphrontDialogView) {
-      $response = id(new AphrontDialogResponse())->setDialog($response);
-    }
-
+  public function willSendResponse(AphrontResponse $response) {
     $request = $this->getRequest();
-    $response->setRequest($request);
-
-    $seen = array();
-    while ($response instanceof AphrontProxyResponse) {
-      $hash = spl_object_hash($response);
-      if (isset($seen[$hash])) {
-        $seen[] = get_class($response);
-        throw new Exception(
-          'Cycle while reducing proxy responses: '.
-          implode(' -> ', $seen));
-      }
-      $seen[$hash] = get_class($response);
-
-      $response = $response->reduceProxyResponse();
-    }
 
     if ($response instanceof AphrontDialogResponse) {
       if (!$request->isAjax() && !$request->isQuicksand()) {
@@ -420,6 +298,7 @@ abstract class PhabricatorController extends AphrontController {
           ->setContent(
             array(
               'redirect' => $response->getURI(),
+              'close' => $response->getCloseDialogBeforeRedirect(),
             ));
       }
     }
@@ -448,7 +327,7 @@ abstract class PhabricatorController extends AphrontController {
 
     $application = $this->getCurrentApplication();
     if ($application) {
-      $icon = $application->getFontIcon();
+      $icon = $application->getIcon();
       if (!$icon) {
         $icon = 'fa-puzzle';
       }
@@ -496,7 +375,7 @@ abstract class PhabricatorController extends AphrontController {
     }
 
     $icon = id(new PHUIIconView())
-      ->setIconFont($icon_name);
+      ->setIcon($icon_name);
 
     require_celerity_resource('policy-css');
 
@@ -538,6 +417,65 @@ abstract class PhabricatorController extends AphrontController {
     return id(new AphrontDialogView())
       ->setUser($this->getRequest()->getUser())
       ->setSubmitURI($submit_uri);
+  }
+
+  public function newPage() {
+    $page = id(new PhabricatorStandardPageView())
+      ->setRequest($this->getRequest())
+      ->setController($this)
+      ->setDeviceReady(true);
+
+    $application = $this->getCurrentApplication();
+    if ($application) {
+      $page->setApplicationName($application->getName());
+      if ($application->getTitleGlyph()) {
+        $page->setGlyph($application->getTitleGlyph());
+      }
+    }
+
+    $viewer = $this->getRequest()->getUser();
+    if ($viewer) {
+      $page->setUser($viewer);
+    }
+
+    return $page;
+  }
+
+  public function newApplicationMenu() {
+    return id(new PHUIApplicationMenuView())
+      ->setViewer($this->getViewer());
+  }
+
+  public function newCurtainView($object = null) {
+    $viewer = $this->getViewer();
+
+    $action_id = celerity_generate_unique_node_id();
+
+    $action_list = id(new PhabricatorActionListView())
+      ->setViewer($viewer)
+      ->setID($action_id);
+
+    // NOTE: Applications (objects of class PhabricatorApplication) can't
+    // currently be set here, although they don't need any of the extensions
+    // anyway. This should probably work differently than it does, though.
+    if ($object) {
+      if ($object instanceof PhabricatorLiskDAO) {
+        $action_list->setObject($object);
+      }
+    }
+
+    $curtain = id(new PHUICurtainView())
+      ->setViewer($viewer)
+      ->setActionList($action_list);
+
+    if ($object) {
+      $panels = PHUICurtainExtension::buildExtensionPanels($viewer, $object);
+      foreach ($panels as $panel) {
+        $curtain->addPanel($panel);
+      }
+    }
+
+    return $curtain;
   }
 
   protected function buildTransactionTimeline(
@@ -585,6 +523,110 @@ abstract class PhabricatorController extends AphrontController {
     $object->willRenderTimeline($timeline, $this->getRequest());
 
     return $timeline;
+  }
+
+
+  public function buildApplicationCrumbsForEditEngine() {
+    // TODO: This is kind of gross, I'm basically just making this public so
+    // I can use it in EditEngine. We could do this without making it public
+    // by using controller delegation, or make it properly public.
+    return $this->buildApplicationCrumbs();
+  }
+
+  private function requireLegalpadSignatures() {
+    if (!$this->shouldRequireLogin()) {
+      return null;
+    }
+
+    if ($this->shouldAllowLegallyNonCompliantUsers()) {
+      return null;
+    }
+
+    $viewer = $this->getViewer();
+
+    if (!$viewer->hasSession()) {
+      return null;
+    }
+
+    $session = $viewer->getSession();
+    if ($session->getIsPartial()) {
+      // If the user hasn't made it through MFA yet, require they survive
+      // MFA first.
+      return null;
+    }
+
+    if ($session->getSignedLegalpadDocuments()) {
+      return null;
+    }
+
+    if (!$viewer->isLoggedIn()) {
+      return null;
+    }
+
+    $must_sign_docs = array();
+    $sign_docs = array();
+
+    $legalpad_class = 'PhabricatorLegalpadApplication';
+    $legalpad_installed = PhabricatorApplication::isClassInstalledForViewer(
+      $legalpad_class,
+      $viewer);
+    if ($legalpad_installed) {
+      $sign_docs = id(new LegalpadDocumentQuery())
+        ->setViewer($viewer)
+        ->withSignatureRequired(1)
+        ->needViewerSignatures(true)
+        ->setOrder('oldest')
+        ->execute();
+
+      foreach ($sign_docs as $sign_doc) {
+        if (!$sign_doc->getUserSignature($viewer->getPHID())) {
+          $must_sign_docs[] = $sign_doc;
+        }
+      }
+    }
+
+    if (!$must_sign_docs) {
+      // If nothing needs to be signed (either because there are no documents
+      // which require a signature, or because the user has already signed
+      // all of them) mark the session as good and continue.
+      $engine = id(new PhabricatorAuthSessionEngine())
+        ->signLegalpadDocuments($viewer, $sign_docs);
+
+      return null;
+    }
+
+    $request = $this->getRequest();
+    $request->setURIMap(
+      array(
+        'id' => head($must_sign_docs)->getID(),
+      ));
+
+    $application = PhabricatorApplication::getByClass($legalpad_class);
+    $this->setCurrentApplication($application);
+
+    $controller = new LegalpadDocumentSignController();
+    return $this->delegateToController($controller);
+  }
+
+
+/* -(  Deprecated  )--------------------------------------------------------- */
+
+
+  /**
+   * DEPRECATED. Use @{method:newPage}.
+   */
+  public function buildStandardPageView() {
+    return $this->newPage();
+  }
+
+
+  /**
+   * DEPRECATED. Use @{method:newPage}.
+   */
+  public function buildStandardPageResponse($view, array $data) {
+    $page = $this->buildStandardPageView();
+    $page->appendChild($view);
+    return $page->produceAphrontResponse();
   }
 
 }

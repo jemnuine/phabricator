@@ -8,8 +8,14 @@ require_once $root.'/scripts/__init_script__.php';
 
 $ssh_log = PhabricatorSSHLog::getLog();
 
+$request_identifier = Filesystem::readRandomCharacters(12);
+$ssh_log->setData(
+  array(
+    'Q' => $request_identifier,
+  ));
+
 $args = new PhutilArgumentParser($argv);
-$args->setTagline('execute SSH requests');
+$args->setTagline(pht('execute SSH requests'));
 $args->setSynopsis(<<<EOSYNOPSIS
 **ssh-exec** --phabricator-ssh-user __user__ [--ssh-command __commmand__]
 **ssh-exec** --phabricator-ssh-device __device__ [--ssh-command __commmand__]
@@ -50,7 +56,8 @@ $args->parse(
       'help' => pht(
         'Provide a command to execute. This makes testing this script '.
         'easier. When running normally, the command is read from the '.
-        'environment (SSH_ORIGINAL_COMMAND), which is populated by sshd.'),
+        'environment (%s), which is populated by sshd.',
+        'SSH_ORIGINAL_COMMAND'),
     ),
   ));
 
@@ -84,9 +91,11 @@ try {
   if ($user_name && $device_name) {
     throw new Exception(
       pht(
-        'The --phabricator-ssh-user and --phabricator-ssh-device flags are '.
-        'mutually exclusive. You can not authenticate as both a user ("%s") '.
-        'and a device ("%s"). Specify one or the other, but not both.',
+        'The %s and %s flags are mutually exclusive. You can not '.
+        'authenticate as both a user ("%s") and a device ("%s"). '.
+        'Specify one or the other, but not both.',
+        '--phabricator-ssh-user',
+        '--phabricator-ssh-device',
         $user_name,
         $device_name));
   } else if (strlen($user_name)) {
@@ -100,13 +109,17 @@ try {
           'Invalid username ("%s"). There is no user with this username.',
           $user_name));
     }
+
+    id(new PhabricatorAuthSessionEngine())
+      ->willServeRequestForUser($user);
   } else if (strlen($device_name)) {
     if (!$remote_address) {
       throw new Exception(
         pht(
-          'Unable to identify remote address from the SSH_CLIENT environment '.
+          'Unable to identify remote address from the %s environment '.
           'variable. Device authentication is accepted only from trusted '.
-          'sources.'));
+          'sources.',
+          'SSH_CLIENT'));
     }
 
     if (!PhabricatorEnv::isClusterAddress($remote_address)) {
@@ -125,7 +138,7 @@ try {
       throw new Exception(
         pht(
           'Invalid device name ("%s"). There is no device with this name.',
-          $device->getName()));
+          $device_name));
     }
 
     // We're authenticated as a device, but we're going to read the user out of
@@ -134,8 +147,9 @@ try {
   } else {
     throw new Exception(
       pht(
-        'This script must be invoked with either the --phabricator-ssh-user '.
-        'or --phabricator-ssh-device flag.'));
+        'This script must be invoked with either the %s or %s flag.',
+        '--phabricator-ssh-user',
+        '--phabricator-ssh-device'));
   }
 
   if ($args->getArg('ssh-command')) {
@@ -148,48 +162,54 @@ try {
     ->splitArguments($original_command);
 
   if ($device) {
-    $act_as_name = array_shift($original_argv);
-    if (!preg_match('/^@/', $act_as_name)) {
-      throw new Exception(
-        pht(
-          'Commands executed by devices must identify an acting user in the '.
-          'first command argument. This request was not constructed '.
-          'properly.'));
+    // If we're authenticating as a device, the first argument may be a
+    // "@username" argument to act as a particular user.
+    $first_argument = head($original_argv);
+    if (preg_match('/^@/', $first_argument)) {
+      $act_as_name = array_shift($original_argv);
+      $act_as_name = substr($act_as_name, 1);
+      $user = id(new PhabricatorPeopleQuery())
+        ->setViewer(PhabricatorUser::getOmnipotentUser())
+        ->withUsernames(array($act_as_name))
+        ->executeOne();
+      if (!$user) {
+        throw new Exception(
+          pht(
+            'Device request identifies an acting user with an invalid '.
+            'username ("%s"). There is no user with this username.',
+            $act_as_name));
+      }
+    } else {
+      $user = PhabricatorUser::getOmnipotentUser();
     }
+  }
 
-    $act_as_name = substr($act_as_name, 1);
-    $user = id(new PhabricatorPeopleQuery())
-      ->setViewer(PhabricatorUser::getOmnipotentUser())
-      ->withUsernames(array($act_as_name))
-      ->executeOne();
-    if (!$user) {
-      throw new Exception(
-        pht(
-          'Device request identifies an acting user with an invalid '.
-          'username ("%s"). There is no user with this username.',
-          $act_as_name));
-    }
+  if ($user->isOmnipotent()) {
+    $user_name = 'device/'.$device->getName();
+  } else {
+    $user_name = $user->getUsername();
   }
 
   $ssh_log->setData(
     array(
-      'u' => $user->getUsername(),
+      'u' => $user_name,
       'P' => $user->getPHID(),
     ));
 
-  if (!$user->isUserActivated()) {
-    throw new Exception(
-      pht(
-        'Your account ("%s") is not activated. Visit the web interface '.
-        'for more information.',
-        $user->getUsername()));
+  if (!$device) {
+    if (!$user->canEstablishSSHSessions()) {
+      throw new Exception(
+        pht(
+          'Your account ("%s") does not have permission to establish SSH '.
+          'sessions. Visit the web interface for more information.',
+          $user_name));
+    }
   }
 
-  $workflows = id(new PhutilSymbolLoader())
+  $workflows = id(new PhutilClassMapQuery())
     ->setAncestorClass('PhabricatorSSHWorkflow')
-    ->loadObjects();
-
-  $workflow_names = mpull($workflows, 'getName', 'getName');
+    ->setUniqueMethod('getName')
+    ->execute();
 
   if (!$original_argv) {
     throw new Exception(
@@ -199,11 +219,13 @@ try {
         "You haven't specified a command to run. This means you're requesting ".
         "an interactive shell, but Phabricator does not provide an ".
         "interactive shell over SSH.\n\n".
-        "Usually, you should run a command like `git clone` or `hg push` ".
+        "Usually, you should run a command like `%s` or `%s` ".
         "rather than connecting directly with SSH.\n\n".
         "Supported commands are: %s.",
-        $user->getUsername(),
-        implode(', ', $workflow_names)));
+        $user_name,
+        'git clone',
+        'hg push',
+        implode(', ', array_keys($workflows))));
   }
 
   $log_argv = implode(' ', $original_argv);
@@ -224,28 +246,29 @@ try {
 
   $parsed_args = new PhutilArgumentParser($parseable_argv);
 
-  if (empty($workflow_names[$command])) {
-    throw new Exception('Invalid command.');
+  if (empty($workflows[$command])) {
+    throw new Exception(pht('Invalid command.'));
   }
 
   $workflow = $parsed_args->parseWorkflows($workflows);
-  $workflow->setUser($user);
+  $workflow->setSSHUser($user);
   $workflow->setOriginalArguments($original_argv);
   $workflow->setIsClusterRequest($is_cluster_request);
+  $workflow->setRequestIdentifier($request_identifier);
 
   $sock_stdin = fopen('php://stdin', 'r');
   if (!$sock_stdin) {
-    throw new Exception('Unable to open stdin.');
+    throw new Exception(pht('Unable to open stdin.'));
   }
 
   $sock_stdout = fopen('php://stdout', 'w');
   if (!$sock_stdout) {
-    throw new Exception('Unable to open stdout.');
+    throw new Exception(pht('Unable to open stdout.'));
   }
 
   $sock_stderr = fopen('php://stderr', 'w');
   if (!$sock_stderr) {
-    throw new Exception('Unable to open stderr.');
+    throw new Exception(pht('Unable to open stderr.'));
   }
 
   $socket_channel = new PhutilSocketChannel(

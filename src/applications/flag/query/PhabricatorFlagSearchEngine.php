@@ -100,11 +100,13 @@ final class PhabricatorFlagSearchEngine
   }
 
   private function getObjectFilterOptions() {
-    $objects = id(new PhutilSymbolLoader())
+    $objects = id(new PhutilClassMapQuery())
       ->setAncestorClass('PhabricatorFlaggableInterface')
-      ->loadObjects();
+      ->execute();
+
     $all_types = PhabricatorPHIDType::getAllTypes();
     $options = array();
+
     foreach ($objects as $object) {
       $phid = $object->generatePHID();
       $phid_type = phid_get_type($phid);
@@ -152,7 +154,7 @@ final class PhabricatorFlagSearchEngine
         ->setHeader($flag->getHandle()->getFullName())
         ->setHref($flag->getHandle()->getURI());
 
-      $status_open = PhabricatorObjectHandleStatus::STATUS_OPEN;
+      $status_open = PhabricatorObjectHandle::STATUS_OPEN;
       if ($flag->getHandle()->getStatus() != $status_open) {
         $item->setDisabled(true);
       }
@@ -180,7 +182,12 @@ final class PhabricatorFlagSearchEngine
       $list->addItem($item);
     }
 
-    return $list;
+    $result = new PhabricatorApplicationSearchResultView();
+    $result->setObjectList($list);
+    $result->setNoDataString(pht('No flags found.'));
+
+    return $result;
+
   }
 
 

@@ -14,7 +14,7 @@ final class PhabricatorFlagsApplication extends PhabricatorApplication {
     return '/flag/';
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-flag';
   }
 
@@ -30,29 +30,6 @@ final class PhabricatorFlagsApplication extends PhabricatorApplication {
 
   public function getApplicationGroup() {
     return self::GROUP_UTILITIES;
-  }
-
-  public function loadStatus(PhabricatorUser $user) {
-    $status = array();
-
-    $flags = id(new PhabricatorFlagQuery())
-      ->setViewer($user)
-      ->withOwnerPHIDs(array($user->getPHID()))
-      ->setLimit(self::MAX_STATUS_ITEMS)
-      ->execute();
-
-    $count = count($flags);
-    $count_str = self::formatStatusCount(
-      $count,
-      '%s Flagged Objects',
-      '%d Flagged Object(s)');
-    $type = PhabricatorApplicationStatusView::TYPE_WARNING;
-    $status[] = id(new PhabricatorApplicationStatusView())
-      ->setType($type)
-      ->setText($count_str)
-      ->setCount($count);
-
-    return $status;
   }
 
   public function getRoutes() {

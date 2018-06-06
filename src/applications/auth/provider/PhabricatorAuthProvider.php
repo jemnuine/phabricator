@@ -1,6 +1,6 @@
 <?php
 
-abstract class PhabricatorAuthProvider {
+abstract class PhabricatorAuthProvider extends Phobject {
 
   private $providerConfig;
 
@@ -15,8 +15,7 @@ abstract class PhabricatorAuthProvider {
 
   public function getProviderConfig() {
     if ($this->providerConfig === null) {
-      throw new Exception(
-        'Call attachProviderConfig() before getProviderConfig()!');
+      throw new PhutilInvalidStateException('attachProviderConfig');
     }
     return $this->providerConfig;
   }
@@ -56,16 +55,9 @@ abstract class PhabricatorAuthProvider {
   }
 
   public static function getAllBaseProviders() {
-    static $providers;
-
-    if ($providers === null) {
-      $objects = id(new PhutilSymbolLoader())
-        ->setAncestorClass(__CLASS__)
-        ->loadObjects();
-      $providers = $objects;
-    }
-
-    return $providers;
+    return id(new PhutilClassMapQuery())
+      ->setAncestorClass(__CLASS__)
+      ->execute();
   }
 
   public static function getAllProviders() {
@@ -129,6 +121,10 @@ abstract class PhabricatorAuthProvider {
   }
 
   public function shouldAllowRegistration() {
+    if (!$this->shouldAllowLogin()) {
+      return false;
+    }
+
     return $this->getProviderConfig()->getShouldAllowRegistration();
   }
 
@@ -196,7 +192,7 @@ abstract class PhabricatorAuthProvider {
 
   protected function loadOrCreateAccount($account_id) {
     if (!strlen($account_id)) {
-      throw new Exception('loadOrCreateAccount(...): empty account ID!');
+      throw new Exception(pht('Empty account ID!'));
     }
 
     $adapter = $this->getAdapter();
@@ -204,14 +200,18 @@ abstract class PhabricatorAuthProvider {
 
     if (!strlen($adapter->getAdapterType())) {
       throw new Exception(
-        "AuthAdapter (of class '{$adapter_class}') has an invalid ".
-        "implementation: no adapter type.");
+        pht(
+          "AuthAdapter (of class '%s') has an invalid implementation: ".
+          "no adapter type.",
+          $adapter_class));
     }
 
     if (!strlen($adapter->getAdapterDomain())) {
       throw new Exception(
-        "AuthAdapter (of class '{$adapter_class}') has an invalid ".
-        "implementation: no adapter domain.");
+        pht(
+          "AuthAdapter (of class '%s') has an invalid implementation: ".
+          "no adapter domain.",
+          $adapter_class));
     }
 
     $account = id(new PhabricatorExternalAccount())->loadOneWhere(
@@ -389,7 +389,7 @@ abstract class PhabricatorAuthProvider {
    * @param   AphrontRequest  HTTP request.
    * @param   string          Request mode string.
    * @param   map             Additional parameters, see above.
-   * @return  wild            Login button.
+   * @return  wild            Log in button.
    */
   protected function renderStandardLoginButton(
     AphrontRequest $request,
@@ -414,9 +414,9 @@ abstract class PhabricatorAuthProvider {
     } else if ($mode == 'invite') {
       $button_text = pht('Register Account');
     } else if ($this->shouldAllowRegistration()) {
-      $button_text = pht('Login or Register');
+      $button_text = pht('Log In or Register');
     } else {
-      $button_text = pht('Login');
+      $button_text = pht('Log In');
     }
 
     $icon = id(new PHUIIconView())
@@ -447,6 +447,13 @@ abstract class PhabricatorAuthProvider {
         ));
     }
 
+    $static_response = CelerityAPI::getStaticResourceResponse();
+    $static_response->addContentSecurityPolicyURI('form-action', (string)$uri);
+
+    foreach ($this->getContentSecurityPolicyFormActions() as $csp_uri) {
+      $static_response->addContentSecurityPolicyURI('form-action', $csp_uri);
+    }
+
     return phabricator_form(
       $viewer,
       array(
@@ -464,15 +471,17 @@ abstract class PhabricatorAuthProvider {
   public function getAuthCSRFCode(AphrontRequest $request) {
     $phcid = $request->getCookie(PhabricatorCookies::COOKIE_CLIENTID);
     if (!strlen($phcid)) {
-      throw new Exception(
+      throw new AphrontMalformedRequestException(
+        pht('Missing Client ID Cookie'),
         pht(
           'Your browser did not submit a "%s" cookie with client state '.
           'information in the request. Check that cookies are enabled. '.
           'If this problem persists, you may need to clear your cookies.',
-          PhabricatorCookies::COOKIE_CLIENTID));
+          PhabricatorCookies::COOKIE_CLIENTID),
+        true);
     }
 
-    return PhabricatorHash::digest($phcid);
+    return PhabricatorHash::weakDigest($phcid);
   }
 
   protected function verifyAuthCSRFCode(AphrontRequest $request, $actual) {
@@ -486,13 +495,25 @@ abstract class PhabricatorAuthProvider {
           'problem persists, you may need to clear your cookies.'));
     }
 
-    if ($actual !== $expect) {
+    if (!phutil_hashes_are_identical($actual, $expect)) {
       throw new Exception(
         pht(
           'The authentication provider did not return the correct client '.
           'state parameter in its response. If this problem persists, you may '.
           'need to clear your cookies.'));
     }
+  }
+
+  public function supportsAutoLogin() {
+    return false;
+  }
+
+  public function getAutoLoginURI(AphrontRequest $request) {
+    throw new PhutilMethodNotImplementedException();
+  }
+
+  protected function getContentSecurityPolicyFormActions() {
+    return array();
   }
 
 }

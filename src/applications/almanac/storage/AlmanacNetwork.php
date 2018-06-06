@@ -5,7 +5,9 @@ final class AlmanacNetwork
   implements
     PhabricatorApplicationTransactionInterface,
     PhabricatorPolicyInterface,
-    PhabricatorDestructibleInterface {
+    PhabricatorDestructibleInterface,
+    PhabricatorNgramsInterface,
+    PhabricatorConduitResultInterface {
 
   protected $name;
   protected $mailKey;
@@ -22,8 +24,15 @@ final class AlmanacNetwork
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_COLUMN_SCHEMA => array(
-        'name' => 'text128',
+        'name' => 'sort128',
         'mailKey' => 'bytes20',
+
+      ),
+      self::CONFIG_KEY_SCHEMA => array(
+        'key_name' => array(
+            'columns' => array('name'),
+            'unique' => true,
+          ),
       ),
     ) + parent::getConfiguration();
   }
@@ -91,10 +100,6 @@ final class AlmanacNetwork
     return false;
   }
 
-  public function describeAutomaticCapability($capability) {
-    return null;
-  }
-
 
 /* -(  PhabricatorDestructibleInterface  )----------------------------------- */
 
@@ -103,7 +108,7 @@ final class AlmanacNetwork
     PhabricatorDestructionEngine $engine) {
 
     $interfaces = id(new AlmanacInterfaceQuery())
-      ->setViewer(PhabricatorUser::getOmnipotentUser())
+      ->setViewer($engine->getViewer())
       ->withNetworkPHIDs(array($this->getPHID()))
       ->execute();
 
@@ -112,6 +117,40 @@ final class AlmanacNetwork
     }
 
     $this->delete();
+  }
+
+
+/* -(  PhabricatorNgramsInterface  )----------------------------------------- */
+
+
+  public function newNgrams() {
+    return array(
+      id(new AlmanacNetworkNameNgrams())
+        ->setValue($this->getName()),
+    );
+  }
+
+
+/* -(  PhabricatorConduitResultInterface  )---------------------------------- */
+
+
+  public function getFieldSpecificationsForConduit() {
+    return array(
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('name')
+        ->setType('string')
+        ->setDescription(pht('The name of the network.')),
+    );
+  }
+
+  public function getFieldValuesForConduit() {
+    return array(
+      'name' => $this->getName(),
+    );
+  }
+
+  public function getConduitSearchAttachments() {
+    return array();
   }
 
 }

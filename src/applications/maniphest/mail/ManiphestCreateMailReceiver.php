@@ -3,8 +3,8 @@
 final class ManiphestCreateMailReceiver extends PhabricatorMailReceiver {
 
   public function isEnabled() {
-    $app_class = 'PhabricatorManiphestApplication';
-    return PhabricatorApplication::isClassInstalled($app_class);
+    return PhabricatorApplication::isClassInstalled(
+      'PhabricatorManiphestApplication');
   }
 
   public function canAcceptMail(PhabricatorMetaMTAReceivedMail $mail) {
@@ -24,7 +24,7 @@ final class ManiphestCreateMailReceiver extends PhabricatorMailReceiver {
 
     $handler->setActor($sender);
     $handler->setExcludeMailRecipientPHIDs(
-      $mail->loadExcludeMailRecipientPHIDs());
+      $mail->loadAllRecipientPHIDs());
     if ($this->getApplicationEmail()) {
       $handler->setApplicationEmail($this->getApplicationEmail());
     }

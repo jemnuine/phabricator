@@ -3,19 +3,13 @@
 final class PhabricatorDashboardRemovePanelController
   extends PhabricatorDashboardController {
 
-  private $id;
-
-  public function willProcessRequest(array $data) {
-    $this->id = idx($data, 'id');
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $viewer = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $id = $request->getURIData('id');
 
     $dashboard = id(new PhabricatorDashboardQuery())
       ->setViewer($viewer)
-      ->withIDs(array($this->id))
+      ->withIDs(array($id))
       ->requireCapabilities(
         array(
           PhabricatorPolicyCapability::CAN_VIEW,
@@ -26,17 +20,30 @@ final class PhabricatorDashboardRemovePanelController
       return new Aphront404Response();
     }
 
+    // NOTE: If you can edit a dashboard, you can remove panels from it even
+    // if you don't have permission to see them or they aren't valid. We only
+    // require that the panel be present on the dashboard.
+
     $v_panel = $request->getStr('panelPHID');
-    $panel = id(new PhabricatorDashboardPanelQuery())
-      ->setViewer($viewer)
-      ->withPHIDs(array($v_panel))
-      ->executeOne();
-    if (!$panel) {
+
+    $panel_on_dashboard = false;
+    $layout = $dashboard->getLayoutConfigObject();
+    $columns = $layout->getPanelLocations();
+    foreach ($columns as $column) {
+      foreach ($column as $column_panel_phid) {
+        if ($column_panel_phid == $v_panel) {
+          $panel_on_dashboard = true;
+          break;
+        }
+      }
+    }
+
+    if (!$panel_on_dashboard) {
       return new Aphront404Response();
     }
 
     $redirect_uri = $this->getApplicationURI(
-      'manage/'.$dashboard->getID().'/');
+      'arrange/'.$dashboard->getID().'/');
     $layout_config = $dashboard->getLayoutConfigObject();
 
     if ($request->isFormPost()) {
@@ -49,11 +56,11 @@ final class PhabricatorDashboardRemovePanelController
           ->setNewValue(
             array(
               '-' => array(
-                $panel->getPHID() => $panel->getPHID(),
+                $v_panel => $v_panel,
               ),
             ));
 
-      $layout_config->removePanel($panel->getPHID());
+      $layout_config->removePanel($v_panel);
       $dashboard->setLayoutConfigFromObject($layout_config);
 
       $editor = id(new PhabricatorDashboardTransactionEditor())
@@ -73,7 +80,7 @@ final class PhabricatorDashboardRemovePanelController
       ->appendChild(pht('Are you sure you want to remove this panel?'));
 
     return $this->newDialog()
-      ->setTitle(pht('Remove Panel %s', $panel->getMonogram()))
+      ->setTitle(pht('Remove Panel'))
       ->appendChild($form->buildLayoutView())
       ->addCancelButton($redirect_uri)
       ->addSubmitButton(pht('Remove Panel'));

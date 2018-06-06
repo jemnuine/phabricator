@@ -10,7 +10,7 @@ final class PhabricatorMentionRemarkupRule extends PhutilRemarkupRule {
 
   // NOTE: The negative lookbehind prevents matches like "mail@lists", while
   // allowing constructs like "@tomo/@mroch". Since we now allow periods in
-  // usernames, we can't resonably distinguish that "@company.com" isn't a
+  // usernames, we can't reasonably distinguish that "@company.com" isn't a
   // username, so we'll incorrectly pick it up, but there's little to be done
   // about that. We forbid terminal periods so that we can correctly capture
   // "@joe" instead of "@joe." in "Hey, @joe.".
@@ -26,7 +26,7 @@ final class PhabricatorMentionRemarkupRule extends PhutilRemarkupRule {
       $text);
   }
 
-  protected function markupMention($matches) {
+  protected function markupMention(array $matches) {
     $engine = $this->getEngine();
 
     if ($engine->isTextMode()) {
@@ -72,15 +72,8 @@ final class PhabricatorMentionRemarkupRule extends PhutilRemarkupRule {
     $users = id(new PhabricatorPeopleQuery())
       ->setViewer($this->getEngine()->getConfig('viewer'))
       ->withUsernames($usernames)
+      ->needAvailability(true)
       ->execute();
-
-    if ($users) {
-      $user_statuses = id(new PhabricatorCalendarEvent())
-        ->loadCurrentStatuses(mpull($users, 'getPHID'));
-      $user_statuses = mpull($user_statuses, null, 'getUserPHID');
-    } else {
-      $user_statuses = array();
-    }
 
     $actual_users = array();
 
@@ -100,7 +93,7 @@ final class PhabricatorMentionRemarkupRule extends PhutilRemarkupRule {
 
       if ($exists) {
         $user = $actual_users[$username];
-        Javelin::initBehavior('phabricator-hovercards');
+        Javelin::initBehavior('phui-hovercards');
 
         // Check if the user has view access to the object she was mentioned in
         if ($context_object
@@ -143,6 +136,10 @@ final class PhabricatorMentionRemarkupRule extends PhutilRemarkupRule {
             ),
             '@'.$user->getUserName());
         } else {
+          if ($engine->getConfig('uri.full')) {
+            $user_href = PhabricatorEnv::getURI($user_href);
+          }
+
           $tag = id(new PHUITagView())
             ->setType(PHUITagView::TYPE_PERSON)
             ->setPHID($user->getPHID())
@@ -153,15 +150,16 @@ final class PhabricatorMentionRemarkupRule extends PhutilRemarkupRule {
             $tag->addClass('phabricator-remarkup-mention-nopermission');
           }
 
-          if (!$user->isUserActivated()) {
+          if ($user->getIsDisabled()) {
             $tag->setDotColor(PHUITagView::COLOR_GREY);
+          } else if (!$user->isResponsive()) {
+            $tag->setDotColor(PHUITagView::COLOR_VIOLET);
           } else {
-            $status = idx($user_statuses, $user->getPHID());
-            if ($status) {
-              $status = $status->getStatus();
-              if ($status == PhabricatorCalendarEvent::STATUS_AWAY) {
+            if ($user->getAwayUntil()) {
+              $away = PhabricatorCalendarEventInvitee::AVAILABILITY_AWAY;
+              if ($user->getDisplayAvailability() == $away) {
                 $tag->setDotColor(PHUITagView::COLOR_RED);
-              } else if ($status == PhabricatorCalendarEvent::STATUS_AWAY) {
+              } else {
                 $tag->setDotColor(PHUITagView::COLOR_ORANGE);
               }
             }

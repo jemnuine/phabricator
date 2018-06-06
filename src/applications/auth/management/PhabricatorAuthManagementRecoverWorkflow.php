@@ -8,8 +8,9 @@ final class PhabricatorAuthManagementRecoverWorkflow
       ->setName('recover')
       ->setExamples('**recover** __username__')
       ->setSynopsis(
-        'Recover access to an administrative account if you have locked '.
-        'yourself out of Phabricator.')
+        pht(
+          'Recover access to an account if you have locked yourself out '.
+          'of Phabricator.'))
       ->setArguments(
         array(
           'username' => array(
@@ -20,22 +21,6 @@ final class PhabricatorAuthManagementRecoverWorkflow
   }
 
   public function execute(PhutilArgumentParser $args) {
-
-    $can_recover = id(new PhabricatorPeopleQuery())
-      ->setViewer($this->getViewer())
-      ->withIsAdmin(true)
-      ->execute();
-    if (!$can_recover) {
-      throw new PhutilArgumentUsageException(
-        pht(
-          'This Phabricator installation has no recoverable administrator '.
-          'accounts. You can use `bin/accountadmin` to create a new '.
-          'administrator account or make an existing user an administrator.'));
-    }
-    $can_recover = mpull($can_recover, 'getUsername');
-    sort($can_recover);
-    $can_recover = implode(', ', $can_recover);
-
     $usernames = $args->getArg('username');
     if (!$usernames) {
       throw new PhutilArgumentUsageException(
@@ -55,18 +40,18 @@ final class PhabricatorAuthManagementRecoverWorkflow
     if (!$user) {
       throw new PhutilArgumentUsageException(
         pht(
-          'No such user "%s". Recoverable administrator accounts are: %s.',
-          $username,
-          $can_recover));
+          'No such user "%s" to recover.',
+          $username));
     }
 
-    if (!$user->getIsAdmin()) {
+    if (!$user->canEstablishWebSessions()) {
       throw new PhutilArgumentUsageException(
         pht(
-          'You can only recover administrator accounts, but %s is not an '.
-          'administrator. Recoverable administrator accounts are: %s.',
-          $username,
-          $can_recover));
+          'This account ("%s") can not establish web sessions, so it is '.
+          'not possible to generate a functional recovery link. Special '.
+          'accounts like daemons and mailing lists can not log in via the '.
+          'web UI.',
+          $username));
     }
 
     $engine = new PhabricatorAuthSessionEngine();
@@ -85,10 +70,11 @@ final class PhabricatorAuthManagementRecoverWorkflow
     $console->writeOut('    %s', $onetime_uri);
     $console->writeOut("\n\n");
     $console->writeOut(
+      "%s\n",
       pht(
         'After logging in, you can use the "Auth" application to add or '.
         'restore authentication providers and allow normal logins to '.
-        'succeed.')."\n");
+        'succeed.'));
 
     return 0;
   }

@@ -1,6 +1,6 @@
 <?php
 
-final class HeraldRuleTranscript {
+final class HeraldRuleTranscript extends Phobject {
 
   protected $ruleID;
   protected $result;
@@ -8,6 +8,12 @@ final class HeraldRuleTranscript {
 
   protected $ruleName;
   protected $ruleOwner;
+
+  const RESULT_FORBIDDEN = 'forbidden';
+
+  public function isForbidden() {
+    return ($this->getResult() === self::RESULT_FORBIDDEN);
+  }
 
   public function setResult($result) {
     $this->result = $result;

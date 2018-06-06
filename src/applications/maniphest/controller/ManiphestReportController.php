@@ -4,13 +4,9 @@ final class ManiphestReportController extends ManiphestController {
 
   private $view;
 
-  public function willProcessRequest(array $data) {
-    $this->view = idx($data, 'view');
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $this->getViewer();
+    $this->view = $request->getURIData('view');
 
     if ($request->isFormPost()) {
       $uri = $request->getRequestURI();
@@ -49,23 +45,22 @@ final class ManiphestReportController extends ManiphestController {
         return new Aphront404Response();
     }
 
-    $nav->appendChild($core);
-    $nav->setCrumbs(
-      $this->buildApplicationCrumbs()
-        ->setBorder(true)
-        ->addTextCrumb(pht('Reports')));
+    $crumbs = $this->buildApplicationCrumbs()
+      ->addTextCrumb(pht('Reports'));
 
-    return $this->buildApplicationPage(
-      $nav,
-      array(
-        'title' => pht('Maniphest Reports'),
-        'device' => false,
-      ));
+    $nav->appendChild($core);
+    $title = pht('Maniphest Reports');
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->setNavigation($nav);
+
   }
 
   public function renderBurn() {
     $request = $this->getRequest();
-    $user = $request->getUser();
+    $viewer = $request->getUser();
 
     $handle = null;
 
@@ -80,6 +75,7 @@ final class ManiphestReportController extends ManiphestController {
     $conn = $table->establishConnection('r');
 
     $joins = '';
+    $create_joins = '';
     if ($project_phid) {
       $joins = qsprintf(
         $conn,
@@ -89,16 +85,83 @@ final class ManiphestReportController extends ManiphestController {
         PhabricatorEdgeConfig::TABLE_NAME_EDGE,
         PhabricatorProjectObjectHasProjectEdgeType::EDGECONST,
         $project_phid);
+      $create_joins = qsprintf(
+        $conn,
+        'JOIN %T p ON p.src = t.phid AND p.type = %d AND p.dst = %s',
+        PhabricatorEdgeConfig::TABLE_NAME_EDGE,
+        PhabricatorProjectObjectHasProjectEdgeType::EDGECONST,
+        $project_phid);
     }
 
     $data = queryfx_all(
       $conn,
-      'SELECT x.oldValue, x.newValue, x.dateCreated FROM %T x %Q
-        WHERE transactionType = %s
+      'SELECT x.transactionType, x.oldValue, x.newValue, x.dateCreated
+        FROM %T x %Q
+        WHERE transactionType IN (%Ls)
         ORDER BY x.dateCreated ASC',
       $table->getTableName(),
       $joins,
-      ManiphestTransaction::TYPE_STATUS);
+      array(
+        ManiphestTaskStatusTransaction::TRANSACTIONTYPE,
+        ManiphestTaskMergedIntoTransaction::TRANSACTIONTYPE,
+      ));
+
+    // See PHI273. After the move to EditEngine, we no longer create a
+    // "status" transaction if a task is created directly into the default
+    // status. This likely impacted API/email tasks after 2016 and all other
+    // tasks after late 2017. Until Facts can fix this properly, use the
+    // task creation dates to generate synthetic transactions which look like
+    // the older transactions that this page expects.
+
+    $default_status = ManiphestTaskStatus::getDefaultStatus();
+    $duplicate_status = ManiphestTaskStatus::getDuplicateStatus();
+
+    // Build synthetic transactions which take status from `null` to the
+    // default value.
+    $create_rows = queryfx_all(
+      $conn,
+      'SELECT t.dateCreated FROM %T t %Q',
+      id(new ManiphestTask())->getTableName(),
+      $create_joins);
+    foreach ($create_rows as $key => $create_row) {
+      $create_rows[$key] = array(
+        'transactionType' => 'status',
+        'oldValue' => null,
+        'newValue' => $default_status,
+        'dateCreated' => $create_row['dateCreated'],
+      );
+    }
+
+    // Remove any actual legacy status transactions which take status from
+    // `null` to any open status.
+    foreach ($data as $key => $row) {
+      if ($row['transactionType'] != 'status') {
+        continue;
+      }
+
+      $oldv = trim($row['oldValue'], '"');
+      $newv = trim($row['newValue'], '"');
+
+      // If this is a status change, preserve it.
+      if ($oldv != 'null') {
+        continue;
+      }
+
+      // If this task was created directly into a closed status, preserve
+      // the transaction.
+      if (!ManiphestTaskStatus::isOpenStatus($newv)) {
+        continue;
+      }
+
+      // If this is a legacy "create" transaction, discard it in favor of the
+      // synthetic one.
+      unset($data[$key]);
+    }
+
+    // Merge the synthetic rows into the real transactions.
+    $data = array_merge($create_rows, $data);
+    $data = array_values($data);
+    $data = isort($data, 'dateCreated');
 
     $stats = array();
     $day_buckets = array();
@@ -106,10 +169,21 @@ final class ManiphestReportController extends ManiphestController {
     $open_tasks = array();
 
     foreach ($data as $key => $row) {
-
-      // NOTE: Hack to avoid json_decode().
-      $oldv = trim($row['oldValue'], '"');
-      $newv = trim($row['newValue'], '"');
+      switch ($row['transactionType']) {
+        case ManiphestTaskStatusTransaction::TRANSACTIONTYPE:
+          // NOTE: Hack to avoid json_decode().
+          $oldv = trim($row['oldValue'], '"');
+          $newv = trim($row['newValue'], '"');
+          break;
+        case ManiphestTaskMergedIntoTransaction::TRANSACTIONTYPE:
+          // NOTE: Merging a task does not generate a "status" transaction.
+          // We pretend it did. Note that this is not always accurate: it is
+          // possible to merge a task which was previously closed, but this
+          // fake transaction always counts a merge as a closure.
+          $oldv = $default_status;
+          $newv = $duplicate_status;
+          break;
+      }
 
       if ($oldv == 'null') {
         $old_is_open = false;
@@ -133,7 +207,7 @@ final class ManiphestReportController extends ManiphestController {
 
       $day_bucket = phabricator_format_local_time(
         $row['dateCreated'],
-        $user,
+        $viewer,
         'Yz');
       $day_buckets[$day_bucket] = $row['dateCreated'];
       if (empty($stats[$day_bucket])) {
@@ -167,12 +241,12 @@ final class ManiphestReportController extends ManiphestController {
 
       $week_bucket = phabricator_format_local_time(
         $epoch,
-        $user,
+        $viewer,
         'YW');
       if ($week_bucket != $last_week) {
         if ($week) {
           $rows[] = $this->formatBurnRow(
-            'Week of '.phabricator_date($last_week_epoch, $user),
+            pht('Week of %s', phabricator_date($last_week_epoch, $viewer)),
             $week);
           $rowc[] = 'week';
         }
@@ -183,12 +257,12 @@ final class ManiphestReportController extends ManiphestController {
 
       $month_bucket = phabricator_format_local_time(
         $epoch,
-        $user,
+        $viewer,
         'Ym');
       if ($month_bucket != $last_month) {
         if ($month) {
           $rows[] = $this->formatBurnRow(
-            phabricator_format_local_time($last_month_epoch, $user, 'F, Y'),
+            phabricator_format_local_time($last_month_epoch, $viewer, 'F, Y'),
             $month);
           $rowc[] = 'month';
         }
@@ -197,7 +271,7 @@ final class ManiphestReportController extends ManiphestController {
         $last_month_epoch = $epoch;
       }
 
-      $rows[] = $this->formatBurnRow(phabricator_date($epoch, $user), $info);
+      $rows[] = $this->formatBurnRow(phabricator_date($epoch, $viewer), $info);
       $rowc[] = null;
       $week['open'] += $info['open'];
       $week['close'] += $info['close'];
@@ -272,7 +346,7 @@ final class ManiphestReportController extends ManiphestController {
     if ($caption) {
       $panel->setInfoView($caption);
     }
-    $panel->appendChild($table);
+    $panel->setTable($table);
 
     $tokens = array();
     if ($handle) {
@@ -295,9 +369,8 @@ final class ManiphestReportController extends ManiphestController {
 
     list($burn_x, $burn_y) = $this->buildSeries($data);
 
-    require_celerity_resource('raphael-core');
-    require_celerity_resource('raphael-g');
-    require_celerity_resource('raphael-g-line');
+    require_celerity_resource('d3');
+    require_celerity_resource('phui-chart-css');
 
     Javelin::initBehavior('line-chart', array(
       'hardpoint' => $id,
@@ -311,15 +384,19 @@ final class ManiphestReportController extends ManiphestController {
       'yformat' => 'int',
     ));
 
-    return array($filter, $chart, $panel);
+    $box = id(new PHUIObjectBoxView())
+      ->setHeaderText(pht('Burnup Rate'))
+      ->appendChild($chart);
+
+    return array($filter, $box, $panel);
   }
 
   private function renderReportFilters(array $tokens, $has_window) {
     $request = $this->getRequest();
-    $user = $request->getUser();
+    $viewer = $request->getUser();
 
     $form = id(new AphrontFormView())
-      ->setUser($user)
+      ->setUser($viewer)
       ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setDatasource(new PhabricatorProjectDatasource())
@@ -391,11 +468,11 @@ final class ManiphestReportController extends ManiphestController {
 
   public function renderOpenTasks() {
     $request = $this->getRequest();
-    $user = $request->getUser();
+    $viewer = $request->getUser();
 
 
     $query = id(new ManiphestTaskQuery())
-      ->setViewer($user)
+      ->setViewer($viewer)
       ->withStatuses(ManiphestTaskStatus::getOpenStatusConstants());
 
     switch ($this->view) {
@@ -411,14 +488,17 @@ final class ManiphestReportController extends ManiphestController {
       $handles = $this->loadViewerHandles($phids);
       $project_handle = $handles[$project_phid];
 
-      $query->withAnyProjects($phids);
+      $query->withEdgeLogicPHIDs(
+        PhabricatorProjectObjectHasProjectEdgeType::EDGECONST,
+        PhabricatorQueryConstraint::OPERATOR_OR,
+        $phids);
     }
 
     $tasks = $query->execute();
 
     $recently_closed = $this->loadRecentlyClosedTasks();
 
-    $date = phabricator_date(time(), $user);
+    $date = phabricator_date(time(), $viewer);
 
     switch ($this->view) {
       case 'user':
@@ -462,7 +542,7 @@ final class ManiphestReportController extends ManiphestController {
           }
         }
 
-        $base_link = '/maniphest/?allProjects=';
+        $base_link = '/maniphest/?projects=';
         $leftover_name = phutil_tag('em', array(), pht('(No Project)'));
         $col_header = pht('Project');
         $header = pht('Open Tasks by Project and Priority (%s)', $date);
@@ -586,7 +666,7 @@ final class ManiphestReportController extends ManiphestController {
       $cname[] = $label;
       $cclass[] = 'n';
     }
-    $cname[] = 'Total';
+    $cname[] = pht('Total');
     $cclass[] = 'n';
     $cname[] = javelin_tag(
       'span',
@@ -604,8 +684,8 @@ final class ManiphestReportController extends ManiphestController {
       array(
         'sigil' => 'has-tooltip',
         'meta'  => array(
-          'tip' => pht('Oldest open task, excluding those with Low or '.
-                   'Wishlist priority.'),
+          'tip' => pht(
+            'Oldest open task, excluding those with Low or Wishlist priority.'),
           'size' => 200,
         ),
       ),
@@ -613,7 +693,7 @@ final class ManiphestReportController extends ManiphestController {
     $cclass[] = 'n';
 
     list($ignored, $window_epoch) = $this->getWindow();
-    $edate = phabricator_datetime($window_epoch, $user);
+    $edate = phabricator_datetime($window_epoch, $viewer);
     $cname[] = javelin_tag(
       'span',
       array(
@@ -650,7 +730,7 @@ final class ManiphestReportController extends ManiphestController {
 
     $panel = new PHUIObjectBoxView();
     $panel->setHeaderText($header);
-    $panel->appendChild($table);
+    $panel->setTable($table);
 
     $tokens = array();
     if ($project_handle) {
@@ -724,7 +804,7 @@ final class ManiphestReportController extends ManiphestController {
    */
   private function getWindow() {
     $request = $this->getRequest();
-    $user = $request->getUser();
+    $viewer = $request->getUser();
 
     $window_str = $this->getRequest()->getStr('window', '12 AM 7 days ago');
 
@@ -734,7 +814,7 @@ final class ManiphestReportController extends ManiphestController {
     // Do locale-aware parsing so that the user's timezone is assumed for
     // time windows like "3 PM", rather than assuming the server timezone.
 
-    $window_epoch = PhabricatorTime::parseLocalTime($window_str, $user);
+    $window_epoch = PhabricatorTime::parseLocalTime($window_str, $viewer);
     if (!$window_epoch) {
       $error = 'Invalid';
       $window_epoch = time() - (60 * 60 * 24 * 7);
@@ -744,7 +824,7 @@ final class ManiphestReportController extends ManiphestController {
     // and equal distance in the past. This is so users can type "6 days" (which
     // means "6 days from now") and get the behavior of "6 days ago", rather
     // than no results (because the window epoch is in the future). This might
-    // be a little confusing because it casues "tomorrow" to mean "yesterday"
+    // be a little confusing because it causes "tomorrow" to mean "yesterday"
     // and "2022" (or whatever) to mean "ten years ago", but these inputs are
     // nonsense anyway.
 

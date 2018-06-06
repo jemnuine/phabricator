@@ -2,16 +2,15 @@
 
 final class ManiphestSubpriorityController extends ManiphestController {
 
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $this->getViewer();
 
     if (!$request->validateCSRF()) {
       return new Aphront403Response();
     }
 
     $task = id(new ManiphestTaskQuery())
-      ->setViewer($user)
+      ->setViewer($viewer)
       ->withIDs(array($request->getInt('task')))
       ->needProjectPHIDs(true)
       ->requireCapabilities(
@@ -26,7 +25,7 @@ final class ManiphestSubpriorityController extends ManiphestController {
 
     if ($request->getInt('after')) {
       $after_task = id(new ManiphestTaskQuery())
-        ->setViewer($user)
+        ->setViewer($viewer)
         ->withIDs(array($request->getInt('after')))
         ->executeOne();
       if (!$after_task) {
@@ -41,18 +40,21 @@ final class ManiphestSubpriorityController extends ManiphestController {
         $is_end = false);
     }
 
+    $keyword_map = ManiphestTaskPriority::getTaskPriorityKeywordsMap();
+    $keyword = head(idx($keyword_map, $pri));
+
     $xactions = array();
 
     $xactions[] = id(new ManiphestTransaction())
-      ->setTransactionType(ManiphestTransaction::TYPE_PRIORITY)
-      ->setNewValue($pri);
+      ->setTransactionType(ManiphestTaskPriorityTransaction::TRANSACTIONTYPE)
+      ->setNewValue($keyword);
 
     $xactions[] = id(new ManiphestTransaction())
-      ->setTransactionType(ManiphestTransaction::TYPE_SUBPRIORITY)
+      ->setTransactionType(ManiphestTaskSubpriorityTransaction::TRANSACTIONTYPE)
       ->setNewValue($sub);
 
     $editor = id(new ManiphestTransactionEditor())
-      ->setActor($user)
+      ->setActor($viewer)
       ->setContinueOnMissingFields(true)
       ->setContinueOnNoEffect(true)
       ->setContentSourceFromRequest($request);

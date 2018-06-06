@@ -162,7 +162,7 @@
  * @task   xaction Managing Transactions
  * @task   isolate Isolation for Unit Testing
  */
-abstract class LiskDAO {
+abstract class LiskDAO extends Phobject {
 
   const CONFIG_IDS                  = 'id-mechanism';
   const CONFIG_TIMESTAMPS           = 'timestamps';
@@ -242,7 +242,7 @@ abstract class LiskDAO {
    * Get an existing, cached connection for this object.
    *
    * @param mode Connection mode.
-   * @return AprontDatabaseConnection|null  Connection, if it exists in cache.
+   * @return AphrontDatabaseConnection|null  Connection, if it exists in cache.
    * @task conn
    */
   protected function getEstablishedConnection($mode) {
@@ -498,7 +498,9 @@ abstract class LiskDAO {
 
     if (count($data) > 1) {
       throw new AphrontCountQueryException(
-        'More than 1 result from loadOneWhere()!');
+        pht(
+          'More than one result from %s!',
+          __FUNCTION__.'()'));
     }
 
     $data = reset($data);
@@ -545,7 +547,8 @@ abstract class LiskDAO {
    */
   public function reload() {
     if (!$this->getID()) {
-      throw new Exception("Unable to reload object that hasn't been loaded!");
+      throw new Exception(
+        pht("Unable to reload object that hasn't been loaded!"));
     }
 
     $result = $this->loadOneWhere(
@@ -809,7 +812,9 @@ abstract class LiskDAO {
 
     if (count($relatives) > 1) {
       throw new AphrontCountQueryException(
-        'More than 1 result from loadOneRelative()!');
+        pht(
+          'More than one result from %s!',
+          __FUNCTION__.'()'));
     }
 
     return reset($relatives);
@@ -948,13 +953,16 @@ abstract class LiskDAO {
    * @param  string 'r' for read, 'w' for read/write.
    * @param  bool True to force a new connection. The connection will not
    *              be retrieved from or saved into the connection cache.
-   * @return LiskDatabaseConnection   Lisk connection object.
+   * @return AphrontDatabaseConnection   Lisk connection object.
    *
    * @task   info
    */
   public function establishConnection($mode, $force_new = false) {
     if ($mode != 'r' && $mode != 'w') {
-      throw new Exception("Unknown mode '{$mode}', should be 'r' or 'w'.");
+      throw new Exception(
+        pht(
+          "Unknown mode '%s', should be 'r' or 'w'.",
+          $mode));
     }
 
     if ($this->forcedConnection) {
@@ -1086,12 +1094,12 @@ abstract class LiskDAO {
 
 
   /**
-   *  Save this object, forcing the query to use INSERT regardless of object
-   *  state.
+   * Save this object, forcing the query to use INSERT regardless of object
+   * state.
    *
-   *  @return this
+   * @return this
    *
-   *  @task   save
+   * @task   save
    */
   public function insert() {
     $this->isEphemeralCheck();
@@ -1100,12 +1108,12 @@ abstract class LiskDAO {
 
 
   /**
-   *  Save this object, forcing the query to use UPDATE regardless of object
-   *  state.
+   * Save this object, forcing the query to use UPDATE regardless of object
+   * state.
    *
-   *  @return this
+   * @return this
    *
-   *  @task   save
+   * @task   save
    */
   public function update() {
     $this->isEphemeralCheck();
@@ -1113,7 +1121,7 @@ abstract class LiskDAO {
     $this->willSaveObject();
     $data = $this->getAllLiskPropertyValues();
 
-    // Remove colums flagged as nonmutable from the update statement.
+    // Remove columns flagged as nonmutable from the update statement.
     $no_mutate = $this->getConfigOption(self::CONFIG_NO_MUTATE);
     if ($no_mutate) {
       foreach ($no_mutate as $column) {
@@ -1184,6 +1192,7 @@ abstract class LiskDAO {
    * Internal implementation of INSERT and REPLACE.
    *
    * @param  const   Either "INSERT" or "REPLACE", to force the desired mode.
+   * @return this
    *
    * @task   save
    */
@@ -1218,7 +1227,7 @@ abstract class LiskDAO {
       case self::IDS_MANUAL:
         break;
       default:
-        throw new Exception('Unknown CONFIG_IDs mechanism!');
+        throw new Exception(pht('Unknown %s mechanism!', 'CONFIG_IDs'));
     }
 
     $this->willWriteData($data);
@@ -1237,7 +1246,7 @@ abstract class LiskDAO {
         throw new PhutilProxyException(
           pht(
             "Unable to insert or update object of class %s, field '%s' ".
-            "has a nonscalar value.",
+            "has a non-scalar value.",
             get_class($this),
             $key),
           $parameter_exception);
@@ -1273,9 +1282,10 @@ abstract class LiskDAO {
 
     if ($key_type == self::IDS_MANUAL) {
       throw new Exception(
-        'You are using manual IDs. You must override the '.
-        'shouldInsertWhenSaved() method to properly detect '.
-        'when to insert a new record.');
+        pht(
+          'You are using manual IDs. You must override the %s method '.
+          'to properly detect when to insert a new record.',
+          __FUNCTION__.'()'));
     } else {
       return !$this->getID();
     }
@@ -1314,8 +1324,9 @@ abstract class LiskDAO {
     $id_key = $this->getIDKey();
     if (!$id_key) {
       throw new Exception(
-        'This DAO does not have a single-part primary key. The method you '.
-        'called requires a single-part primary key.');
+        pht(
+          'This DAO does not have a single-part primary key. The method you '.
+          'called requires a single-part primary key.'));
     }
     return $id_key;
   }
@@ -1329,9 +1340,12 @@ abstract class LiskDAO {
    * @task   hook
    */
   public function generatePHID() {
-    throw new Exception(
-      'To use CONFIG_AUX_PHID, you need to overload '.
-      'generatePHID() to perform PHID generation.');
+    $type = $this->getPHIDType();
+    return PhabricatorPHID::generateNewPHID($type);
+  }
+
+  public function getPHIDType() {
+    throw new PhutilMethodNotImplementedException();
   }
 
 
@@ -1555,7 +1569,7 @@ abstract class LiskDAO {
     self::$processIsolationLevel--;
     if (self::$processIsolationLevel < 0) {
       throw new Exception(
-        'Lisk process isolation level was reduced below 0.');
+        pht('Lisk process isolation level was reduced below 0.'));
     }
   }
 
@@ -1591,7 +1605,7 @@ abstract class LiskDAO {
     self::$transactionIsolationLevel--;
     if (self::$transactionIsolationLevel < 0) {
       throw new Exception(
-        'Lisk transaction isolation level was reduced below 0.');
+        pht('Lisk transaction isolation level was reduced below 0.'));
     } else if (self::$transactionIsolationLevel == 0) {
       foreach (self::$connections as $key => $conn) {
         if ($conn) {
@@ -1609,9 +1623,54 @@ abstract class LiskDAO {
     return (bool)self::$transactionIsolationLevel;
   }
 
-  public static function closeAllConnections() {
-    self::$connections = array();
+  /**
+   * Close any connections with no recent activity.
+   *
+   * Long-running processes can use this method to clean up connections which
+   * have not been used recently.
+   *
+   * @param int Close connections with no activity for this many seconds.
+   * @return void
+   */
+  public static function closeInactiveConnections($idle_window) {
+    $connections = self::$connections;
+
+    $now = PhabricatorTime::getNow();
+    foreach ($connections as $key => $connection) {
+      $last_active = $connection->getLastActiveEpoch();
+
+      $idle_duration = ($now - $last_active);
+      if ($idle_duration <= $idle_window) {
+        continue;
+      }
+
+      self::closeConnection($key);
+    }
   }
+
+
+  public static function closeAllConnections() {
+    $connections = self::$connections;
+
+    foreach ($connections as $key => $connection) {
+      self::closeConnection($key);
+    }
+  }
+
+  private static function closeConnection($key) {
+    if (empty(self::$connections[$key])) {
+      throw new Exception(
+        pht(
+          'No database connection with connection key "%s" exists!',
+          $key));
+    }
+
+    $connection = self::$connections[$key];
+    unset(self::$connections[$key]);
+
+    $connection->close();
+  }
+
 
 /* -(  Utilities  )---------------------------------------------------------- */
 
@@ -1639,11 +1698,12 @@ abstract class LiskDAO {
             if ($deserialize) {
               $data[$col] = json_decode($data[$col], true);
             } else {
-              $data[$col] = json_encode($data[$col]);
+              $data[$col] = phutil_json_encode($data[$col]);
             }
             break;
           default:
-            throw new Exception("Unknown serialization format '{$format}'.");
+            throw new Exception(
+              pht("Unknown serialization format '%s'.", $format));
         }
       }
     }
@@ -1680,11 +1740,11 @@ abstract class LiskDAO {
         $property = $dispatch_map[$method];
       } else {
         if (substr($method, 0, 3) !== 'get') {
-          throw new Exception("Unable to resolve method '{$method}'!");
+          throw new Exception(pht("Unable to resolve method '%s'!", $method));
         }
         $property = substr($method, 3);
         if (!($property = $this->checkProperty($property))) {
-          throw new Exception("Bad getter call: {$method}");
+          throw new Exception(pht('Bad getter call: %s', $method));
         }
         $dispatch_map[$method] = $property;
       }
@@ -1697,12 +1757,12 @@ abstract class LiskDAO {
         $property = $dispatch_map[$method];
       } else {
         if (substr($method, 0, 3) !== 'set') {
-          throw new Exception("Unable to resolve method '{$method}'!");
+          throw new Exception(pht("Unable to resolve method '%s'!", $method));
         }
         $property = substr($method, 3);
         $property = $this->checkProperty($property);
         if (!$property) {
-          throw new Exception("Bad setter call: {$method}");
+          throw new Exception(pht('Bad setter call: %s', $method));
         }
         $dispatch_map[$method] = $property;
       }
@@ -1712,7 +1772,7 @@ abstract class LiskDAO {
       return $this;
     }
 
-    throw new Exception("Unable to resolve method '{$method}'.");
+    throw new Exception(pht("Unable to resolve method '%s'.", $method));
   }
 
   /**
@@ -1721,7 +1781,13 @@ abstract class LiskDAO {
    * @task   util
    */
   public function __set($name, $value) {
-    phlog('Wrote to undeclared property '.get_class($this).'::$'.$name.'.');
+    // Hack for policy system hints, see PhabricatorPolicyRule for notes.
+    if ($name != '_hashKey') {
+      phlog(
+        pht(
+          'Wrote to undeclared property %s.',
+          get_class($this).'::$'.$name));
+    }
     $this->$name = $value;
   }
 
@@ -1815,7 +1881,6 @@ abstract class LiskDAO {
     return $this->getConfigOption(self::CONFIG_BINARY);
   }
 
-
   public function getSchemaColumns() {
     $custom_map = $this->getConfigOption(self::CONFIG_COLUMN_SCHEMA);
     if (!$custom_map) {
@@ -1881,6 +1946,11 @@ abstract class LiskDAO {
         continue;
       }
 
+      if ($property === 'spacePHID') {
+        $map[$property] = 'phid?';
+        continue;
+      }
+
       // If the column is named `somethingPHID`, infer it is a PHID.
       if (preg_match('/[a-z]PHID$/', $property)) {
         $map[$property] = 'phid';
@@ -1921,10 +1991,32 @@ abstract class LiskDAO {
             'unique' => true,
           );
           break;
+        case 'spacePHID':
+          $default_map['key_space'] = array(
+            'columns' => array('spacePHID'),
+          );
+          break;
       }
     }
 
     return $custom_map + $default_map;
+  }
+
+  public function getColumnMaximumByteLength($column) {
+    $map = $this->getSchemaColumns();
+
+    if (!isset($map[$column])) {
+      throw new Exception(
+        pht(
+          'Object (of class "%s") does not have a column "%s".',
+          get_class($this),
+          $column));
+    }
+
+    $data_type = $map[$column];
+
+    return id(new PhabricatorStorageSchemaSpec())
+      ->getMaximumByteLengthForDataType($data_type);
   }
 
 }

@@ -31,18 +31,19 @@ final class PhrictionMoveController extends PhrictionController {
     if ($request->isFormPost()) {
       $v_note = $request->getStr('description');
       $v_slug = $request->getStr('slug');
+      $normal_slug = PhabricatorSlug::normalize($v_slug);
 
       // If what the user typed isn't what we're actually using, warn them
       // about it.
       if (strlen($v_slug)) {
-        $normal_slug = PhabricatorSlug::normalize($v_slug);
-        if ($normal_slug !== $v_slug) {
+        $no_slash_slug = rtrim($normal_slug, '/');
+        if ($normal_slug !== $v_slug && $no_slash_slug !== $v_slug) {
           return $this->newDialog()
             ->setTitle(pht('Adjust Path'))
             ->appendParagraph(
               pht(
                 'The path you entered (%s) is not a valid wiki document '.
-                'path. Paths may not contain special characters.',
+                'path. Paths may not contain spaces or special characters.',
                 phutil_tag('strong', array(), $v_slug)))
             ->appendParagraph(
               pht(
@@ -59,15 +60,29 @@ final class PhrictionMoveController extends PhrictionController {
         ->setActor($viewer)
         ->setContentSourceFromRequest($request)
         ->setContinueOnNoEffect(true)
+        ->setContinueOnMissingFields(true)
         ->setDescription($v_note);
 
       $xactions = array();
       $xactions[] = id(new PhrictionTransaction())
-        ->setTransactionType(PhrictionTransaction::TYPE_MOVE_TO)
+        ->setTransactionType(
+          PhrictionDocumentMoveToTransaction::TRANSACTIONTYPE)
         ->setNewValue($document);
-      $target_document = PhrictionDocument::initializeNewDocument(
-        $viewer,
-        $v_slug);
+      $target_document = id(new PhrictionDocumentQuery())
+        ->setViewer(PhabricatorUser::getOmnipotentUser())
+        ->withSlugs(array($normal_slug))
+        ->needContent(true)
+        ->requireCapabilities(
+          array(
+            PhabricatorPolicyCapability::CAN_VIEW,
+            PhabricatorPolicyCapability::CAN_EDIT,
+          ))
+        ->executeOne();
+      if (!$target_document) {
+        $target_document = PhrictionDocument::initializeNewDocument(
+          $viewer,
+          $v_slug);
+      }
       try {
         $editor->applyTransactions($target_document, $xactions);
         $redir_uri = PhrictionDocument::getSlugURI(
@@ -75,7 +90,8 @@ final class PhrictionMoveController extends PhrictionController {
         return id(new AphrontRedirectResponse())->setURI($redir_uri);
       } catch (PhabricatorApplicationTransactionValidationException $ex) {
         $validation_exception = $ex;
-        $e_slug = $ex->getShortMessage(PhrictionTransaction::TYPE_MOVE_TO);
+        $e_slug = $ex->getShortMessage(
+          PhrictionDocumentMoveToTransaction::TRANSACTIONTYPE);
       }
     }
 

@@ -1,38 +1,7 @@
 <?php
 
 final class PhabricatorWorkerArchiveTaskQuery
-  extends PhabricatorQuery {
-
-  private $ids;
-  private $dateModifiedSince;
-  private $dateCreatedBefore;
-  private $objectPHIDs;
-  private $limit;
-
-  public function withIDs(array $ids) {
-    $this->ids = $ids;
-    return $this;
-  }
-
-  public function withDateModifiedSince($timestamp) {
-    $this->dateModifiedSince = $timestamp;
-    return $this;
-  }
-
-  public function withDateCreatedBefore($timestamp) {
-    $this->dateCreatedBefore = $timestamp;
-    return $this;
-  }
-
-  public function withObjectPHIDs(array $phids) {
-    $this->objectPHIDs = $phids;
-    return $this;
-  }
-
-  public function setLimit($limit) {
-    $this->limit = $limit;
-    return $this;
-  }
+  extends PhabricatorWorkerTaskQuery {
 
   public function execute() {
     $task_table = new PhabricatorWorkerArchiveTask();
@@ -41,54 +10,12 @@ final class PhabricatorWorkerArchiveTaskQuery
 
     $rows = queryfx_all(
       $conn_r,
-      'SELECT * FROM %T %Q ORDER BY id DESC %Q',
+      'SELECT * FROM %T %Q %Q %Q',
       $task_table->getTableName(),
       $this->buildWhereClause($conn_r),
+      $this->buildOrderClause($conn_r),
       $this->buildLimitClause($conn_r));
 
     return $task_table->loadAllFromArray($rows);
   }
-
-  private function buildWhereClause(AphrontDatabaseConnection $conn_r) {
-    $where = array();
-
-    if ($this->ids !== null) {
-      $where[] = qsprintf(
-        $conn_r,
-        'id in (%Ld)',
-        $this->ids);
-    }
-
-    if ($this->objectPHIDs !== null) {
-      $where[] = qsprintf(
-        $conn_r,
-        'objectPHID IN (%Ls)',
-        $this->objectPHIDs);
-    }
-
-    if ($this->dateModifiedSince) {
-      $where[] = qsprintf(
-        $conn_r,
-        'dateModified > %d',
-        $this->dateModifiedSince);
-    }
-
-    if ($this->dateCreatedBefore) {
-      $where[] = qsprintf(
-        $conn_r,
-        'dateCreated < %d',
-        $this->dateCreatedBefore);
-    }
-
-    return $this->formatWhereClause($where);
-  }
-
-  private function buildLimitClause(AphrontDatabaseConnection $conn_r) {
-    $clause =  '';
-    if ($this->limit) {
-      $clause = qsprintf($conn_r, 'LIMIT %d', $this->limit);
-    }
-    return $clause;
-  }
-
 }

@@ -7,7 +7,17 @@ final class ManiphestQueryConduitAPIMethod extends ManiphestConduitAPIMethod {
   }
 
   public function getMethodDescription() {
-    return 'Execute complex searches for Maniphest tasks.';
+    return pht('Execute complex searches for Maniphest tasks.');
+  }
+
+  public function getMethodStatus() {
+    return self::METHOD_STATUS_FROZEN;
+  }
+
+  public function getMethodStatusDescription() {
+    return pht(
+      'This method is frozen and will eventually be deprecated. New code '.
+      'should use "maniphest.search" instead.');
   }
 
   protected function defineParamTypes() {
@@ -79,7 +89,10 @@ final class ManiphestQueryConduitAPIMethod extends ManiphestConduitAPIMethod {
 
     $projects = $request->getValue('projectPHIDs');
     if ($projects) {
-      $query->withAllProjects($projects);
+      $query->withEdgeLogicPHIDs(
+        PhabricatorProjectObjectHasProjectEdgeType::EDGECONST,
+        PhabricatorQueryConstraint::OPERATOR_AND,
+        $projects);
     }
 
     $ccs = $request->getValue('ccPHIDs');
@@ -89,7 +102,10 @@ final class ManiphestQueryConduitAPIMethod extends ManiphestConduitAPIMethod {
 
     $full_text = $request->getValue('fullText');
     if ($full_text) {
-      $query->withFullTextSearch($full_text);
+      throw new Exception(
+        pht(
+          'Parameter "fullText" is no longer supported. Use method '.
+          '"maniphest.search" with the "query" constraint instead.'));
     }
 
     $status = $request->getValue('status');
@@ -99,7 +115,7 @@ final class ManiphestQueryConduitAPIMethod extends ManiphestConduitAPIMethod {
 
     $order = $request->getValue('order');
     if ($order) {
-      $query->setOrderBy($order);
+      $query->setOrder($order);
     }
 
     $limit = $request->getValue('limit');

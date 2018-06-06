@@ -18,6 +18,10 @@ final class PHUIDiffInlineCommentDetailView
     return $this;
   }
 
+  public function isHidden() {
+    return $this->inlineComment->isHidden();
+  }
+
   public function setHandles(array $handles) {
     assert_instances_of($handles, 'PhabricatorObjectHandle');
     $this->handles = $handles;
@@ -71,14 +75,50 @@ final class PHUIDiffInlineCommentDetailView
     return $this->objectOwnerPHID;
   }
 
-  public function render() {
+  public function getAnchorName() {
+    $inline = $this->inlineComment;
+    if ($inline->getID()) {
+      return 'inline-'.$inline->getID();
+    }
+    return null;
+  }
 
+  public function getScaffoldCellID() {
+    $anchor = $this->getAnchorName();
+    if ($anchor) {
+      return 'anchor-'.$anchor;
+    }
+    return null;
+  }
+
+  public function render() {
     require_celerity_resource('phui-inline-comment-view-css');
     $inline = $this->inlineComment;
 
     $classes = array(
       'differential-inline-comment',
     );
+
+    $is_fixed = false;
+    switch ($inline->getFixedState()) {
+      case PhabricatorInlineCommentInterface::STATE_DONE:
+      case PhabricatorInlineCommentInterface::STATE_DRAFT:
+        $is_fixed = true;
+        break;
+    }
+
+    $is_draft_done = false;
+    switch ($inline->getFixedState()) {
+      case PhabricatorInlineCommentInterface::STATE_DRAFT:
+      case PhabricatorInlineCommentInterface::STATE_UNDRAFT:
+        $is_draft_done = true;
+        break;
+    }
+
+    $is_synthetic = false;
+    if ($inline->getSyntheticAuthor()) {
+      $is_synthetic = true;
+    }
 
     $metadata = array(
       'id' => $inline->getID(),
@@ -90,6 +130,11 @@ final class PHUIDiffInlineCommentDetailView
       'on_right' => $this->getIsOnRight(),
       'original' => $inline->getContent(),
       'replyToCommentPHID' => $inline->getReplyToCommentPHID(),
+      'isDraft' => $inline->isDraft(),
+      'isFixed' => $is_fixed,
+      'isGhost' => $inline->getIsGhost(),
+      'isSynthetic' => $is_synthetic,
+      'isDraftDone' => $is_draft_done,
     );
 
     $sigil = 'differential-inline-comment';
@@ -106,11 +151,6 @@ final class PHUIDiffInlineCommentDetailView
 
     $links = array();
 
-    $is_synthetic = false;
-    if ($inline->getSyntheticAuthor()) {
-      $is_synthetic = true;
-    }
-
     $draft_text = null;
     if (!$is_synthetic) {
       // This display is controlled by CSS
@@ -118,15 +158,46 @@ final class PHUIDiffInlineCommentDetailView
         ->setType(PHUITagView::TYPE_SHADE)
         ->setName(pht('Unsubmitted'))
         ->setSlimShady(true)
-        ->setShade(PHUITagView::COLOR_RED)
+        ->setColor(PHUITagView::COLOR_RED)
         ->addClass('mml inline-draft-text');
+    }
+
+    $ghost_tag = null;
+    $ghost = $inline->getIsGhost();
+    $ghost_id = null;
+    if ($ghost) {
+      if ($ghost['new']) {
+        $ghosticon = 'fa-fast-forward';
+        $reason = pht('View on forward revision');
+      } else {
+        $ghosticon = 'fa-fast-backward';
+        $reason = pht('View on previous revision');
+      }
+
+      $ghost_icon = id(new PHUIIconView())
+        ->setIcon($ghosticon)
+        ->addSigil('has-tooltip')
+        ->setMetadata(
+          array(
+            'tip' => $reason,
+            'size' => 300,
+          ));
+      $ghost_tag = phutil_tag(
+        'a',
+        array(
+          'class' => 'ghost-icon',
+          'href' => $ghost['href'],
+          'target' => '_blank',
+        ),
+        $ghost_icon);
+      $classes[] = 'inline-comment-ghost';
     }
 
     // I think this is unused
     if ($inline->getHasReplies()) {
       $classes[] = 'inline-comment-has-reply';
     }
-    // I think this is unused
+
     if ($inline->getReplyToCommentPHID()) {
       $classes[] = 'inline-comment-is-reply';
     }
@@ -140,94 +211,73 @@ final class PHUIDiffInlineCommentDetailView
       }
     }
 
-    $action_buttons = new PHUIButtonBarView();
-    $action_buttons->addClass('mml');
-    $nextprev = null;
-    if (!$this->preview) {
-      $nextprev = new PHUIButtonBarView();
-      $nextprev->addClass('mml');
-      $up = id(new PHUIButtonView())
+    $anchor_name = $this->getAnchorName();
+
+    $action_buttons = array();
+
+    $can_reply =
+      (!$this->editable) &&
+      (!$this->preview) &&
+      ($this->allowReply) &&
+
+      // NOTE: No product reason why you can't reply to synthetic comments,
+      // but the reply mechanism currently sends the inline comment ID to the
+      // server, not file/line information, and synthetic comments don't have
+      // an inline comment ID.
+      (!$is_synthetic);
+
+
+    if ($can_reply) {
+      $action_buttons[] = id(new PHUIButtonView())
         ->setTag('a')
-        ->setColor(PHUIButtonView::SIMPLE)
-        ->setTooltip(pht('Previous'))
-        ->setIconFont('fa-chevron-up')
-        ->addSigil('differential-inline-prev')
+        ->setIcon('fa-reply')
+        ->setTooltip(pht('Reply'))
+        ->addSigil('differential-inline-reply')
         ->setMustCapture(true);
-
-      $down = id(new PHUIButtonView())
-        ->setTag('a')
-        ->setColor(PHUIButtonView::SIMPLE)
-        ->setTooltip(pht('Next'))
-        ->setIconFont('fa-chevron-down')
-        ->addSigil('differential-inline-next')
-        ->setMustCapture(true);
-
-      $nextprev->addButton($up);
-      $nextprev->addButton($down);
-
-      if ($this->allowReply) {
-
-        if (!$is_synthetic) {
-
-          // NOTE: No product reason why you can't reply to these, but the reply
-          // mechanism currently sends the inline comment ID to the server, not
-          // file/line information, and synthetic comments don't have an inline
-          // comment ID.
-
-          $reply_button = id(new PHUIButtonView())
-            ->setTag('a')
-            ->setColor(PHUIButtonView::SIMPLE)
-            ->setIconFont('fa-reply')
-            ->setTooltip(pht('Reply'))
-            ->addSigil('differential-inline-reply')
-            ->setMustCapture(true);
-          $action_buttons->addButton($reply_button);
-        }
-
-      }
     }
 
-    $anchor_name = 'inline-'.$inline->getID();
-
     if ($this->editable && !$this->preview) {
-      $edit_button = id(new PHUIButtonView())
+      $action_buttons[] = id(new PHUIButtonView())
         ->setTag('a')
-        ->setColor(PHUIButtonView::SIMPLE)
-        ->setIconFont('fa-pencil')
+        ->setIcon('fa-pencil')
         ->setTooltip(pht('Edit'))
         ->addSigil('differential-inline-edit')
         ->setMustCapture(true);
-      $action_buttons->addButton($edit_button);
 
-      $delete_button = id(new PHUIButtonView())
+      $action_buttons[] = id(new PHUIButtonView())
         ->setTag('a')
-        ->setColor(PHUIButtonView::SIMPLE)
-        ->setIconFont('fa-trash-o')
+        ->setIcon('fa-trash-o')
         ->setTooltip(pht('Delete'))
         ->addSigil('differential-inline-delete')
         ->setMustCapture(true);
-      $action_buttons->addButton($delete_button);
 
     } else if ($this->preview) {
       $links[] = javelin_tag(
         'a',
         array(
-          'class' => 'button simple',
-          'meta'        => array(
+          'class'  => 'inline-button-divider pml msl',
+          'meta'  => array(
             'anchor' => $anchor_name,
           ),
-          'sigil'       => 'differential-inline-preview-jump',
+          'sigil'  => 'differential-inline-preview-jump',
         ),
-        pht('Not Visible'));
+        pht('View'));
 
-      $delete_button = id(new PHUIButtonView())
+      $action_buttons[] = id(new PHUIButtonView())
         ->setTag('a')
-        ->setColor(PHUIButtonView::SIMPLE)
         ->setTooltip(pht('Delete'))
-        ->setIconFont('fa-trash-o')
+        ->setIcon('fa-trash-o')
         ->addSigil('differential-inline-delete')
         ->setMustCapture(true);
-      $action_buttons->addButton($delete_button);
+    }
+
+    if (!$this->preview && $this->canHide()) {
+      $action_buttons[] = id(new PHUIButtonView())
+        ->setTag('a')
+        ->setTooltip(pht('Collapse'))
+        ->setIcon('fa-times')
+        ->addSigil('hide-inline')
+        ->setMustCapture(true);
     }
 
     $done_button = null;
@@ -287,18 +337,24 @@ final class PHUIDiffInlineCommentDetailView
             pht('Done'),
           ));
       } else {
-        $done_button = id(new PHUIButtonView())
-          ->setTag('a')
-          ->setColor(PHUIButtonView::SIMPLE)
-          ->addClass('mml');
         if ($is_done) {
-          $done_button->setIconFont('fa-check');
-          $done_button->setText(pht('Done'));
-          $done_button->addClass('button-done');
+          $icon = id(new PHUIIconView())->setIcon('fa-check sky msr');
+          $label = pht('Done');
+          $class = 'button-done';
         } else {
-          $done_button->addClass('button-not-done');
-          $done_button->setText(pht('Not Done'));
+          $icon = null;
+          $label = pht('Not Done');
+          $class = 'button-not-done';
         }
+        $done_button = phutil_tag(
+          'div',
+          array(
+            'class' => 'done-label '.$class,
+          ),
+          array(
+            $icon,
+            $label,
+          ));
       }
     }
 
@@ -337,8 +393,18 @@ final class PHUIDiffInlineCommentDetailView
           ->setType(PHUITagView::TYPE_SHADE)
           ->setName(pht('Author'))
           ->setSlimShady(true)
-          ->setShade(PHUITagView::COLOR_YELLOW)
+          ->setColor(PHUITagView::COLOR_YELLOW)
           ->addClass('mml');
+      }
+    }
+
+    $actions = null;
+    if ($action_buttons) {
+      $actions = new PHUIButtonBarView();
+      $actions->setBorderless(true);
+      $actions->addClass('inline-button-divider');
+      foreach ($action_buttons as $button) {
+        $actions->addButton($button);
       }
     }
 
@@ -351,6 +417,7 @@ final class PHUIDiffInlineCommentDetailView
         $author,
         $author_owner,
         $draft_text,
+        $ghost_tag,
       ));
 
     $group_right = phutil_tag(
@@ -359,12 +426,15 @@ final class PHUIDiffInlineCommentDetailView
         'class' => 'inline-head-right',
       ),
       array(
-        $anchor,
-        $links,
-        $nextprev,
-        $action_buttons,
         $done_button,
+        $links,
+        $actions,
       ));
+
+    $snippet = id(new PhutilUTF8StringTruncator())
+      ->setMaximumGlyphs(96)
+      ->truncateString($inline->getContent());
+    $metadata['snippet'] = pht('%s: %s', $author, $snippet);
 
     $markup = javelin_tag(
       'div',
@@ -374,16 +444,60 @@ final class PHUIDiffInlineCommentDetailView
         'meta'  => $metadata,
       ),
       array(
-        phutil_tag_div('differential-inline-comment-head grouped', array(
-          $group_left,
-          $group_right,
-        )),
+        javelin_tag(
+          'div',
+          array(
+            'class' => 'differential-inline-comment-head grouped',
+            'sigil' => 'differential-inline-header',
+          ),
+          array(
+            $group_left,
+            $group_right,
+          )),
         phutil_tag_div(
           'differential-inline-comment-content',
           phutil_tag_div('phabricator-remarkup', $content)),
       ));
 
-    return $markup;
+    $summary = phutil_tag(
+      'div',
+      array(
+        'class' => 'differential-inline-summary',
+      ),
+      array(
+        phutil_tag('strong', array(), pht('%s:', $author)),
+        ' ',
+        $snippet,
+      ));
+
+    return array(
+      $anchor,
+      $markup,
+      $summary,
+    );
+  }
+
+  private function canHide() {
+    $inline = $this->inlineComment;
+
+    if ($inline->isDraft()) {
+      return false;
+    }
+
+    if (!$inline->getID()) {
+      return false;
+    }
+
+    $viewer = $this->getUser();
+    if (!$viewer->isLoggedIn()) {
+      return false;
+    }
+
+    if (!$inline->supportsHiding()) {
+      return false;
+    }
+
+    return true;
   }
 
 }

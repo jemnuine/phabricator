@@ -10,11 +10,15 @@ final class PhabricatorRepositoryRepositoryPHIDType
   }
 
   public function getTypeIcon() {
-    return 'fa-database';
+    return 'fa-code';
   }
 
   public function newObject() {
     return new PhabricatorRepository();
+  }
+
+  public function getPHIDTypeApplicationClass() {
+    return 'PhabricatorDiffusionApplication';
   }
 
   protected function buildQueryForObjects(
@@ -34,17 +38,19 @@ final class PhabricatorRepositoryRepositoryPHIDType
       $repository = $objects[$phid];
 
       $monogram = $repository->getMonogram();
-      $callsign = $repository->getCallsign();
       $name = $repository->getName();
+      $uri = $repository->getURI();
 
-      $handle->setName($monogram);
-      $handle->setFullName("{$monogram} {$name}");
-      $handle->setURI("/diffusion/{$callsign}/");
+      $handle
+        ->setName($monogram)
+        ->setFullName("{$monogram} {$name}")
+        ->setURI($uri)
+        ->setMailStampName($monogram);
     }
   }
 
   public function canLoadNamedObject($name) {
-    return preg_match('/^r[A-Z]+|R[0-9]+$/', $name);
+    return preg_match('/^(r[A-Z]+|R[1-9]\d*)\z/', $name);
   }
 
   public function loadNamedObjects(

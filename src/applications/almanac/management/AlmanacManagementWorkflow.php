@@ -3,7 +3,6 @@
 abstract class AlmanacManagementWorkflow
   extends PhabricatorManagementWorkflow {
 
-
   protected function loadServices(array $names) {
     if (!$names) {
       return array();
@@ -25,22 +24,6 @@ abstract class AlmanacManagementWorkflow
     }
 
     return $services;
-  }
-
-  protected function updateServiceLock(AlmanacService $service, $lock) {
-    $almanac_phid = id(new PhabricatorAlmanacApplication())->getPHID();
-
-    $xaction = id(new AlmanacServiceTransaction())
-      ->setTransactionType(AlmanacServiceTransaction::TYPE_LOCK)
-      ->setNewValue((int)$lock);
-
-    $editor = id(new AlmanacServiceEditor())
-      ->setActor($this->getViewer())
-      ->setActingAsPHID($almanac_phid)
-      ->setContentSource(PhabricatorContentSource::newConsoleSource())
-      ->setContinueOnMissingFields(true);
-
-    $editor->applyTransactions($service, array($xaction));
   }
 
 }

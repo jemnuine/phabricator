@@ -12,11 +12,11 @@ final class DifferentialGetRevisionConduitAPIMethod
   }
 
   public function getMethodStatusDescription() {
-    return "Replaced by 'differential.query'.";
+    return pht("Replaced by '%s'.", 'differential.query');
   }
 
   public function getMethodDescription() {
-    return 'Load the content of a revision from Differential.';
+    return pht('Load the content of a revision from Differential.');
   }
 
   protected function defineParamTypes() {
@@ -31,7 +31,7 @@ final class DifferentialGetRevisionConduitAPIMethod
 
   protected function defineErrorTypes() {
     return array(
-      'ERR_BAD_REVISION'    => 'No such revision exists.',
+      'ERR_BAD_REVISION' => pht('No such revision exists.'),
     );
   }
 
@@ -42,21 +42,19 @@ final class DifferentialGetRevisionConduitAPIMethod
     $revision = id(new DifferentialRevisionQuery())
       ->withIDs(array($revision_id))
       ->setViewer($request->getUser())
-      ->needRelationships(true)
-      ->needReviewerStatus(true)
+      ->needReviewers(true)
       ->executeOne();
 
     if (!$revision) {
       throw new ConduitException('ERR_BAD_REVISION');
     }
 
-    $reviewer_phids = array_values($revision->getReviewers());
+    $reviewer_phids = $revision->getReviewerPHIDs();
 
     $diffs = id(new DifferentialDiffQuery())
       ->setViewer($request->getUser())
       ->withRevisionIDs(array($revision_id))
       ->needChangesets(true)
-      ->needArcanistProjects(true)
       ->execute();
     $diff_dicts = mpull($diffs, 'getDiffDict');
 
@@ -84,10 +82,8 @@ final class DifferentialGetRevisionConduitAPIMethod
       'authorPHID' => $revision->getAuthorPHID(),
       'uri' => PhabricatorEnv::getURI('/D'.$revision->getID()),
       'title' => $revision->getTitle(),
-      'status' => $revision->getStatus(),
-      'statusName'  =>
-        ArcanistDifferentialRevisionStatus::getNameForRevisionStatus(
-          $revision->getStatus()),
+      'status' => $revision->getLegacyRevisionStatus(),
+      'statusName'  => $revision->getStatusDisplayName(),
       'summary' => $revision->getSummary(),
       'testPlan' => $revision->getTestPlan(),
       'lineCount' => $revision->getLineCount(),

@@ -73,7 +73,7 @@ final class PhrequentUserTimeQuery
     return $this;
   }
 
-  private function buildWhereClause(AphrontDatabaseConnection $conn) {
+  protected function buildWhereClause(AphrontDatabaseConnection $conn) {
     $where = array();
 
     if ($this->ids !== null) {
@@ -111,7 +111,7 @@ final class PhrequentUserTimeQuery
           'dateEnded IS NULL');
         break;
       default:
-        throw new Exception("Unknown ended '{$this->ended}'!");
+        throw new Exception(pht("Unknown ended '%s'!", $this->ended));
     }
 
     $where[] = $this->buildPagingClause($conn);

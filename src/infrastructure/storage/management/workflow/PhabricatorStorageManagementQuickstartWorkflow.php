@@ -22,55 +22,71 @@ final class PhabricatorStorageManagementQuickstartWorkflow
   }
 
   public function execute(PhutilArgumentParser $args) {
+    parent::execute($args);
+
     $output = $args->getArg('output');
     if (!$output) {
       throw new PhutilArgumentUsageException(
         pht(
-          'Specify a file to write with `--output`.'));
+          'Specify a file to write with `%s`.',
+          '--output'));
     }
 
     $namespace = 'phabricator_quickstart_'.Filesystem::readRandomCharacters(8);
 
     $bin = dirname(phutil_get_library_root('phabricator')).'/bin/storage';
 
-    if (!$this->getAPI()->isCharacterSetAvailable('utf8mb4')) {
+    // We don't care which database we're using to generate a quickstart file,
+    // since all of the schemata should be identical.
+    $api = $this->getAnyAPI();
+
+    $ref = $api->getRef();
+    $ref_key = $ref->getRefKey();
+
+    if (!$api->isCharacterSetAvailable('utf8mb4')) {
       throw new PhutilArgumentUsageException(
         pht(
           'You can only generate a new quickstart file if MySQL supports '.
-          'the utf8mb4 character set (available in MySQL 5.5 and newer). The '.
-          'configured server does not support utf8mb4.'));
+          'the %s character set (available in MySQL 5.5 and newer). The '.
+          'configured server does not support %s.',
+          'utf8mb4',
+          'utf8mb4'));
     }
 
     $err = phutil_passthru(
-      '%s upgrade --force --no-quickstart --namespace %s',
+      '%s upgrade --force --no-quickstart --namespace %s --ref %s',
       $bin,
-      $namespace);
+      $namespace,
+      $ref_key);
     if ($err) {
       return $err;
     }
 
     $err = phutil_passthru(
-      '%s adjust --force --namespace %s',
+      '%s adjust --force --namespace %s --ref %s',
       $bin,
-      $namespace);
+      $namespace,
+      $ref_key);
     if ($err) {
       return $err;
     }
 
     $tmp = new TempFile();
     $err = phutil_passthru(
-      '%s dump --namespace %s > %s',
+      '%s dump --namespace %s --ref %s > %s',
       $bin,
       $namespace,
+      $ref_key,
       $tmp);
     if ($err) {
       return $err;
     }
 
     $err = phutil_passthru(
-      '%s destroy --force --namespace %s',
+      '%s destroy --force --namespace %s --ref %s',
       $bin,
-      $namespace);
+      $namespace,
+      $ref_key);
     if ($err) {
       return $err;
     }
@@ -95,7 +111,9 @@ final class PhabricatorStorageManagementQuickstartWorkflow
       // If we didn't make any changes, yell about it. We'll produce an invalid
       // dump otherwise.
       throw new PhutilArgumentUsageException(
-        pht('Failed to apply hack to adjust FULLTEXT search column!'));
+        pht(
+          'Failed to apply hack to adjust %s search column!',
+          'FULLTEXT'));
     }
 
     $dump = str_replace(
@@ -136,7 +154,7 @@ final class PhabricatorStorageManagementQuickstartWorkflow
     $dump = preg_replace('/^--.*$/m', '', $dump);
 
     // Remove table drops, locks, and unlocks. These are never relevant when
-    // performing q quickstart.
+    // performing a quickstart.
     $dump = preg_replace(
       '/^(DROP TABLE|LOCK TABLES|UNLOCK TABLES).*$/m',
       '',

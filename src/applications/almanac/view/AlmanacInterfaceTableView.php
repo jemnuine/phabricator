@@ -27,10 +27,12 @@ final class AlmanacInterfaceTableView extends AphrontView {
     $interfaces = $this->getInterfaces();
     $viewer = $this->getUser();
 
-    if ($this->getCanEdit()) {
-      $button_class = 'small grey button';
+    $can_edit = $this->getCanEdit();
+
+    if ($can_edit) {
+      $button_class = 'small button button-grey';
     } else {
-      $button_class = 'small grey button disabled';
+      $button_class = 'small button button-grey disabled';
     }
 
     $handles = $viewer->loadHandles(mpull($interfaces, 'getNetworkPHID'));
@@ -42,13 +44,22 @@ final class AlmanacInterfaceTableView extends AphrontView {
         $handles->renderHandle($interface->getNetworkPHID()),
         $interface->getAddress(),
         $interface->getPort(),
-        phutil_tag(
+        javelin_tag(
           'a',
           array(
             'class' => $button_class,
             'href' => '/almanac/interface/edit/'.$interface->getID().'/',
+            'sigil' => ($can_edit ? null : 'workflow'),
           ),
           pht('Edit')),
+        javelin_tag(
+          'a',
+          array(
+            'class' => $button_class,
+            'href' => '/almanac/interface/delete/'.$interface->getID().'/',
+            'sigil' => 'workflow',
+          ),
+          pht('Delete')),
       );
     }
 
@@ -60,6 +71,7 @@ final class AlmanacInterfaceTableView extends AphrontView {
           pht('Address'),
           pht('Port'),
           null,
+          null,
         ))
       ->setColumnClasses(
         array(
@@ -67,6 +79,7 @@ final class AlmanacInterfaceTableView extends AphrontView {
           'wide',
           '',
           '',
+          'action',
           'action',
         ));
 

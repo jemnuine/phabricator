@@ -17,6 +17,8 @@ abstract class PhabricatorConfigStorageSchema extends Phobject {
   const ISSUE_SUBFAIL = 'subfail';
   const ISSUE_AUTOINCREMENT = 'autoincrement';
   const ISSUE_UNKNOWN = 'unknown';
+  const ISSUE_ACCESSDENIED = 'accessdenied';
+  const ISSUE_ENGINE = 'engine';
 
   const STATUS_OKAY = 'okay';
   const STATUS_WARN = 'warn';
@@ -130,6 +132,10 @@ abstract class PhabricatorConfigStorageSchema extends Phobject {
         return pht('Column has Wrong Autoincrement');
       case self::ISSUE_UNKNOWN:
         return pht('Column Has No Specification');
+      case self::ISSUE_ACCESSDENIED:
+        return pht('Access Denied');
+      case self::ISSUE_ENGINE:
+        return pht('Better Table Engine Available');
       default:
         throw new Exception(pht('Unknown schema issue "%s"!', $issue));
     }
@@ -167,6 +173,8 @@ abstract class PhabricatorConfigStorageSchema extends Phobject {
         return pht('This column has the wrong autoincrement setting.');
       case self::ISSUE_UNKNOWN:
         return pht('This column is missing a type specification.');
+      case self::ISSUE_ENGINE:
+        return pht('This table can use a better table engine.');
       default:
         throw new Exception(pht('Unknown schema issue "%s"!', $issue));
     }
@@ -175,6 +183,7 @@ abstract class PhabricatorConfigStorageSchema extends Phobject {
   public static function getIssueStatus($issue) {
     switch ($issue) {
       case self::ISSUE_MISSING:
+      case self::ISSUE_ACCESSDENIED:
       case self::ISSUE_SURPLUS:
       case self::ISSUE_NULLABLE:
       case self::ISSUE_SUBFAIL:
@@ -190,6 +199,7 @@ abstract class PhabricatorConfigStorageSchema extends Phobject {
       case self::ISSUE_KEYCOLUMNS:
       case self::ISSUE_LONGKEY:
       case self::ISSUE_AUTOINCREMENT:
+      case self::ISSUE_ENGINE:
         return self::STATUS_WARN;
       default:
         throw new Exception(pht('Unknown schema issue "%s"!', $issue));

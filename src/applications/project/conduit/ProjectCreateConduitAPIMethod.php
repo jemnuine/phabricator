@@ -10,10 +10,23 @@ final class ProjectCreateConduitAPIMethod extends ProjectConduitAPIMethod {
     return pht('Create a project.');
   }
 
+  public function getMethodStatus() {
+    return self::METHOD_STATUS_FROZEN;
+  }
+
+  public function getMethodStatusDescription() {
+    return pht(
+      'This method is frozen and will eventually be deprecated. New code '.
+      'should use "project.edit" instead.');
+  }
+
   protected function defineParamTypes() {
     return array(
       'name'       => 'required string',
       'members'    => 'optional list<phid>',
+      'icon'       => 'optional string',
+      'color'      => 'optional string',
+      'tags'       => 'optional list<string>',
     );
   }
 
@@ -29,13 +42,34 @@ final class ProjectCreateConduitAPIMethod extends ProjectConduitAPIMethod {
       $user);
 
     $project = PhabricatorProject::initializeNewProject($user);
-    $type_name = PhabricatorProjectTransaction::TYPE_NAME;
+    $type_name = PhabricatorProjectNameTransaction::TRANSACTIONTYPE;
     $members = $request->getValue('members');
     $xactions = array();
 
     $xactions[] = id(new PhabricatorProjectTransaction())
       ->setTransactionType($type_name)
       ->setNewValue($request->getValue('name'));
+
+    if ($request->getValue('icon')) {
+      $xactions[] = id(new PhabricatorProjectTransaction())
+        ->setTransactionType(
+            PhabricatorProjectIconTransaction::TRANSACTIONTYPE)
+        ->setNewValue($request->getValue('icon'));
+    }
+
+    if ($request->getValue('color')) {
+      $xactions[] = id(new PhabricatorProjectTransaction())
+        ->setTransactionType(
+          PhabricatorProjectColorTransaction::TRANSACTIONTYPE)
+        ->setNewValue($request->getValue('color'));
+    }
+
+    if ($request->getValue('tags')) {
+      $xactions[] = id(new PhabricatorProjectTransaction())
+        ->setTransactionType(
+            PhabricatorProjectSlugsTransaction::TRANSACTIONTYPE)
+        ->setNewValue($request->getValue('tags'));
+    }
 
     $xactions[] = id(new PhabricatorProjectTransaction())
       ->setTransactionType(PhabricatorTransactions::TYPE_EDGE)
@@ -50,7 +84,7 @@ final class ProjectCreateConduitAPIMethod extends ProjectConduitAPIMethod {
     $editor = id(new PhabricatorProjectTransactionEditor())
       ->setActor($user)
       ->setContinueOnNoEffect(true)
-      ->setContentSourceFromConduitRequest($request);
+      ->setContentSource($request->newContentSource());
 
     $editor->applyTransactions($project, $xactions);
 

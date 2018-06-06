@@ -3,19 +3,13 @@
 final class FundInitiativeCloseController
   extends FundController {
 
-  private $id;
-
-  public function willProcessRequest(array $data) {
-    $this->id = $data['id'];
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $viewer = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $id = $request->getURIData('id');
 
     $initiative = id(new FundInitiativeQuery())
       ->setViewer($viewer)
-      ->withIDs(array($this->id))
+      ->withIDs(array($id))
       ->requireCapabilities(
         array(
           PhabricatorPolicyCapability::CAN_VIEW,
@@ -31,7 +25,7 @@ final class FundInitiativeCloseController
     $is_close = !$initiative->isClosed();
 
     if ($request->isFormPost()) {
-      $type_status = FundInitiativeTransaction::TYPE_STATUS;
+      $type_status = FundInitiativeStatusTransaction::TRANSACTIONTYPE;
 
       if ($is_close) {
         $new_status = FundInitiative::STATUS_CLOSED;

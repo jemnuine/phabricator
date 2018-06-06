@@ -6,6 +6,7 @@ final class HarbormasterBuildLogQuery
   private $ids;
   private $phids;
   private $buildPHIDs;
+  private $buildTargetPHIDs;
 
   public function withIDs(array $ids) {
     $this->ids = $ids;
@@ -22,19 +23,12 @@ final class HarbormasterBuildLogQuery
     return $this;
   }
 
+  public function newResultObject() {
+    return new HarbormasterBuildLog();
+  }
+
   protected function loadPage() {
-    $table = new HarbormasterBuildLog();
-    $conn_r = $table->establishConnection('r');
-
-    $data = queryfx_all(
-      $conn_r,
-      'SELECT * FROM %T %Q %Q %Q',
-      $table->getTableName(),
-      $this->buildWhereClause($conn_r),
-      $this->buildOrderClause($conn_r),
-      $this->buildLimitClause($conn_r));
-
-    return $table->loadAllFromArray($data);
+    return $this->loadStandardPage($this->newResultObject());
   }
 
   protected function willFilterPage(array $page) {
@@ -62,33 +56,31 @@ final class HarbormasterBuildLogQuery
     return $page;
   }
 
-  private function buildWhereClause(AphrontDatabaseConnection $conn_r) {
-    $where = array();
+  protected function buildWhereClauseParts(AphrontDatabaseConnection $conn) {
+    $where = parent::buildWhereClauseParts($conn);
 
-    if ($this->ids) {
+    if ($this->ids !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'id IN (%Ld)',
         $this->ids);
     }
 
-    if ($this->phids) {
+    if ($this->phids !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'phid IN (%Ls)',
         $this->phids);
     }
 
-    if ($this->buildTargetPHIDs) {
+    if ($this->buildTargetPHIDs !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'buildTargetPHID IN (%Ls)',
         $this->buildTargetPHIDs);
     }
 
-    $where[] = $this->buildPagingClause($conn_r);
-
-    return $this->formatWhereClause($where);
+    return $where;
   }
 
   public function getQueryApplicationClass() {

@@ -13,7 +13,7 @@ final class PhabricatorNavigationRemarkupRule extends PhutilRemarkupRule {
       $text);
   }
 
-  public function markupNavigation($matches) {
+  public function markupNavigation(array $matches) {
     if (!$this->isFlatText($matches[0])) {
       return $matches[0];
     }
@@ -46,7 +46,7 @@ final class PhabricatorNavigationRemarkupRule extends PhutilRemarkupRule {
 
     static $icon_names;
     if (!$icon_names) {
-      $icon_names = array_fuse(PHUIIconView::getFontIcons());
+      $icon_names = array_fuse(PHUIIconView::getIcons());
     }
 
     $out = array();
@@ -60,7 +60,7 @@ final class PhabricatorNavigationRemarkupRule extends PhutilRemarkupRule {
 
       $tag = id(new PHUITagView())
         ->setType(PHUITagView::TYPE_SHADE)
-        ->setShade($item_color)
+        ->setColor($item_color)
         ->setName($item_name);
 
       if ($item['icon']) {

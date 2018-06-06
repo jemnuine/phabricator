@@ -6,6 +6,7 @@ final class PhortuneMerchantQuery
   private $ids;
   private $phids;
   private $memberPHIDs;
+  private $needProfileImage;
 
   public function withIDs(array $ids) {
     $this->ids = $ids;
@@ -19,6 +20,11 @@ final class PhortuneMerchantQuery
 
   public function withMemberPHIDs(array $member_phids) {
     $this->memberPHIDs = $member_phids;
+    return $this;
+  }
+
+  public function needProfileImage($need) {
+    $this->needProfileImage = $need;
     return $this;
   }
 
@@ -50,10 +56,39 @@ final class PhortuneMerchantQuery
       $merchant->attachMemberPHIDs($member_phids);
     }
 
+    if ($this->needProfileImage) {
+      $default = null;
+      $file_phids = mpull($merchants, 'getProfileImagePHID');
+      $file_phids = array_filter($file_phids);
+      if ($file_phids) {
+        $files = id(new PhabricatorFileQuery())
+          ->setParentQuery($this)
+          ->setViewer($this->getViewer())
+          ->withPHIDs($file_phids)
+          ->execute();
+        $files = mpull($files, null, 'getPHID');
+      } else {
+        $files = array();
+      }
+
+      foreach ($merchants as $merchant) {
+        $file = idx($files, $merchant->getProfileImagePHID());
+        if (!$file) {
+          if (!$default) {
+            $default = PhabricatorFile::loadBuiltin(
+              $this->getViewer(),
+              'merchant.png');
+          }
+          $file = $default;
+        }
+        $merchant->attachProfileImageFile($file);
+      }
+    }
+
     return $merchants;
   }
 
-  private function buildWhereClause(AphrontDatabaseConnection $conn) {
+  protected function buildWhereClause(AphrontDatabaseConnection $conn) {
     $where = array();
 
     if ($this->ids !== null) {
@@ -82,7 +117,7 @@ final class PhortuneMerchantQuery
     return $this->formatWhereClause($where);
   }
 
-  private function buildJoinClause(AphrontDatabaseConnection $conn) {
+  protected function buildJoinClause(AphrontDatabaseConnection $conn) {
     $joins = array();
 
     if ($this->memberPHIDs !== null) {

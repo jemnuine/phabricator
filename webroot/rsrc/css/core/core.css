@@ -47,13 +47,23 @@ body {
   direction: ltr;
   text-align: left;
   unicode-bidi: embed;
-  background: #ebecee;
+  background: {$page.background};
+  color: {$blacktext};
 
   /* By default, the iPhone zooms all text on the page by some percentage when
      you rotate from portrait mode to landscape mode. Disable this, since it
      breaks lots of things and prevents you from using landscape to see more
      columns in source code views. */
   -webkit-text-size-adjust: none;
+
+  /* Prevent content from resizing abruptly when shifting between scrollable
+     and unscrollable pages. */
+  overflow-y: scroll;
+}
+
+body.printable,
+!print body {
+  background: none;
 }
 
 textarea {
@@ -76,11 +86,11 @@ h2 {
 a {
   -moz-outline-style: none;
   text-decoration: none;
-  color: #18559D;
+  color: {$anchor};
   cursor: pointer;
 }
 
-a:hover {
+.device-desktop a:hover {
   text-decoration: underline;
 }
 
@@ -168,4 +178,17 @@ hr {
   left: 0;
   height: 2px;
   background: {$sky};
+}
+
+.clipboard-copy {
+  visibility: hidden;
+}
+
+.supports-clipboard .clipboard-copy {
+  visibility: visible;
+}
+
+.clipboard-buffer {
+  position: absolute;
+  left: -9999px;
 }

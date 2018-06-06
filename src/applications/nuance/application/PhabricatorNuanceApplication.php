@@ -6,7 +6,7 @@ final class PhabricatorNuanceApplication extends PhabricatorApplication {
     return pht('Nuance');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-fax';
   }
 
@@ -15,15 +15,6 @@ final class PhabricatorNuanceApplication extends PhabricatorApplication {
   }
 
   public function isPrototype() {
-    return true;
-  }
-
-  public function isLaunchable() {
-    // Try to hide this even more for now.
-    return false;
-  }
-
-  public function canUninstall() {
     return true;
   }
 
@@ -38,26 +29,30 @@ final class PhabricatorNuanceApplication extends PhabricatorApplication {
   public function getRoutes() {
     return array(
       '/nuance/' => array(
+        '' => 'NuanceConsoleController',
         'item/' => array(
+          $this->getQueryRoutePattern() => 'NuanceItemListController',
           'view/(?P<id>[1-9]\d*)/' => 'NuanceItemViewController',
-          'edit/(?P<id>[1-9]\d*)/' => 'NuanceItemEditController',
-          'new/'                   => 'NuanceItemEditController',
+          'manage/(?P<id>[1-9]\d*)/' => 'NuanceItemManageController',
+          'action/(?P<id>[1-9]\d*)/(?P<action>[^/]+)/'
+            => 'NuanceItemActionController',
         ),
         'source/' => array(
+          $this->getQueryRoutePattern() => 'NuanceSourceListController',
+          $this->getEditRoutePattern('edit/') => 'NuanceSourceEditController',
           'view/(?P<id>[1-9]\d*)/' => 'NuanceSourceViewController',
-          'edit/(?P<id>[1-9]\d*)/' => 'NuanceSourceEditController',
-          'new/'                   => 'NuanceSourceEditController',
         ),
         'queue/' => array(
+          $this->getQueryRoutePattern() => 'NuanceQueueListController',
+          $this->getEditRoutePattern('edit/') => 'NuanceQueueEditController',
           'view/(?P<id>[1-9]\d*)/' => 'NuanceQueueViewController',
-          'edit/(?P<id>[1-9]\d*)/' => 'NuanceQueueEditController',
-          'new/'                   => 'NuanceQueueEditController',
+          'work/(?P<id>[1-9]\d*)/' => 'NuanceQueueWorkController',
+          'action/(?P<queueID>[1-9]\d*)/(?P<action>[^/]+)/(?P<id>[1-9]\d*)/'
+            => 'NuanceItemActionController',
         ),
-        'requestor/' => array(
-          'view/(?P<id>[1-9]\d*)/' => 'NuanceRequestorViewController',
-          'edit/(?P<id>[1-9]\d*)/' => 'NuanceRequestorEditController',
-          'new/'                   => 'NuanceRequestorEditController',
-        ),
+      ),
+      '/action/' => array(
+        '(?P<id>[1-9]\d*)/(?P<path>.*)' => 'NuanceSourceActionController',
       ),
     );
   }
@@ -66,9 +61,13 @@ final class PhabricatorNuanceApplication extends PhabricatorApplication {
     return array(
       NuanceSourceDefaultViewCapability::CAPABILITY => array(
         'caption' => pht('Default view policy for newly created sources.'),
+        'template' => NuanceSourcePHIDType::TYPECONST,
+        'capability' => PhabricatorPolicyCapability::CAN_VIEW,
       ),
       NuanceSourceDefaultEditCapability::CAPABILITY => array(
         'caption' => pht('Default edit policy for newly created sources.'),
+        'template' => NuanceSourcePHIDType::TYPECONST,
+        'capability' => PhabricatorPolicyCapability::CAN_EDIT,
       ),
       NuanceSourceManageCapability::CAPABILITY => array(),
     );

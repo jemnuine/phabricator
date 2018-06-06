@@ -1,6 +1,6 @@
 <?php
 
-abstract class DifferentialChangesetRenderer {
+abstract class DifferentialChangesetRenderer extends Phobject {
 
   private $user;
   private $changeset;
@@ -599,7 +599,7 @@ abstract class DifferentialChangesetRenderer {
         }
 
       } else {
-        throw new Exception("Unknown primitive type '{$primitive}'!");
+        throw new Exception(pht("Unknown primitive type '%s'!", $primitive));
       }
     }
 
@@ -626,6 +626,8 @@ abstract class DifferentialChangesetRenderer {
       unset($old['unix:filemode']);
     }
 
+    $metadata = $changeset->getMetadata();
+
     if ($this->hasOldFile()) {
       $file = $this->getOldFile();
       if ($file->getImageWidth()) {
@@ -634,6 +636,12 @@ abstract class DifferentialChangesetRenderer {
       }
       $old['file:mimetype'] = $file->getMimeType();
       $old['file:size'] = phutil_format_bytes($file->getByteSize());
+    } else {
+      $old['file:mimetype'] = idx($metadata, 'old:file:mime-type');
+      $size = idx($metadata, 'old:file:size');
+      if ($size !== null) {
+        $old['file:size'] = phutil_format_bytes($size);
+      }
     }
 
     if ($this->hasNewFile()) {
@@ -644,6 +652,12 @@ abstract class DifferentialChangesetRenderer {
       }
       $new['file:mimetype'] = $file->getMimeType();
       $new['file:size'] = phutil_format_bytes($file->getByteSize());
+    } else {
+      $new['file:mimetype'] = idx($metadata, 'new:file:mime-type');
+      $size = idx($metadata, 'new:file:size');
+      if ($size !== null) {
+        $new['file:size'] = phutil_format_bytes($size);
+      }
     }
 
     return array($old, $new);

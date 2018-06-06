@@ -11,7 +11,7 @@ final class PhabricatorFilesConfigOptions
     return pht('Configure files and file storage.');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-file';
   }
 
@@ -34,9 +34,19 @@ final class PhabricatorFilesConfigOptions
       'image/x-icon'              => 'image/x-icon',
       'image/vnd.microsoft.icon'  => 'image/x-icon',
 
-      'audio/x-wav'     => 'audio/x-wav',
+      // This is a generic type for both OGG video and OGG audio.
       'application/ogg' => 'application/ogg',
-      'audio/mpeg'      => 'audio/mpeg',
+
+      'audio/x-wav' => 'audio/x-wav',
+      'audio/mpeg' => 'audio/mpeg',
+      'audio/ogg' => 'audio/ogg',
+
+      'video/mp4' => 'video/mp4',
+      'video/ogg' => 'video/ogg',
+      'video/webm' => 'video/webm',
+      'video/quicktime' => 'video/quicktime',
+
+      'application/pdf' => 'application/pdf',
     );
 
     $image_default = array(
@@ -49,10 +59,31 @@ final class PhabricatorFilesConfigOptions
       'image/vnd.microsoft.icon'  => true,
     );
 
+
+    // The "application/ogg" type is listed as both an audio and video type,
+    // because it may contain either type of content.
+
     $audio_default = array(
-      'audio/x-wav'     => true,
+      'audio/x-wav' => true,
+      'audio/mpeg' => true,
+      'audio/ogg' => true,
+
+      // These are video or ambiguous types, but can be forced to render as
+      // audio with `media=audio`, which seems to work properly in browsers.
+      // (For example, you can embed a music video as audio if you just want
+      // to set the mood for your task without distracting viewers.)
+      'video/mp4' => true,
+      'video/ogg' => true,
+      'video/quicktime' => true,
       'application/ogg' => true,
-      'audio/mpeg'      => true,
+    );
+
+    $video_default = array(
+      'video/mp4' => true,
+      'video/ogg' => true,
+      'video/webm' => true,
+      'video/quicktime' => true,
+      'application/ogg' => true,
     );
 
     // largely lifted from http://en.wikipedia.org/wiki/Internet_media_type
@@ -70,6 +101,7 @@ final class PhabricatorFilesConfigOptions
       // movie file icon
       'video/mpeg' => 'fa-file-movie-o',
       'video/mp4' => 'fa-file-movie-o',
+      'application/ogg' => 'fa-file-movie-o',
       'video/ogg' => 'fa-file-movie-o',
       'video/quicktime' => 'fa-file-movie-o',
       'video/webm' => 'fa-file-movie-o',
@@ -101,35 +133,44 @@ final class PhabricatorFilesConfigOptions
           pht('Configure which MIME types are viewable in the browser.'))
         ->setDescription(
           pht(
-            'Configure which uploaded file types may be viewed directly '.
-            'in the browser. Other file types will be downloaded instead '.
-            'of displayed. This is mainly a usability consideration, since '.
-            'browsers tend to freak out when viewing enormous binary files.'.
+            "Configure which uploaded file types may be viewed directly ".
+            "in the browser. Other file types will be downloaded instead ".
+            "of displayed. This is mainly a usability consideration, since ".
+            "browsers tend to freak out when viewing very large binary files.".
             "\n\n".
-            'The keys in this map are vieweable MIME types; the values are '.
-            'the MIME types they are delivered as when they are viewed in '.
-            'the browser.')),
+            "The keys in this map are viewable MIME types; the values are ".
+            "the MIME types they are delivered as when they are viewed in ".
+            "the browser.")),
       $this->newOption('files.image-mime-types', 'set', $image_default)
         ->setLocked(true)
         ->setSummary(pht('Configure which MIME types are images.'))
         ->setDescription(
           pht(
-            'List of MIME types which can be used as the `src` for an '.
-            '`<img />` tag.')),
+            'List of MIME types which can be used as the `%s` for an `%s` tag.',
+            'src',
+            '<img />')),
       $this->newOption('files.audio-mime-types', 'set', $audio_default)
         ->setLocked(true)
         ->setSummary(pht('Configure which MIME types are audio.'))
         ->setDescription(
           pht(
-            'List of MIME types which can be used to render an '.
-            '`<audio />` tag.')),
+            'List of MIME types which can be rendered with an `%s` tag.',
+            '<audio />')),
+      $this->newOption('files.video-mime-types', 'set', $video_default)
+        ->setLocked(true)
+        ->setSummary(pht('Configure which MIME types are video.'))
+        ->setDescription(
+          pht(
+            'List of MIME types which can be rendered with a `%s` tag.',
+            '<video />')),
       $this->newOption('files.icon-mime-types', 'wild', $icon_default)
         ->setLocked(true)
         ->setSummary(pht('Configure which MIME types map to which icons.'))
         ->setDescription(
           pht(
             'Map of MIME type to icon name. MIME types which can not be '.
-            'found default to icon `doc_files`.')),
+            'found default to icon `%s`.',
+            'doc_files')),
       $this->newOption('storage.mysql-engine.max-size', 'int', 1000000)
         ->setSummary(
           pht(
@@ -157,20 +198,6 @@ final class PhabricatorFilesConfigOptions
             "must also configure S3 access keys in the 'Amazon Web Services' ".
             "group.")),
      $this->newOption(
-        'metamta.files.public-create-email',
-        'string',
-        null)
-        ->setLocked(true)
-        ->setLockedMessage(pht(
-          'This configuration is deprecated. See description for details.'))
-        ->setSummary(pht('DEPRECATED - Allow uploaded files via email.'))
-        ->setDescription(
-          pht(
-            'This config has been deprecated in favor of [[ '.
-            '/applications/view/PhabricatorFilesApplication/ | '.
-            'application settings ]], which allow for multiple email '.
-            'addresses and other functionality.')),
-     $this->newOption(
         'metamta.files.subject-prefix',
         'string',
         '[File]')
@@ -185,8 +212,9 @@ final class PhabricatorFilesConfigOptions
           pht(
             'This option will use Imagemagick to rescale images, so animated '.
             'GIFs can be thumbnailed and set as profile pictures. Imagemagick '.
-            'must be installed and the "convert" binary must be available to '.
-            'the webserver for this to work.')),
+            'must be installed and the "%s" binary must be available to '.
+            'the webserver for this to work.',
+            'convert')),
 
     );
   }

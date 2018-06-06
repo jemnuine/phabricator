@@ -2,10 +2,10 @@
 <?php
 
 $root = dirname(dirname(dirname(__FILE__)));
-require_once $root.'/scripts/__init_script__.php';
+require_once $root.'/scripts/init/init-setup.php';
 
 $args = new PhutilArgumentParser($argv);
-$args->setTagline('manage Phabricator storage and schemata');
+$args->setTagline(pht('manage Phabricator storage and schemata'));
 $args->setSynopsis(<<<EOHELP
 **storage** __workflow__ [__options__]
 Manage Phabricator database storage and schema versioning.
@@ -19,13 +19,6 @@ EOHELP
 );
 $args->parseStandardArguments();
 
-$conf = PhabricatorEnv::newObjectFromConfig(
-  'mysql.configuration-provider',
-  array($dao = null, 'w'));
-
-$default_user       = $conf->getUser();
-$default_host       = $conf->getHost();
-$default_port       = $conf->getPort();
 $default_namespace  = PhabricatorLiskDAO::getDefaultStorageNamespace();
 
 try {
@@ -34,42 +27,56 @@ try {
       array(
         'name'    => 'force',
         'short'   => 'f',
-        'help'    => 'Do not prompt before performing dangerous operations.',
+        'help'    => pht(
+          'Do not prompt before performing dangerous operations.'),
+      ),
+      array(
+        'name' => 'host',
+        'param' => 'hostname',
+        'help' => pht(
+          'Operate on the database server identified by __hostname__.'),
+      ),
+      array(
+        'name' => 'ref',
+        'param' => 'ref',
+        'help' => pht(
+          'Operate on the database identified by __ref__.'),
       ),
       array(
         'name'    => 'user',
         'short'   => 'u',
         'param'   => 'username',
-        'default' => $default_user,
-        'help'    => "Connect with __username__ instead of the configured ".
-                     "default ('{$default_user}').",
+        'help'    => pht(
+          'Connect with __username__ instead of the configured default.'),
       ),
       array(
         'name'    => 'password',
         'short'   => 'p',
         'param'   => 'password',
-        'help'    => 'Use __password__ instead of the configured default.',
+        'help'    => pht('Use __password__ instead of the configured default.'),
       ),
       array(
         'name'    => 'namespace',
         'param'   => 'name',
         'default' => $default_namespace,
-        'help'    => "Use namespace __namespace__ instead of the configured ".
-                     "default ('{$default_namespace}'). This is an advanced ".
-                     "feature used by unit tests; you should not normally ".
-                     "use this flag.",
+        'help'    => pht(
+          "Use namespace __namespace__ instead of the configured ".
+          "default ('%s'). This is an advanced feature used by unit tests; ".
+          "you should not normally use this flag.",
+          $default_namespace),
       ),
       array(
-        'name'  => 'dryrun',
-        'help'  => 'Do not actually change anything, just show what would be '.
-                   'changed.',
+        'name'    => 'dryrun',
+        'help'    => pht(
+          'Do not actually change anything, just show what would be changed.'),
       ),
       array(
-        'name' => 'disable-utf8mb4',
-        'help' => pht(
-          'Disable utf8mb4, even if the database supports it. This is an '.
+        'name'    => 'disable-utf8mb4',
+        'help'    => pht(
+          'Disable %s, even if the database supports it. This is an '.
           'advanced feature used for testing changes to Phabricator; you '.
-          'should not normally use this flag.'),
+          'should not normally use this flag.',
+          'utf8mb4'),
       ),
     ));
 } catch (PhutilArgumentUsageException $ex) {
@@ -80,89 +87,160 @@ try {
 // First, test that the Phabricator configuration is set up correctly. After
 // we know this works we'll test any administrative credentials specifically.
 
-$test_api = new PhabricatorStorageManagementAPI();
-$test_api->setUser($default_user);
-$test_api->setHost($default_host);
-$test_api->setPort($default_port);
-$test_api->setPassword($conf->getPassword());
-$test_api->setNamespace($args->getArg('namespace'));
+$refs = PhabricatorDatabaseRef::getActiveDatabaseRefs();
+if (!$refs) {
+  throw new PhutilArgumentUsageException(
+    pht('No databases are configured.'));
+}
 
-try {
-  queryfx(
-    $test_api->getConn(null),
-    'SELECT 1');
-} catch (AphrontQueryException $ex) {
-  $message = phutil_console_format(
-    pht(
-      "**MySQL Credentials Not Configured**\n\n".
-      "Unable to connect to MySQL using the configured credentials. ".
-      "You must configure standard credentials before you can upgrade ".
-      "storage. Run these commands to set up credentials:\n".
-      "\n".
+$host = $args->getArg('host');
+$ref_key = $args->getArg('ref');
+if (strlen($host) || strlen($ref_key)) {
+  if ($host && $ref_key) {
+    throw new PhutilArgumentUsageException(
+      pht(
+        'Use "--host" or "--ref" to select a database, but not both.'));
+  }
+
+  $refs = PhabricatorDatabaseRef::getActiveDatabaseRefs();
+
+  $possible_refs = array();
+  foreach ($refs as $possible_ref) {
+    if ($host && ($possible_ref->getHost() == $host)) {
+      $possible_refs[] = $possible_ref;
+      break;
+    }
+    if ($ref_key && ($possible_ref->getRefKey() == $ref_key)) {
+      $possible_refs[] = $possible_ref;
+      break;
+    }
+  }
+
+  if (!$possible_refs) {
+    if ($host) {
+      throw new PhutilArgumentUsageException(
+        pht(
+          'There is no configured database on host "%s". This command can '.
+          'only interact with configured databases.',
+          $host));
+    } else {
+      throw new PhutilArgumentUsageException(
+        pht(
+          'There is no configured database with ref "%s". This command can '.
+          'only interact with configured databases.',
+          $ref_key));
+    }
+  }
+
+  if (count($possible_refs) > 1) {
+    throw new PhutilArgumentUsageException(
+      pht(
+        'Host "%s" identifies more than one database. Use "--ref" to select '.
+        'a specific database.',
+        $host));
+  }
+
+  $refs = $possible_refs;
+}
+
+$apis = array();
+foreach ($refs as $ref) {
+  $default_user = $ref->getUser();
+  $default_host = $ref->getHost();
+  $default_port = $ref->getPort();
+
+  $test_api = id(new PhabricatorStorageManagementAPI())
+    ->setUser($default_user)
+    ->setHost($default_host)
+    ->setPort($default_port)
+    ->setPassword($ref->getPass())
+    ->setNamespace($args->getArg('namespace'));
+
+  try {
+    queryfx(
+      $test_api->getConn(null),
+      'SELECT 1');
+  } catch (AphrontQueryException $ex) {
+    $message = phutil_console_format(
+      "**%s**\n\n%s\n\n%s\n\n%s\n\n**%s**: %s\n",
+      pht('MySQL Credentials Not Configured'),
+      pht(
+        'Unable to connect to MySQL using the configured credentials. '.
+        'You must configure standard credentials before you can upgrade '.
+        'storage. Run these commands to set up credentials:'),
       "  phabricator/ $ ./bin/config set mysql.host __host__\n".
       "  phabricator/ $ ./bin/config set mysql.user __username__\n".
-      "  phabricator/ $ ./bin/config set mysql.pass __password__\n".
-      "\n".
-      "These standard credentials are separate from any administrative ".
-      "credentials provided to this command with __--user__ or ".
-      "__--password__, and must be configured correctly before you can ".
-      "proceed.\n".
-      "\n".
-      "**Raw MySQL Error**: %s\n",
-      $ex->getMessage()));
+      "  phabricator/ $ ./bin/config set mysql.pass __password__",
+      pht(
+        'These standard credentials are separate from any administrative '.
+        'credentials provided to this command with __%s__ or '.
+        '__%s__, and must be configured correctly before you can proceed.',
+        '--user',
+        '--password'),
+      pht('Raw MySQL Error'),
+      $ex->getMessage());
+    echo phutil_console_wrap($message);
+    exit(1);
+  }
 
-  echo phutil_console_wrap($message);
+  if ($args->getArg('password') === null) {
+    // This is already a PhutilOpaqueEnvelope.
+    $password = $ref->getPass();
+  } else {
+    // Put this in a PhutilOpaqueEnvelope.
+    $password = new PhutilOpaqueEnvelope($args->getArg('password'));
+    PhabricatorEnv::overrideConfig('mysql.pass', $args->getArg('password'));
+  }
 
-  exit(1);
+  $selected_user = $args->getArg('user');
+  if ($selected_user === null) {
+    $selected_user = $default_user;
+  }
+
+  $api = id(new PhabricatorStorageManagementAPI())
+    ->setUser($selected_user)
+    ->setHost($default_host)
+    ->setPort($default_port)
+    ->setPassword($password)
+    ->setNamespace($args->getArg('namespace'))
+    ->setDisableUTF8MB4($args->getArg('disable-utf8mb4'));
+  PhabricatorEnv::overrideConfig('mysql.user', $api->getUser());
+
+  $ref->setUser($selected_user);
+  $ref->setPass($password);
+
+  try {
+    queryfx(
+      $api->getConn(null),
+      'SELECT 1');
+  } catch (AphrontQueryException $ex) {
+    $message = phutil_console_format(
+      "**%s**\n\n%s\n\n**%s**: %s\n",
+      pht('Bad Administrative Credentials'),
+      pht(
+        'Unable to connect to MySQL using the administrative credentials '.
+        'provided with the __%s__ and __%s__ flags. Check that '.
+        'you have entered them correctly.',
+        '--user',
+        '--password'),
+      pht('Raw MySQL Error'),
+      $ex->getMessage());
+    echo phutil_console_wrap($message);
+    exit(1);
+  }
+
+  $api->setRef($ref);
+  $apis[] = $api;
 }
 
-
-if ($args->getArg('password') === null) {
-  // This is already a PhutilOpaqueEnvelope.
-  $password = $conf->getPassword();
-} else {
-  // Put this in a PhutilOpaqueEnvelope.
-  $password = new PhutilOpaqueEnvelope($args->getArg('password'));
-  PhabricatorEnv::overrideConfig('mysql.pass', $args->getArg('password'));
-}
-
-$api = new PhabricatorStorageManagementAPI();
-$api->setUser($args->getArg('user'));
-PhabricatorEnv::overrideConfig('mysql.user', $args->getArg('user'));
-$api->setHost($default_host);
-$api->setPort($default_port);
-$api->setPassword($password);
-$api->setNamespace($args->getArg('namespace'));
-$api->setDisableUTF8MB4($args->getArg('disable-utf8mb4'));
-
-try {
-  queryfx(
-    $api->getConn(null),
-    'SELECT 1');
-} catch (AphrontQueryException $ex) {
-  $message = phutil_console_format(
-    pht(
-      "**Bad Administrative Credentials**\n\n".
-      "Unable to connnect to MySQL using the administrative credentials ".
-      "provided with the __--user__ and __--password__ flags. Check that ".
-      "you have entered them correctly.\n".
-      "\n".
-      "**Raw MySQL Error**: %s\n",
-      $ex->getMessage()));
-
-  echo phutil_console_wrap($message);
-
-  exit(1);
-}
-
-$workflows = id(new PhutilSymbolLoader())
+$workflows = id(new PhutilClassMapQuery())
   ->setAncestorClass('PhabricatorStorageManagementWorkflow')
-  ->loadObjects();
+  ->execute();
 
 $patches = PhabricatorSQLPatchList::buildAllPatches();
 
 foreach ($workflows as $workflow) {
-  $workflow->setAPI($api);
+  $workflow->setAPIs($apis);
   $workflow->setPatches($patches);
 }
 

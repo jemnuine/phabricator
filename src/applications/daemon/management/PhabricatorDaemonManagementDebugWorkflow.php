@@ -22,13 +22,17 @@ final class PhabricatorDaemonManagementDebugWorkflow
             'wildcard' => true,
           ),
           array(
-            'name' => 'as-current-user',
-            'help' => 'Run the daemon as the current user '.
-              'instead of the configured phd.user',
+            'name' => 'pool',
+            'param' => 'count',
+            'help' => pht('Maximum pool size.'),
+            'default' => 1,
           ),
           array(
-            'name' => 'autoscale',
-            'help' => pht('Put the daemon in an autoscale group.'),
+            'name' => 'as-current-user',
+            'help' => pht(
+              'Run the daemon as the current user '.
+              'instead of the configured %s',
+              'phd.user'),
           ),
         ));
   }
@@ -42,16 +46,12 @@ final class PhabricatorDaemonManagementDebugWorkflow
         pht('You must specify which daemon to debug.'));
     }
 
-    $config = array();
-
-    $config['class'] = array_shift($argv);
-    $config['argv'] = $argv;
-
-    if ($args->getArg('autoscale')) {
-      $config['autoscale'] = array(
-        'group' => 'debug',
-      );
-    }
+    $config = array(
+      'class' => array_shift($argv),
+      'label' => 'debug',
+      'pool' => (int)$args->getArg('pool'),
+      'argv' => $argv,
+    );
 
     return $this->launchDaemons(
       array(

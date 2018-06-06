@@ -10,10 +10,15 @@ final class ManiphestTaskStatusTestCase extends PhabricatorTestCase {
       'duplicate2' => true,
 
       '' => false,
-      'longlonglonglong' => false,
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' =>
+         false,
       '.' => false,
-      'ABCD' => false,
+      ' ' => false,
+      'ABCD' => true,
       'a b c ' => false,
+      '1' => false,
+      '111' => false,
+      '11a' => true,
     );
 
     foreach ($map as $input => $expect) {
@@ -34,16 +39,16 @@ final class ManiphestTaskStatusTestCase extends PhabricatorTestCase {
 
     $valid = array(
       'open' => array(
-        'name' => 'Open',
+        'name' => pht('Open'),
         'special' => 'default',
       ),
       'closed' => array(
-        'name' => 'Closed',
+        'name' => pht('Closed'),
         'special' => 'closed',
         'closed' => true,
       ),
       'duplicate' => array(
-        'name' => 'Duplicate',
+        'name' => pht('Duplicate'),
         'special' => 'duplicate',
         'closed' => true,
       ),
@@ -52,7 +57,7 @@ final class ManiphestTaskStatusTestCase extends PhabricatorTestCase {
 
     // We should raise on a bad key.
     $bad_key = $valid;
-    $bad_key['!'] = array('name' => 'Exclaim');
+    $bad_key['!'] = array('name' => pht('Exclaim'));
     $this->assertConfigValid(false, pht('Bad Key'), $bad_key);
 
     // We should raise on a value type.
@@ -68,7 +73,7 @@ final class ManiphestTaskStatusTestCase extends PhabricatorTestCase {
     // We should raise on two statuses with the same special.
     $double_close = $valid;
     $double_close['finished'] = array(
-      'name' => 'Finished',
+      'name' => pht('Finished'),
       'special' => 'closed',
       'closed' => true,
     );

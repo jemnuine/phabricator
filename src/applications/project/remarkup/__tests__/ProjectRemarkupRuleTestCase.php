@@ -33,7 +33,21 @@ final class ProjectRemarkupRuleTestCase extends PhabricatorTestCase {
       ),
       '#123' => array(
         'embed' => array(),
-        'ref' => array(),
+        'ref' => array(
+          array(
+            'offset' => 1,
+            'id' => '123',
+          ),
+        ),
+      ),
+      '#2x4' => array(
+        'embed' => array(),
+        'ref' => array(
+          array(
+            'offset' => 1,
+            'id' => '2x4',
+          ),
+        ),
       ),
       '#security#123' => array(
         'embed' => array(),
@@ -101,12 +115,22 @@ final class ProjectRemarkupRuleTestCase extends PhabricatorTestCase {
         ),
       ),
 
-      'This is \'#urgent\'.' => array(
+      "This is '#urgent'." => array(
         'embed' => array(),
         'ref' => array(
           array(
             'offset' => 10,
             'id' => 'urgent',
+          ),
+        ),
+      ),
+
+      '**#orbital**' => array(
+        'embed' => array(),
+        'ref' => array(
+          array(
+            'offset' => 3,
+            'id' => 'orbital',
           ),
         ),
       ),

@@ -11,6 +11,10 @@ final class PhabricatorDashboardQueryPanelType
     return pht('Query Panel');
   }
 
+  public function getIcon() {
+    return 'fa-search';
+  }
+
   public function getPanelTypeDescription() {
     return pht(
       'Show results of a search query, like the most recently filed tasks or '.
@@ -111,11 +115,15 @@ final class PhabricatorDashboardQueryPanelType
     PhabricatorUser $viewer,
     PhabricatorDashboardPanel $panel,
     PhabricatorDashboardPanelRenderingEngine $engine,
-    PHUIActionHeaderView $header) {
+    PHUIHeaderView $header) {
 
     $search_engine = $this->getSearchEngine($panel);
     $key = $panel->getProperty('key');
-    $header->setHeaderHref($search_engine->getQueryResultsPageURI($key));
+    $href = $search_engine->getQueryResultsPageURI($key);
+    $icon = id(new PHUIIconView())
+        ->setIcon('fa-search')
+        ->setHref($href);
+    $header->addActionItem($icon);
 
     return $header;
   }

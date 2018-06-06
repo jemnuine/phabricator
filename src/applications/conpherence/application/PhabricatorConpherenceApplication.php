@@ -11,10 +11,10 @@ final class PhabricatorConpherenceApplication extends PhabricatorApplication {
   }
 
   public function getShortDescription() {
-    return pht('Send Messages');
+    return pht('Chat with Others');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-comments';
   }
 
@@ -28,42 +28,41 @@ final class PhabricatorConpherenceApplication extends PhabricatorApplication {
     );
   }
 
-  public function getEventListeners() {
-    return array(
-      new ConpherenceHovercardEventListener(),
-    );
-  }
-
   public function getRoutes() {
     return array(
-      '/Z(?P<id>[1-9]\d*)'         => 'ConpherenceViewController',
+      '/Z(?P<id>[1-9]\d*)'
+        => 'ConpherenceViewController',
       '/conpherence/' => array(
-        ''                         => 'ConpherenceListController',
-        'thread/(?P<id>[1-9]\d*)/' => 'ConpherenceListController',
-        '(?P<id>[1-9]\d*)/'        => 'ConpherenceViewController',
-        'columnview/'              => 'ConpherenceColumnViewController',
-        'new/'                     => 'ConpherenceNewController',
-        'room/new/'                => 'ConpherenceNewRoomController',
+        ''
+          => 'ConpherenceListController',
+        'thread/(?P<id>[1-9]\d*)/'
+          => 'ConpherenceListController',
+        'threadsearch/(?P<id>[1-9]\d*)/'
+          => 'ConpherenceThreadSearchController',
+        '(?P<id>[1-9]\d*)/'
+          => 'ConpherenceViewController',
+        '(?P<id>[1-9]\d*)/(?P<messageID>[1-9]\d*)/'
+          => 'ConpherenceViewController',
+        'columnview/'
+          => 'ConpherenceColumnViewController',
+        $this->getEditRoutePattern('new/')
+          => 'ConpherenceRoomEditController',
+        $this->getEditRoutePattern('edit/')
+          => 'ConpherenceRoomEditController',
+        'picture/(?P<id>[1-9]\d*)/'
+          => 'ConpherenceRoomPictureController',
         'search/(?:query/(?P<queryKey>[^/]+)/)?'
-           => 'ConpherenceRoomListController',
-        'panel/'                   => 'ConpherenceNotificationPanelController',
-        'widget/(?P<id>[1-9]\d*)/' => 'ConpherenceWidgetController',
-        'update/(?P<id>[1-9]\d*)/' => 'ConpherenceUpdateController',
+          => 'ConpherenceRoomListController',
+        'panel/'
+          => 'ConpherenceNotificationPanelController',
+        'participant/(?P<id>[1-9]\d*)/'
+          => 'ConpherenceParticipantController',
+        'preferences/(?P<id>[1-9]\d*)/'
+          => 'ConpherenceRoomPreferencesController',
+        'update/(?P<id>[1-9]\d*)/'
+          => 'ConpherenceUpdateController',
       ),
     );
-  }
-
-  public function getQuickCreateItems(PhabricatorUser $viewer) {
-    $items = array();
-
-    $item = id(new PHUIListItemView())
-      ->setName(pht('Conpherence Thread'))
-      ->setIcon('fa-comments')
-      ->setWorkflow(true)
-      ->setHref($this->getBaseURI().'new/');
-    $items[] = $item;
-
-    return $items;
   }
 
   public function getQuicksandURIPatternBlacklist() {

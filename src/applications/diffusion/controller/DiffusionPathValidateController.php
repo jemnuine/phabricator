@@ -2,37 +2,29 @@
 
 final class DiffusionPathValidateController extends DiffusionController {
 
-  protected function shouldLoadDiffusionRequest() {
-    return false;
+  protected function getRepositoryIdentifierFromRequest(
+    AphrontRequest $request) {
+    return $request->getStr('repositoryPHID');
   }
 
-  protected function processDiffusionRequest(AphrontRequest $request) {
-
-    $repository_phid = $request->getStr('repositoryPHID');
-    $repository = id(new PhabricatorRepositoryQuery())
-      ->setViewer($request->getUser())
-      ->withPHIDs(array($repository_phid))
-      ->executeOne();
-    if (!$repository) {
-      return new Aphront400Response();
+  public function handleRequest(AphrontRequest $request) {
+    $response = $this->loadDiffusionContext();
+    if ($response) {
+      return $response;
     }
+
+    $viewer = $this->getViewer();
+    $drequest = $this->getDiffusionRequest();
+    $repository = $drequest->getRepository();
 
     $path = $request->getStr('path');
     $path = ltrim($path, '/');
-
-    $drequest = DiffusionRequest::newFromDictionary(
-      array(
-        'user' => $request->getUser(),
-        'repository' => $repository,
-        'path' => $path,
-      ));
-    $this->setDiffusionRequest($drequest);
 
     $browse_results = DiffusionBrowseResultSet::newFromConduit(
       $this->callConduitWithDiffusionRequest(
         'diffusion.browsequery',
         array(
-          'path' => $drequest->getPath(),
+          'path' => $path,
           'commit' => $drequest->getCommit(),
           'needValidityOnly' => true,
         )));
@@ -52,19 +44,6 @@ final class DiffusionPathValidateController extends DiffusionController {
     $output = array(
       'valid' => (bool)$valid,
     );
-
-    if (!$valid) {
-      $branch = $drequest->getBranch();
-      if ($branch) {
-        $message = pht('Not found in %s', $branch);
-      } else {
-        $message = pht('Not found at HEAD');
-      }
-    } else {
-      $message = pht('OK');
-    }
-
-    $output['message'] = $message;
 
     return id(new AphrontAjaxResponse())->setContent($output);
   }

@@ -14,6 +14,10 @@ final class PHUIHandleView
   private $handleList;
   private $handlePHID;
   private $asTag;
+  private $asText;
+  private $useShortName;
+  private $showHovercard;
+  private $showStateIcon;
 
   public function setHandleList(PhabricatorHandleList $list) {
     $this->handleList = $list;
@@ -30,13 +34,65 @@ final class PHUIHandleView
     return $this;
   }
 
+  public function setAsText($as_text) {
+    $this->asText = $as_text;
+    return $this;
+  }
+
+  public function setUseShortName($short) {
+    $this->useShortName = $short;
+    return $this;
+  }
+
+  public function setShowHovercard($hovercard) {
+    $this->showHovercard = $hovercard;
+    return $this;
+  }
+
+  public function setShowStateIcon($show_state_icon) {
+    $this->showStateIcon = $show_state_icon;
+    return $this;
+  }
+
+  public function getShowStateIcon() {
+    return $this->showStateIcon;
+  }
+
   public function render() {
     $handle = $this->handleList[$this->handlePHID];
+
     if ($this->asTag) {
-      return $handle->renderTag();
-    } else {
-      return $handle->renderLink();
+      $tag = $handle->renderTag();
+
+      if ($this->showHovercard) {
+        $tag->setPHID($handle->getPHID());
+      }
+
+      return $tag;
     }
+
+    if ($this->asText) {
+      return $handle->getLinkName();
+    }
+
+    if ($this->useShortName) {
+      $name = $handle->getName();
+    } else {
+      $name = null;
+    }
+
+    if ($this->showHovercard) {
+      $link = $handle->renderHovercardLink($name);
+    } else {
+      $link = $handle->renderLink($name);
+    }
+
+    if ($this->showStateIcon) {
+      $icon = $handle->renderStateIcon();
+      $link = array($icon, ' ', $link);
+    }
+
+    return $link;
   }
 
 }

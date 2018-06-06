@@ -42,9 +42,55 @@ final class PassphraseCredentialControl extends AphrontFormControl {
     foreach ($this->options as $option) {
       $options_map[$option->getPHID()] = pht(
         '%s %s',
-        'K'.$option->getID(),
+        $option->getMonogram(),
         $option->getName());
     }
+
+    // The user editing the form may not have permission to see the current
+    // credential. Populate it into the menu to allow them to save the form
+    // without making any changes.
+    $current_phid = $this->getValue();
+    if (strlen($current_phid) && empty($options_map[$current_phid])) {
+      $viewer = $this->getViewer();
+
+      $current_name = null;
+      try {
+        $user_credential = id(new PassphraseCredentialQuery())
+          ->setViewer($viewer)
+          ->withPHIDs(array($current_phid))
+          ->executeOne();
+
+        if ($user_credential) {
+          $current_name = pht(
+            '%s %s',
+            $user_credential->getMonogram(),
+            $user_credential->getName());
+        }
+      } catch (PhabricatorPolicyException $policy_exception) {
+        // Pull the credential with the omnipotent viewer so we can look up
+        // the ID and provide the monogram.
+        $omnipotent_credential = id(new PassphraseCredentialQuery())
+          ->setViewer(PhabricatorUser::getOmnipotentUser())
+          ->withPHIDs(array($current_phid))
+          ->executeOne();
+        if ($omnipotent_credential) {
+          $current_name = pht(
+            '%s (Restricted Credential)',
+            $omnipotent_credential->getMonogram());
+        }
+      }
+
+      if ($current_name === null) {
+        $current_name = pht(
+          'Invalid Credential ("%s")',
+          $current_phid);
+      }
+
+      $options_map = array(
+        $current_phid => $current_name,
+      ) + $options_map;
+    }
+
 
     $disabled = $this->getDisabled();
     if ($this->allowNull) {
@@ -73,11 +119,12 @@ final class PassphraseCredentialControl extends AphrontFormControl {
         'a',
         array(
           'href' => '#',
-          'class' => 'button grey',
+          'class' => 'button button-grey mll',
           'sigil' => 'passphrase-credential-add',
           'mustcapture' => true,
+          'style' => 'height: 20px;', // move aphront-form to tables
         ),
-        pht('Add Credential'));
+        pht('Add New Credential'));
     } else {
       $button = null;
     }

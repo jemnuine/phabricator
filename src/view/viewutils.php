@@ -31,32 +31,39 @@ function phabricator_relative_date($epoch, $user, $on = false) {
 }
 
 function phabricator_time($epoch, $user) {
+  $time_key = PhabricatorTimeFormatSetting::SETTINGKEY;
   return phabricator_format_local_time(
     $epoch,
     $user,
-    phabricator_time_format($user));
+    $user->getUserSetting($time_key));
 }
 
 function phabricator_datetime($epoch, $user) {
+  $time_key = PhabricatorTimeFormatSetting::SETTINGKEY;
   return phabricator_format_local_time(
     $epoch,
     $user,
     pht('%s, %s',
       phutil_date_format($epoch),
-      phabricator_time_format($user)));
+      $user->getUserSetting($time_key)));
 }
 
-function phabricator_time_format($user) {
-  $prefs = $user->loadPreferences();
+function phabricator_datetimezone($epoch, $user) {
+  $datetime = phabricator_datetime($epoch, $user);
+  $timezone = phabricator_format_local_time($epoch, $user, 'T');
 
-  $pref = $prefs->getPreference(
-    PhabricatorUserPreferences::PREFERENCE_TIME_FORMAT);
-
-  if (strlen($pref)) {
-    return $pref;
+  // Some obscure timezones just render as "+03" or "-09". Make these render
+  // as "UTC+3" instead.
+  if (preg_match('/^[+-]/', $timezone)) {
+    $timezone = (int)trim($timezone, '+');
+    if ($timezone < 0) {
+      $timezone = pht('UTC-%s', $timezone);
+    } else {
+      $timezone = pht('UTC+%s', $timezone);
+    }
   }
 
-  return pht('g:i A');
+  return pht('%s (%s)', $datetime, $timezone);
 }
 
 /**
@@ -99,7 +106,7 @@ function phabricator_format_local_time($epoch, $user, $format) {
       "raised an exception.", $epoch));
   }
 
-  $date->setTimeZone($zone);
+  $date->setTimezone($zone);
 
   return PhutilTranslator::getInstance()->translateDate($format, $date);
 }

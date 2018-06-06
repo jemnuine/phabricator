@@ -126,6 +126,7 @@ final class FundBackerSearchEngine
     }
 
     $table = id(new AphrontTableView($rows))
+      ->setNoDataString(pht('No backers found.'))
       ->setHeaders(
         array(
           pht('Initiative'),
@@ -141,9 +142,10 @@ final class FundBackerSearchEngine
           'right',
         ));
 
-    return id(new PHUIObjectBoxView())
-      ->setHeaderText(pht('Backers'))
-      ->appendChild($table);
+    $result = new PhabricatorApplicationSearchResultView();
+    $result->setTable($table);
+
+    return $result;
   }
 
 }

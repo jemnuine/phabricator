@@ -9,7 +9,12 @@ final class HarbormasterBuildStepCoreCustomField
   }
 
   public function createFields($object) {
-    $impl = $object->getStepImplementation();
+    try {
+      $impl = $object->getStepImplementation();
+    } catch (Exception $ex) {
+      return array();
+    }
+
     $specs = $impl->getFieldSpecifications();
 
     if ($impl->supportsWaitForMessage()) {
@@ -38,7 +43,7 @@ final class HarbormasterBuildStepCoreCustomField
           'the result for this step. After the result is recorded, the build '.
           'plan will resume.'),
         'options' => array(
-          '' => pht('Continue Build Normally'),
+          'continue' => pht('Continue Build Normally'),
           'wait' => pht('Wait For Message'),
         ),
       );
@@ -67,9 +72,8 @@ final class HarbormasterBuildStepCoreCustomField
     $object->setDetail($key, $value);
   }
 
-  public function applyApplicationTransactionExternalEffects(
-    PhabricatorApplicationTransaction $xaction) {
-    return;
+  public function getBuildTargetFieldValue() {
+    return $this->getProxy()->getFieldValue();
   }
 
 }

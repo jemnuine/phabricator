@@ -11,13 +11,13 @@
   },
   "exclude": [
     "(^externals/)",
-    "(^webroot/rsrc/externals/)",
-    "(^scripts/)",
-    "(^support/)",
     "(^resources/)",
-    "(^src/docs/tech/)",
+    "(^scripts/)",
+    "(^src/docs/contributor/)",
     "(^src/docs/flavor/)",
-    "(^src/docs/contributor/)"
+    "(^src/docs/tech/)",
+    "(^support/)",
+    "(^webroot/rsrc/externals/)"
   ],
   "groups": {
     "intro": {
@@ -29,23 +29,17 @@
     "userguide": {
       "name": "Application User Guides"
     },
-    "differential": {
-      "name": "Differential (Code Review)"
+    "conduit": {
+      "name": "API Documentation"
     },
-    "diffusion": {
-      "name": "Diffusion (Repository Browser)"
+    "cluster": {
+      "name": "Cluster Configuration"
     },
-    "maniphest": {
-      "name": "Maniphest (Task Tracking)"
+    "fieldmanual": {
+      "name": "Field Manuals"
     },
-    "slowvote": {
-      "name": "Slowvote (Polls)"
-    },
-    "herald": {
-      "name": "Herald (Notifications)"
-    },
-    "phriction": {
-      "name": "Phriction (Wiki)"
+    "cellar": {
+      "name": "Musty Cellar"
     }
   }
 }

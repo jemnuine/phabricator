@@ -13,6 +13,14 @@ final class PhabricatorSetupIssueView extends AphrontView {
     return $this->issue;
   }
 
+  public function renderInFlight() {
+    $issue = $this->getIssue();
+
+    return id(new PhabricatorInFlightErrorView())
+      ->setMessage($issue->getName())
+      ->render();
+  }
+
   public function render() {
     $issue = $this->getIssue();
 
@@ -87,9 +95,10 @@ final class PhabricatorSetupIssueView extends AphrontView {
         "OS X, you might want to try Homebrew.");
 
       $restart_info = pht(
-        'After installing new PHP extensions, <strong>restart your webserver '.
-        'for the changes to take effect</strong>.',
-        hsprintf(''));
+        'After installing new PHP extensions, <strong>restart Phabricator '.
+        'for the changes to take effect</strong>. For help with restarting '.
+        'Phabricator, see %s in the documentation.',
+        $this->renderRestartLink());
 
       $description[] = phutil_tag(
         'div',
@@ -120,7 +129,7 @@ final class PhabricatorSetupIssueView extends AphrontView {
           array(
             'href' => '/config/unignore/'.$issue->getIssueKey().'/',
             'sigil' => 'workflow',
-            'class' => 'button grey',
+            'class' => 'button button-grey',
           ),
           pht('Unignore Setup Issue'));
       } else {
@@ -129,7 +138,7 @@ final class PhabricatorSetupIssueView extends AphrontView {
           array(
             'href' => '/config/ignore/'.$issue->getIssueKey().'/',
             'sigil' => 'workflow',
-            'class' => 'button grey',
+            'class' => 'button button-grey',
           ),
           pht('Ignore Setup Issue'));
       }
@@ -138,8 +147,7 @@ final class PhabricatorSetupIssueView extends AphrontView {
         'a',
         array(
           'href' => '/config/issue/'.$issue->getIssueKey().'/',
-          'class' => 'button grey',
-          'style' => 'float: right',
+          'class' => 'button button-grey',
         ),
         pht('Reload Page'));
     }
@@ -185,14 +193,24 @@ final class PhabricatorSetupIssueView extends AphrontView {
       array(
         'class' => 'setup-issue-head',
       ),
-      array($name, $status));
+      $name);
+
+    $body = phutil_tag(
+      'div',
+      array(
+        'class' => 'setup-issue-body',
+      ),
+      array(
+        $status,
+        $description,
+      ));
 
     $tail = phutil_tag(
       'div',
       array(
         'class' => 'setup-issue-tail',
       ),
-      array($actions, $next));
+      $actions);
 
     $issue = phutil_tag(
       'div',
@@ -201,7 +219,7 @@ final class PhabricatorSetupIssueView extends AphrontView {
       ),
       array(
         $head,
-        $description,
+        $body,
         $tail,
       ));
 
@@ -219,6 +237,7 @@ final class PhabricatorSetupIssueView extends AphrontView {
       ),
       array(
         $issue,
+        $next,
         $debug_info,
       ));
   }
@@ -273,20 +292,21 @@ final class PhabricatorSetupIssueView extends AphrontView {
       $update = array();
       foreach ($configs as $config) {
         if (idx($options, $config) && $options[$config]->getLocked()) {
-          continue;
+          $name = pht('View "%s"', $config);
+        } else {
+          $name = pht('Edit "%s"', $config);
         }
         $link = phutil_tag(
           'a',
           array(
             'href' => '/config/edit/'.$config.'/?issue='.$issue->getIssueKey(),
           ),
-          pht('Edit %s', $config));
+          $name);
         $update[] = phutil_tag('li', array(), $link);
       }
       if ($update) {
         $update = phutil_tag('ul', array(), $update);
         if (!$related) {
-
           $update_info = phutil_tag(
           'p',
           array(),
@@ -386,34 +406,64 @@ final class PhabricatorSetupIssueView extends AphrontView {
         array(),
         pht(
           'PHP also loaded these %s configuration file(s):',
-          new PhutilNumber(count($more_loc))));
+          phutil_count($more_loc)));
       $info[] = phutil_tag(
         'pre',
         array(),
         implode("\n", $more_loc));
     }
 
-    $info[] = phutil_tag(
-      'p',
-      array(),
-      pht(
-        'You can find more information about PHP configuration values in the '.
-        '%s.',
-        phutil_tag(
-          'a',
-          array(
-            'href' => 'http://php.net/manual/ini.list.php',
-            'target' => '_blank',
-          ),
-          pht('PHP Documentation'))));
+    $show_standard = false;
+    $show_opcache = false;
+
+    foreach ($configs as $key) {
+      if (preg_match('/^opcache\./', $key)) {
+        $show_opcache = true;
+      } else {
+        $show_standard = true;
+      }
+    }
+
+    if ($show_standard) {
+      $info[] = phutil_tag(
+        'p',
+        array(),
+        pht(
+          'You can find more information about PHP configuration values '.
+          'in the %s.',
+          phutil_tag(
+            'a',
+            array(
+              'href' => 'http://php.net/manual/ini.list.php',
+              'target' => '_blank',
+            ),
+            pht('PHP Documentation'))));
+    }
+
+    if ($show_opcache) {
+      $info[] = phutil_tag(
+        'p',
+        array(),
+        pht(
+          'You can find more information about configuring OPCache in '.
+          'the %s.',
+          phutil_tag(
+            'a',
+            array(
+              'href' => 'http://php.net/manual/opcache.configuration.php',
+              'target' => '_blank',
+            ),
+            pht('PHP OPCache Documentation'))));
+    }
 
     $info[] = phutil_tag(
       'p',
       array(),
       pht(
-        'After editing the PHP configuration, <strong>restart your '.
-        'webserver for the changes to take effect</strong>.',
-        hsprintf('')));
+        'After editing the PHP configuration, <strong>restart Phabricator for '.
+        'the changes to take effect</strong>. For help with restarting '.
+        'Phabricator, see %s in the documentation.',
+        $this->renderRestartLink()));
 
     return phutil_tag(
       'div',
@@ -429,15 +479,19 @@ final class PhabricatorSetupIssueView extends AphrontView {
 
   private function renderMySQLConfig(array $config) {
     $values = array();
-    foreach ($config as $key) {
-      $value = PhabricatorMySQLSetupCheck::loadRawConfigValue($key);
-      if ($value === null) {
-        $value = phutil_tag(
-          'em',
-          array(),
-          pht('(Not Supported)'));
+    $issue = $this->getIssue();
+    $ref = $issue->getDatabaseRef();
+    if ($ref) {
+      foreach ($config as $key) {
+        $value = $ref->loadRawMySQLConfigValue($key);
+        if ($value === null) {
+          $value = phutil_tag(
+            'em',
+            array(),
+            pht('(Not Supported)'));
+        }
+        $values[$key] = $value;
       }
-      $values[$key] = $value;
     }
 
     $table = $this->renderValueTable($values);
@@ -544,6 +598,17 @@ final class PhabricatorSetupIssueView extends AphrontView {
         $link_info,
         $link_list,
       ));
+  }
+
+  private function renderRestartLink() {
+    $doc_href = PhabricatorEnv::getDoclink('Restarting Phabricator');
+    return phutil_tag(
+      'a',
+      array(
+        'href' => $doc_href,
+        'target' => '_blank',
+      ),
+      pht('Restarting Phabricator'));
   }
 
 }

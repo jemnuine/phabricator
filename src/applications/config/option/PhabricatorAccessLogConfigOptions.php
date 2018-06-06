@@ -11,7 +11,7 @@ final class PhabricatorAccessLogConfigOptions
     return pht('Configure the access logs, which log HTTP/SSH requests.');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-list';
   }
 
@@ -35,6 +35,7 @@ final class PhabricatorAccessLogConfigOptions
       'P' => pht('The logged-in user PHID, if one is logged in.'),
       'i' => pht('Request input, in bytes.'),
       'o' => pht('Request output, in bytes.'),
+      'I' => pht('Cluster instance name, if configured.'),
     );
 
     $http_map = $common_map + array(
@@ -46,17 +47,23 @@ final class PhabricatorAccessLogConfigOptions
       's' => pht('The system user.'),
       'S' => pht('The system sudo user.'),
       'k' => pht('ID of the SSH key used to authenticate the request.'),
+
+      // TODO: This is a reasonable thing to support in the HTTP access
+      // log, too.
+      'Q' => pht('A random, unique string which identifies the request.'),
     );
 
     $http_desc = pht(
-      'Format for the HTTP access log. Use {{log.access.path}} to set the '.
-      'path. Available variables are:');
+      'Format for the HTTP access log. Use `%s` to set the path. '.
+      'Available variables are:',
+      'log.access.path');
     $http_desc .= "\n\n";
     $http_desc .= $this->renderMapHelp($http_map);
 
     $ssh_desc = pht(
-      'Format for the SSH access log. Use {{log.ssh.path}} to set the '.
-      'path. Available variables are:');
+      'Format for the SSH access log. Use %s to set the path. '.
+      'Available variables are:',
+      'log.ssh.path');
     $ssh_desc .= "\n\n";
     $ssh_desc .= $this->renderMapHelp($ssh_map);
 
@@ -67,7 +74,6 @@ final class PhabricatorAccessLogConfigOptions
         ->setDescription(
           pht(
             "To enable the Phabricator access log, specify a path. The ".
-            "access log can provide more detailed information about ".
             "Phabricator access than normal HTTP access logs (for instance, ".
             "it can show logged-in users, controllers, and other application ".
             "data).\n\n".

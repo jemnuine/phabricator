@@ -92,8 +92,7 @@ abstract class PhragmentController extends PhabricatorController {
 
     $actions = id(new PhabricatorActionListView())
       ->setUser($viewer)
-      ->setObject($fragment)
-      ->setObjectURI($fragment->getURI());
+      ->setObject($fragment);
     $actions->addAction(
       id(new PhabricatorActionView())
         ->setName(pht('Download Fragment'))
@@ -199,14 +198,20 @@ abstract class PhragmentController extends PhabricatorController {
     $alt = PhabricatorEnv::getEnvConfig('security.alternate-file-domain');
     if ($alt === null) {
       return id(new PHUIInfoView())
-        ->setTitle(pht('security.alternate-file-domain must be configured!'))
+        ->setTitle(pht(
+          '%s must be configured!',
+          'security.alternate-file-domain'))
         ->setSeverity(PHUIInfoView::SEVERITY_ERROR)
-        ->appendChild(phutil_tag('p', array(), pht(
-          'Because Phragment generates files (such as ZIP archives and '.
-          'patches) as they are requested, it requires that you configure '.
-          'the `security.alternate-file-domain` option. This option on it\'s '.
-          'own will also provide additional security when serving files '.
-          'across Phabricator.')));
+        ->appendChild(
+          phutil_tag(
+            'p',
+            array(),
+            pht(
+              "Because Phragment generates files (such as ZIP archives and ".
+              "patches) as they are requested, it requires that you configure ".
+              "the `%s` option. This option on it's own will also provide ".
+              "additional security when serving files across Phabricator.",
+              'security.alternate-file-domain')));
     }
     return null;
   }

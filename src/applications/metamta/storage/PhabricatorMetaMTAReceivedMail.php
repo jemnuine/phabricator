@@ -82,7 +82,7 @@ final class PhabricatorMetaMTAReceivedMail extends PhabricatorMetaMTADAO {
     return $this->getRawEmailAddresses(idx($this->headers, 'to'));
   }
 
-  public function loadExcludeMailRecipientPHIDs() {
+  public function loadAllRecipientPHIDs() {
     $addresses = array_merge(
       $this->getToAddresses(),
       $this->getCCAddresses());
@@ -90,7 +90,7 @@ final class PhabricatorMetaMTAReceivedMail extends PhabricatorMetaMTADAO {
     return $this->loadPHIDsFromAddresses($addresses);
   }
 
-  final public function loadCCPHIDs() {
+  public function loadCCPHIDs() {
     return $this->loadPHIDsFromAddresses($this->getCCAddresses());
   }
 
@@ -100,17 +100,12 @@ final class PhabricatorMetaMTAReceivedMail extends PhabricatorMetaMTADAO {
     }
     $users = id(new PhabricatorUserEmail())
       ->loadAllWhere('address IN (%Ls)', $addresses);
-    $user_phids = mpull($users, 'getUserPHID');
-
-    $mailing_lists = id(new PhabricatorMetaMTAMailingList())
-      ->loadAllWhere('email in (%Ls)', $addresses);
-    $mailing_list_phids = mpull($mailing_lists, 'getPHID');
-
-    return array_merge($user_phids,  $mailing_list_phids);
+    return mpull($users, 'getUserPHID');
   }
 
   public function processReceivedMail() {
 
+    $sender = null;
     try {
       $this->dropMailFromPhabricator();
       $this->dropMailAlreadyReceived();
@@ -146,7 +141,7 @@ final class PhabricatorMetaMTAReceivedMail extends PhabricatorMetaMTADAO {
           // This error is explicitly ignored.
           break;
         default:
-          $this->sendExceptionMail($ex);
+          $this->sendExceptionMail($ex, $sender);
           break;
       }
 
@@ -156,7 +151,7 @@ final class PhabricatorMetaMTAReceivedMail extends PhabricatorMetaMTADAO {
         ->save();
       return $this;
     } catch (Exception $ex) {
-      $this->sendExceptionMail($ex);
+      $this->sendExceptionMail($ex, $sender);
 
       $this
         ->setStatus(MetaMTAReceivedMailStatus::STATUS_UNHANDLED_EXCEPTION)
@@ -220,8 +215,8 @@ final class PhabricatorMetaMTAReceivedMail extends PhabricatorMetaMTADAO {
     throw new PhabricatorMetaMTAReceivedMailProcessingException(
       MetaMTAReceivedMailStatus::STATUS_FROM_PHABRICATOR,
       pht(
-        "Ignoring email with 'X-Phabricator-Sent-This-Message' header to ".
-        "avoid loops."));
+        "Ignoring email with '%s' header to avoid loops.",
+        'X-Phabricator-Sent-This-Message'));
   }
 
   /**
@@ -271,15 +266,13 @@ final class PhabricatorMetaMTAReceivedMail extends PhabricatorMetaMTADAO {
    * accepts this mail, if one exists.
    */
   private function loadReceiver() {
-    $receivers = id(new PhutilSymbolLoader())
+    $receivers = id(new PhutilClassMapQuery())
       ->setAncestorClass('PhabricatorMailReceiver')
-      ->loadObjects();
+      ->setFilterMethod('isEnabled')
+      ->execute();
 
     $accept = array();
     foreach ($receivers as $key => $receiver) {
-      if (!$receiver->isEnabled()) {
-        continue;
-      }
       if ($receiver->canAcceptMail($this)) {
         $accept[$key] = $receiver;
       }
@@ -313,9 +306,14 @@ final class PhabricatorMetaMTAReceivedMail extends PhabricatorMetaMTADAO {
     return head($accept);
   }
 
-  private function sendExceptionMail(Exception $ex) {
-    $from = $this->getHeader('from');
-    if (!strlen($from)) {
+  private function sendExceptionMail(
+    Exception $ex,
+    PhabricatorUser $viewer = null) {
+
+    // If we've failed to identify a legitimate sender, we don't send them
+    // an error message back. We want to avoid sending mail to unverified
+    // addresses. See T12491.
+    if (!$viewer) {
       return;
     }
 
@@ -335,9 +333,18 @@ final class PhabricatorMetaMTAReceivedMail extends PhabricatorMetaMTADAO {
     // really be all the headers. It would be nice to pass the raw headers
     // through from the upper layers where possible.
 
+    // On the MimeMailParser pathway, we arrive here with a list value for
+    // headers that appeared multiple times in the original mail. Be
+    // accommodating until header handling gets straightened out.
+
     $headers = array();
-    foreach ($this->headers as $key => $value) {
-      $headers[] = pht('%s: %s', $key, $value);
+    foreach ($this->headers as $key => $values) {
+      if (!is_array($values)) {
+        $values = array($values);
+      }
+      foreach ($values as $value) {
+        $headers[] = pht('%s: %s', $key, $value);
+      }
     }
     $headers = implode("\n", $headers);
 
@@ -363,11 +370,18 @@ EOBODY
 
     $mail = id(new PhabricatorMetaMTAMail())
       ->setIsErrorEmail(true)
-      ->setForceDelivery(true)
       ->setSubject($title)
-      ->addRawTos(array($from))
+      ->addTos(array($viewer->getPHID()))
       ->setBody($body)
       ->saveAndSend();
+  }
+
+  public function newContentSource() {
+    return PhabricatorContentSource::newForSource(
+      PhabricatorEmailContentSource::SOURCECONST,
+      array(
+        'id' => $this->getID(),
+      ));
   }
 
 }

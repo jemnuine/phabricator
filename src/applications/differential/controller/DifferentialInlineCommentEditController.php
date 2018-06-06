@@ -23,13 +23,34 @@ final class DifferentialInlineCommentEditController
   }
 
   protected function createComment() {
-    // Verify revision and changeset correspond to actual objects.
+    // Verify revision and changeset correspond to actual objects, and are
+    // connected to one another.
     $changeset_id = $this->getChangesetID();
+    $viewer = $this->getViewer();
 
     $revision = $this->loadRevision();
 
-    if (!id(new DifferentialChangeset())->load($changeset_id)) {
-      throw new Exception('Invalid changeset ID!');
+    $changeset = id(new DifferentialChangesetQuery())
+      ->setViewer($viewer)
+      ->withIDs(array($changeset_id))
+      ->executeOne();
+    if (!$changeset) {
+      throw new Exception(
+        pht(
+          'Invalid changeset ID "%s"!',
+          $changeset_id));
+    }
+
+    $diff = $changeset->getDiff();
+    if ($diff->getRevisionID() != $revision->getID()) {
+      throw new Exception(
+        pht(
+          'Changeset ID "%s" is part of diff ID "%s", but that diff '.
+          'is attached to revision "%s", not revision "%s".',
+          $changeset_id,
+          $diff->getID(),
+          $diff->getRevisionID(),
+          $revision->getID()));
     }
 
     return id(new DifferentialInlineComment())
@@ -39,13 +60,19 @@ final class DifferentialInlineCommentEditController
 
   protected function loadComment($id) {
     return id(new DifferentialInlineCommentQuery())
+      ->setViewer($this->getViewer())
       ->withIDs(array($id))
+      ->withDeletedDrafts(true)
+      ->needHidden(true)
       ->executeOne();
   }
 
   protected function loadCommentByPHID($phid) {
     return id(new DifferentialInlineCommentQuery())
+      ->setViewer($this->getViewer())
       ->withPHIDs(array($phid))
+      ->withDeletedDrafts(true)
+      ->needHidden(true)
       ->executeOne();
   }
 
@@ -55,7 +82,7 @@ final class DifferentialInlineCommentEditController
 
     $inline = $this->loadComment($id);
     if (!$this->canEditInlineComment($user, $inline)) {
-      throw new Exception('That comment is not editable!');
+      throw new Exception(pht('That comment is not editable!'));
     }
     return $inline;
   }
@@ -125,27 +152,73 @@ final class DifferentialInlineCommentEditController
 
   protected function deleteComment(PhabricatorInlineCommentInterface $inline) {
     $inline->openTransaction();
-      DifferentialDraft::deleteHasDraft(
-        $inline->getAuthorPHID(),
-        $inline->getRevisionPHID(),
-        $inline->getPHID());
-      $inline->delete();
+      $inline->setIsDeleted(1)->save();
+      $this->syncDraft();
+    $inline->saveTransaction();
+  }
+
+  protected function undeleteComment(
+    PhabricatorInlineCommentInterface $inline) {
+    $inline->openTransaction();
+      $inline->setIsDeleted(0)->save();
+      $this->syncDraft();
     $inline->saveTransaction();
   }
 
   protected function saveComment(PhabricatorInlineCommentInterface $inline) {
     $inline->openTransaction();
       $inline->save();
-      DifferentialDraft::markHasDraft(
-        $inline->getAuthorPHID(),
-        $inline->getRevisionPHID(),
-        $inline->getPHID());
+      $this->syncDraft();
     $inline->saveTransaction();
   }
 
   protected function loadObjectOwnerPHID(
     PhabricatorInlineCommentInterface $inline) {
     return $this->loadRevision()->getAuthorPHID();
+  }
+
+  protected function hideComments(array $ids) {
+    $viewer = $this->getViewer();
+    $table = new DifferentialHiddenComment();
+    $conn_w = $table->establishConnection('w');
+
+    $sql = array();
+    foreach ($ids as $id) {
+      $sql[] = qsprintf(
+        $conn_w,
+        '(%s, %d)',
+        $viewer->getPHID(),
+        $id);
+    }
+
+    queryfx(
+      $conn_w,
+      'INSERT IGNORE INTO %T (userPHID, commentID) VALUES %Q',
+      $table->getTableName(),
+      implode(', ', $sql));
+  }
+
+  protected function showComments(array $ids) {
+    $viewer = $this->getViewer();
+    $table = new DifferentialHiddenComment();
+    $conn_w = $table->establishConnection('w');
+
+    queryfx(
+      $conn_w,
+      'DELETE FROM %T WHERE userPHID = %s AND commentID IN (%Ld)',
+      $table->getTableName(),
+      $viewer->getPHID(),
+      $ids);
+  }
+
+  private function syncDraft() {
+    $viewer = $this->getViewer();
+    $revision = $this->loadRevision();
+
+    $revision->newDraftEngine()
+      ->setObject($revision)
+      ->setViewer($viewer)
+      ->synchronize();
   }
 
 }

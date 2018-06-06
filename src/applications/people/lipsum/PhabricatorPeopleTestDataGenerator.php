@@ -3,7 +3,13 @@
 final class PhabricatorPeopleTestDataGenerator
   extends PhabricatorTestDataGenerator {
 
-  public function generate() {
+  const GENERATORKEY = 'users';
+
+  public function getGeneratorName() {
+    return pht('User Accounts');
+  }
+
+  public function generateObject() {
 
     while (true) {
       try {

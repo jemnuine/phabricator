@@ -5,7 +5,8 @@ abstract class DiffusionSSHWorkflow extends PhabricatorSSHWorkflow {
   private $args;
   private $repository;
   private $hasWriteAccess;
-  private $proxyURI;
+  private $shouldProxy;
+  private $baseRequestPath;
 
   public function getRepository() {
     if (!$this->repository) {
@@ -25,14 +26,17 @@ abstract class DiffusionSSHWorkflow extends PhabricatorSSHWorkflow {
 
   public function getEnvironment() {
     $env = array(
-      DiffusionCommitHookEngine::ENV_USER => $this->getUser()->getUsername(),
+      DiffusionCommitHookEngine::ENV_USER => $this->getSSHUser()->getUsername(),
       DiffusionCommitHookEngine::ENV_REMOTE_PROTOCOL => 'ssh',
     );
 
-    $ssh_client = getenv('SSH_CLIENT');
-    if ($ssh_client) {
-      // This has the format "<ip> <remote-port> <local-port>". Grab the IP.
-      $remote_address = head(explode(' ', $ssh_client));
+    $identifier = $this->getRequestIdentifier();
+    if ($identifier !== null) {
+      $env[DiffusionCommitHookEngine::ENV_REQUEST] = $identifier;
+    }
+
+    $remote_address = $this->getSSHRemoteAddress();
+    if ($remote_address !== null) {
       $env[DiffusionCommitHookEngine::ENV_REMOTE_ADDRESS] = $remote_address;
     }
 
@@ -44,28 +48,62 @@ abstract class DiffusionSSHWorkflow extends PhabricatorSSHWorkflow {
    */
   abstract protected function identifyRepository();
   abstract protected function executeRepositoryOperations();
+  abstract protected function raiseWrongVCSException(
+    PhabricatorRepository $repository);
+
+  protected function getBaseRequestPath() {
+    return $this->baseRequestPath;
+  }
 
   protected function writeError($message) {
     $this->getErrorChannel()->write($message);
     return $this;
   }
 
-  protected function shouldProxy() {
-    return (bool)$this->proxyURI;
+  protected function getCurrentDeviceName() {
+    $device = AlmanacKeys::getLiveDevice();
+    if ($device) {
+      return $device->getName();
+    }
+
+    return php_uname('n');
   }
 
-  protected function getProxyCommand() {
-    $uri = new PhutilURI($this->proxyURI);
+  protected function shouldProxy() {
+    return $this->shouldProxy;
+  }
 
-    $username = PhabricatorEnv::getEnvConfig('cluster.instance');
-    if (!strlen($username)) {
-      $username = PhabricatorEnv::getEnvConfig('diffusion.ssh-user');
-      if (!strlen($username)) {
-        throw new Exception(
-          pht(
-            'Unable to determine the username to connect with when trying '.
-            'to proxy an SSH request within the Phabricator cluster.'));
-      }
+  protected function getProxyCommand($for_write) {
+    $viewer = $this->getSSHUser();
+    $repository = $this->getRepository();
+
+    $is_cluster_request = $this->getIsClusterRequest();
+
+    $uri = $repository->getAlmanacServiceURI(
+      $viewer,
+      array(
+        'neverProxy' => $is_cluster_request,
+        'protocols' => array(
+          'ssh',
+        ),
+        'writable' => $for_write,
+      ));
+
+    if (!$uri) {
+      throw new Exception(
+        pht(
+          'Failed to generate an intracluster proxy URI even though this '.
+          'request was routed as a proxy request.'));
+    }
+
+    $uri = new PhutilURI($uri);
+
+    $username = AlmanacKeys::getClusterSSHUser();
+    if ($username === null) {
+      throw new Exception(
+        pht(
+          'Unable to determine the username to connect with when trying '.
+          'to proxy an SSH request within the Phabricator cluster.'));
     }
 
     $port = $uri->getPort();
@@ -105,27 +143,46 @@ abstract class DiffusionSSHWorkflow extends PhabricatorSSHWorkflow {
       $key_path,
       $port,
       $host,
-      '@'.$this->getUser()->getUsername(),
+      '@'.$this->getSSHUser()->getUsername(),
       $this->getOriginalArguments());
   }
 
   final public function execute(PhutilArgumentParser $args) {
     $this->args = $args;
 
+    $viewer = $this->getSSHUser();
+    $have_diffusion = PhabricatorApplication::isClassInstalledForViewer(
+      'PhabricatorDiffusionApplication',
+      $viewer);
+    if (!$have_diffusion) {
+      throw new Exception(
+        pht(
+          'You do not have permission to access the Diffusion application, '.
+          'so you can not interact with repositories over SSH.'));
+    }
+
     $repository = $this->identifyRepository();
     $this->setRepository($repository);
 
+    // NOTE: Here, we're just figuring out if this is a proxyable request to
+    // a clusterized repository or not. We don't (and can't) use the URI we get
+    // back directly.
+
+    // For example, we may get a read-only URI here but be handling a write
+    // request. We only care if we get back `null` (which means we should
+    // handle the request locally) or anything else (which means we should
+    // proxy it to an appropriate device).
+
     $is_cluster_request = $this->getIsClusterRequest();
     $uri = $repository->getAlmanacServiceURI(
-      $this->getUser(),
-      $is_cluster_request,
+      $viewer,
       array(
-        'ssh',
+        'neverProxy' => $is_cluster_request,
+        'protocols' => array(
+          'ssh',
+        ),
       ));
-
-    if ($uri) {
-      $this->proxyURI = $uri;
-    }
+    $this->shouldProxy = (bool)$uri;
 
     try {
       return $this->executeRepositoryOperations();
@@ -135,41 +192,46 @@ abstract class DiffusionSSHWorkflow extends PhabricatorSSHWorkflow {
     }
   }
 
-  protected function loadRepositoryWithPath($path) {
-    $viewer = $this->getUser();
+  protected function loadRepositoryWithPath($path, $vcs) {
+    $viewer = $this->getSSHUser();
 
-    $regex = '@^/?diffusion/(?P<callsign>[A-Z]+)(?:/|\z)@';
-    $matches = null;
-    if (!preg_match($regex, $path, $matches)) {
+    $info = PhabricatorRepository::parseRepositoryServicePath($path, $vcs);
+    if ($info === null) {
       throw new Exception(
         pht(
-          'Unrecognized repository path "%s". Expected a path like '.
-          '"%s".',
+          'Unrecognized repository path "%s". Expected a path like "%s", '.
+          '"%s", or "%s".',
           $path,
-          '/diffusion/X/'));
+          '/diffusion/X/',
+          '/diffusion/123/',
+          '/source/thaumaturgy.git'));
     }
 
-    $callsign = $matches[1];
+    $identifier = $info['identifier'];
+    $base = $info['base'];
+
+    $this->baseRequestPath = $base;
+
     $repository = id(new PhabricatorRepositoryQuery())
       ->setViewer($viewer)
-      ->withCallsigns(array($callsign))
+      ->withIdentifiers(array($identifier))
+      ->needURIs(true)
       ->executeOne();
-
     if (!$repository) {
       throw new Exception(
-        pht('No repository "%s" exists!', $callsign));
+        pht('No repository "%s" exists!', $identifier));
     }
 
-    switch ($repository->getServeOverSSH()) {
-      case PhabricatorRepository::SERVE_READONLY:
-      case PhabricatorRepository::SERVE_READWRITE:
-        // If we have read or read/write access, proceed for now. We will
-        // check write access when the user actually issues a write command.
-        break;
-      case PhabricatorRepository::SERVE_OFF:
-      default:
-        throw new Exception(
-          pht('This repository is not available over SSH.'));
+    $protocol = PhabricatorRepositoryURI::BUILTIN_PROTOCOL_SSH;
+    if (!$repository->canServeProtocol($protocol, false)) {
+      throw new Exception(
+        pht(
+          'This repository ("%s") is not available over SSH.',
+          $repository->getDisplayName()));
+    }
+
+    if ($repository->getVersionControlSystem() != $vcs) {
+      $this->raiseWrongVCSException($repository);
     }
 
     return $repository;
@@ -181,41 +243,67 @@ abstract class DiffusionSSHWorkflow extends PhabricatorSSHWorkflow {
     }
 
     $repository = $this->getRepository();
-    $viewer = $this->getUser();
+    $viewer = $this->getSSHUser();
 
-    switch ($repository->getServeOverSSH()) {
-      case PhabricatorRepository::SERVE_READONLY:
-        if ($protocol_command !== null) {
-          throw new Exception(
-            pht(
-              'This repository is read-only over SSH (tried to execute '.
-              'protocol command "%s").',
-              $protocol_command));
-        } else {
-          throw new Exception(
-            pht('This repository is read-only over SSH.'));
-        }
-        break;
-      case PhabricatorRepository::SERVE_READWRITE:
-        $can_push = PhabricatorPolicyFilter::hasCapability(
-          $viewer,
-          $repository,
-          DiffusionPushCapability::CAPABILITY);
-        if (!$can_push) {
-          throw new Exception(
-            pht('You do not have permission to push to this repository.'));
-        }
-        break;
-      case PhabricatorRepository::SERVE_OFF:
-      default:
-        // This shouldn't be reachable because we don't get this far if the
-        // repository isn't enabled, but kick them out anyway.
+    if ($viewer->isOmnipotent()) {
+      throw new Exception(
+        pht(
+          'This request is authenticated as a cluster device, but is '.
+          'performing a write. Writes must be performed with a real '.
+          'user account.'));
+    }
+
+    $protocol = PhabricatorRepositoryURI::BUILTIN_PROTOCOL_SSH;
+    if ($repository->canServeProtocol($protocol, true)) {
+      $can_push = PhabricatorPolicyFilter::hasCapability(
+        $viewer,
+        $repository,
+        DiffusionPushCapability::CAPABILITY);
+      if (!$can_push) {
         throw new Exception(
-          pht('This repository is not available over SSH.'));
+          pht('You do not have permission to push to this repository.'));
+      }
+    } else {
+      if ($protocol_command !== null) {
+        throw new Exception(
+          pht(
+            'This repository is read-only over SSH (tried to execute '.
+            'protocol command "%s").',
+            $protocol_command));
+      } else {
+        throw new Exception(
+          pht('This repository is read-only over SSH.'));
+      }
     }
 
     $this->hasWriteAccess = true;
     return $this->hasWriteAccess;
+  }
+
+  protected function shouldSkipReadSynchronization() {
+    $viewer = $this->getSSHUser();
+
+    // Currently, the only case where devices interact over SSH without
+    // assuming user credentials is when synchronizing before a read. These
+    // synchronizing reads do not themselves need to be synchronized.
+    if ($viewer->isOmnipotent()) {
+      return true;
+    }
+
+    return false;
+  }
+
+  protected function newPullEvent() {
+    $viewer = $this->getSSHUser();
+    $repository = $this->getRepository();
+    $remote_address = $this->getSSHRemoteAddress();
+
+    return id(new PhabricatorRepositoryPullEvent())
+      ->setEpoch(PhabricatorTime::getNow())
+      ->setRemoteAddress($remote_address)
+      ->setRemoteProtocol(PhabricatorRepositoryPullEvent::PROTOCOL_SSH)
+      ->setPullerPHID($viewer->getPHID())
+      ->setRepositoryPHID($repository->getPHID());
   }
 
 }

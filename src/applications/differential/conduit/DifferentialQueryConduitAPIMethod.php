@@ -8,19 +8,24 @@ final class DifferentialQueryConduitAPIMethod
   }
 
   public function getMethodDescription() {
-    return 'Query Differential revisions which match certain criteria.';
+    return pht('Query Differential revisions which match certain criteria.');
+  }
+
+  public function getMethodStatus() {
+    return self::METHOD_STATUS_FROZEN;
+  }
+
+  public function getMethodStatusDescription() {
+    return pht(
+      'This method is frozen and will eventually be deprecated. New code '.
+      'should use "differential.revision.search" instead.');
   }
 
   protected function defineParamTypes() {
     $hash_types = ArcanistDifferentialRevisionHash::getTypes();
     $hash_const = $this->formatStringConstants($hash_types);
 
-    $status_types = array(
-      DifferentialRevisionQuery::STATUS_ANY,
-      DifferentialRevisionQuery::STATUS_OPEN,
-      DifferentialRevisionQuery::STATUS_ACCEPTED,
-      DifferentialRevisionQuery::STATUS_CLOSED,
-    );
+    $status_types = DifferentialLegacyQuery::getAllConstants();
     $status_const = $this->formatStringConstants($status_types);
 
     $order_types = array(
@@ -44,7 +49,6 @@ final class DifferentialQueryConduitAPIMethod
       'subscribers'       => 'optional list<phid>',
       'responsibleUsers'  => 'optional list<phid>',
       'branches'          => 'optional list<string>',
-      'arcanistProjects'  => 'optional list<string>',
     );
   }
 
@@ -54,7 +58,7 @@ final class DifferentialQueryConduitAPIMethod
 
   protected function defineErrorTypes() {
     return array(
-      'ERR-INVALID-PARAMETER' => 'Missing or malformed parameter.',
+      'ERR-INVALID-PARAMETER' => pht('Missing or malformed parameter.'),
     );
   }
 
@@ -73,7 +77,6 @@ final class DifferentialQueryConduitAPIMethod
     $subscribers        = $request->getValue('subscribers');
     $responsible_users  = $request->getValue('responsibleUsers');
     $branches           = $request->getValue('branches');
-    $arc_projects       = $request->getValue('arcanistProjects');
 
     $query = id(new DifferentialRevisionQuery())
       ->setViewer($request->getUser());
@@ -105,7 +108,9 @@ final class DifferentialQueryConduitAPIMethod
         }
         throw id(new ConduitException('ERR-INVALID-PARAMETER'))
           ->setErrorDescription(
-            'Unknown paths: '.implode(', ', $unknown_paths));
+            pht(
+              'Unknown paths: %s',
+              implode(', ', $unknown_paths)));
       }
 
       $repos = array();
@@ -120,7 +125,9 @@ final class DifferentialQueryConduitAPIMethod
           if (!$repos[$callsign]) {
             throw id(new ConduitException('ERR-INVALID-PARAMETER'))
               ->setErrorDescription(
-                'Unknown repo callsign: '.$callsign);
+                pht(
+                  'Unknown repo callsign: %s',
+                  $callsign));
           }
         }
         $repo = $repos[$callsign];
@@ -143,7 +150,10 @@ final class DifferentialQueryConduitAPIMethod
     }
 
     if ($status) {
-      $query->withStatus($status);
+      $statuses = DifferentialLegacyQuery::getModernValues($status);
+      if ($statuses) {
+        $query->withStatuses($statuses);
+      }
     }
     if ($order) {
       $query->setOrder($order);
@@ -169,21 +179,8 @@ final class DifferentialQueryConduitAPIMethod
     if ($branches) {
       $query->withBranches($branches);
     }
-    if ($arc_projects) {
-      // This is sort of special-cased, but don't make arc do an extra round
-      // trip.
-      $projects = id(new PhabricatorRepositoryArcanistProject())
-        ->loadAllWhere(
-          'name in (%Ls)',
-          $arc_projects);
-      if (!$projects) {
-        return array();
-      }
 
-      $query->withArcanistProjectPHIDs(mpull($projects, 'getPHID'));
-    }
-
-    $query->needRelationships(true);
+    $query->needReviewers(true);
     $query->needCommitPHIDs(true);
     $query->needDiffIDs(true);
     $query->needActiveDiffs(true);
@@ -194,6 +191,14 @@ final class DifferentialQueryConduitAPIMethod
     $field_data = $this->loadCustomFieldsForRevisions(
       $request->getUser(),
       $revisions);
+
+    if ($revisions) {
+      $ccs = id(new PhabricatorSubscribersQuery())
+        ->withObjectPHIDs(mpull($revisions, 'getPHID'))
+        ->execute();
+    } else {
+      $ccs = array();
+    }
 
     $results = array();
     foreach ($revisions as $revision) {
@@ -213,10 +218,13 @@ final class DifferentialQueryConduitAPIMethod
         'dateCreated'         => $revision->getDateCreated(),
         'dateModified'        => $revision->getDateModified(),
         'authorPHID'          => $revision->getAuthorPHID(),
-        'status'              => $revision->getStatus(),
-        'statusName'          =>
-          ArcanistDifferentialRevisionStatus::getNameForRevisionStatus(
-            $revision->getStatus()),
+
+        // NOTE: For backward compatibility this is explicitly a string, like
+        // "2", even though the value of the string is an integer. See PHI14.
+        'status'              => (string)$revision->getLegacyRevisionStatus(),
+
+        'statusName'          => $revision->getStatusDisplayName(),
+        'properties' => $revision->getProperties(),
         'branch'              => $diff->getBranch(),
         'summary'             => $revision->getSummary(),
         'testPlan'            => $revision->getTestPlan(),
@@ -224,11 +232,10 @@ final class DifferentialQueryConduitAPIMethod
         'activeDiffPHID'      => $diff->getPHID(),
         'diffs'               => $revision->getDiffIDs(),
         'commits'             => $revision->getCommitPHIDs(),
-        'reviewers'           => array_values($revision->getReviewers()),
-        'ccs'                 => array_values($revision->getCCPHIDs()),
+        'reviewers'           => $revision->getReviewerPHIDs(),
+        'ccs'                 => idx($ccs, $phid, array()),
         'hashes'              => $revision->getHashes(),
         'auxiliary'           => idx($field_data, $phid, array()),
-        'arcanistProjectPHID' => $diff->getArcanistProjectPHID(),
         'repositoryPHID'      => $diff->getRepositoryPHID(),
       );
 

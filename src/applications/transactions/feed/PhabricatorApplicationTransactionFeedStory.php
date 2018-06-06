@@ -6,6 +6,8 @@
 class PhabricatorApplicationTransactionFeedStory
   extends PhabricatorFeedStory {
 
+  private $primaryTransactionPHID;
+
   public function getPrimaryObjectPHID() {
     return $this->getValue('objectPHID');
   }
@@ -27,7 +29,36 @@ class PhabricatorApplicationTransactionFeedStory
   }
 
   protected function getPrimaryTransactionPHID() {
-    return head($this->getValue('transactionPHIDs'));
+    if ($this->primaryTransactionPHID === null) {
+      // Transactions are filtered and sorted before they're stored, but the
+      // rendering logic can change between the time an edit occurs and when
+      // we actually render the story. Recalculate the filtering at display
+      // time because it's cheap and gets us better results when things change
+      // by letting the changes apply retroactively.
+
+      $xaction_phids = $this->getValue('transactionPHIDs');
+
+      $xactions = array();
+      foreach ($xaction_phids as $xaction_phid) {
+        $xactions[] = $this->getObject($xaction_phid);
+      }
+
+      foreach ($xactions as $key => $xaction) {
+        if ($xaction->shouldHideForFeed()) {
+          unset($xactions[$key]);
+        }
+      }
+
+      if ($xactions) {
+        $primary_phid = head($xactions)->getPHID();
+      } else {
+        $primary_phid = head($xaction_phids);
+      }
+
+      $this->primaryTransactionPHID = $primary_phid;
+    }
+
+    return $this->primaryTransactionPHID;
   }
 
   public function getPrimaryTransaction() {
@@ -77,7 +108,7 @@ class PhabricatorApplicationTransactionFeedStory
       $class = $phid_type->getPHIDTypeApplicationClass();
       if ($class) {
         $application = PhabricatorApplication::getByClass($class);
-        $icon = $application->getFontIcon();
+        $icon = $application->getIcon();
       }
     }
 
@@ -99,8 +130,16 @@ class PhabricatorApplicationTransactionFeedStory
       }
     }
 
-    $view->setImage(
-      $this->getHandle($xaction->getAuthorPHID())->getImageURI());
+    $author_phid = $xaction->getAuthorPHID();
+    $author_handle = $this->getHandle($author_phid);
+    $author_image = $author_handle->getImageURI();
+
+    if ($author_image) {
+      $view->setImage($author_image);
+      $view->setImageHref($author_handle->getURI());
+    } else {
+      $view->setAuthorIcon($author_handle->getIcon());
+    }
 
     return $view;
   }
@@ -114,6 +153,35 @@ class PhabricatorApplicationTransactionFeedStory
     $text = $xaction->getTitleForFeed();
     $xaction->setRenderingTarget($old_target);
     return $text;
+  }
+
+  public function renderTextBody() {
+    $all_bodies = '';
+    $new_target = PhabricatorApplicationTransaction::TARGET_TEXT;
+    $xaction_phids = $this->getValue('transactionPHIDs');
+    foreach ($xaction_phids as $xaction_phid) {
+      $secondary_xaction = $this->getObject($xaction_phid);
+      $old_target = $secondary_xaction->getRenderingTarget();
+      $secondary_xaction->setRenderingTarget($new_target);
+      $secondary_xaction->setHandles($this->getHandles());
+
+      $body = $secondary_xaction->getBodyForMail();
+      if (nonempty($body)) {
+        $all_bodies .= $body."\n";
+      }
+      $secondary_xaction->setRenderingTarget($old_target);
+    }
+    return trim($all_bodies);
+  }
+
+  public function getImageURI() {
+    $author_phid = $this->getPrimaryTransaction()->getAuthorPHID();
+    return $this->getHandle($author_phid)->getImageURI();
+  }
+
+  public function getURI() {
+    $handle = $this->getHandle($this->getPrimaryObjectPHID());
+    return PhabricatorEnv::getProductionURI($handle->getURI());
   }
 
   public function renderAsTextForDoorkeeper(

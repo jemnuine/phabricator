@@ -11,13 +11,13 @@ final class PhabricatorOAuthServerAuthorizationsSettingsPanel
     return pht('OAuth Authorizations');
   }
 
-  public function getPanelGroup() {
-    return pht('Sessions and Logs');
+  public function getPanelGroupKey() {
+    return PhabricatorSettingsLogsPanelGroup::PANELGROUPKEY;
   }
 
   public function isEnabled() {
-    $app_name = 'PhabricatorOAuthServerApplication';
-    return PhabricatorApplication::isClassInstalled($app_name);
+    return PhabricatorApplication::isClassInstalled(
+      'PhabricatorOAuthServerApplication');
   }
 
   public function processRequest(AphrontRequest $request) {
@@ -87,7 +87,7 @@ final class PhabricatorOAuthServerAuthorizationsSettingsPanel
         'a',
         array(
           'href' => $this->getPanelURI('?revoke='.$authorization->getID()),
-          'class' => 'small grey button',
+          'class' => 'small button button-grey',
           'sigil' => 'workflow',
         ),
         pht('Revoke'));
@@ -108,8 +108,7 @@ final class PhabricatorOAuthServerAuthorizationsSettingsPanel
 
     $table = new AphrontTableView($rows);
     $table->setNoDataString(
-      pht(
-        "You haven't authorized any OAuth applications."));
+      pht("You haven't authorized any OAuth applications."));
 
     $table->setRowClasses($rowc);
     $table->setHeaders(
@@ -135,6 +134,7 @@ final class PhabricatorOAuthServerAuthorizationsSettingsPanel
 
     $panel = id(new PHUIObjectBoxView())
       ->setHeader($header)
+      ->setBackground(PHUIObjectBoxView::WHITE_CONFIG)
       ->appendChild($table);
 
     return $panel;

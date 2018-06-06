@@ -123,8 +123,7 @@ final class PhortuneCartEditor
     $name = $object->getName();
 
     return id(new PhabricatorMetaMTAMail())
-      ->setSubject(pht('Order %d: %s', $id, $name))
-      ->addHeader('Thread-Topic', pht('Order %s', $id));
+      ->setSubject(pht('Order %d: %s', $id, $name));
   }
 
   protected function buildMailBody(
@@ -145,7 +144,7 @@ final class PhortuneCartEditor
         "%s",
         $issues);
 
-      $body->addRemarkupSection($overview);
+      $body->addRemarkupSection(null, $overview);
 
       $body->addLinkSection(
         pht('PAY NOW'),
@@ -189,7 +188,7 @@ final class PhortuneCartEditor
   protected function getMailTo(PhabricatorLiskDAO $object) {
     $phids = array();
 
-    // Relaod the cart to pull merchant and account information, in case we
+    // Reload the cart to pull merchant and account information, in case we
     // just created the object.
     $cart = id(new PhortuneCartQuery())
       ->setViewer($this->requireActor())
@@ -218,6 +217,26 @@ final class PhortuneCartEditor
   protected function buildReplyHandler(PhabricatorLiskDAO $object) {
     return id(new PhortuneCartReplyHandler())
       ->setMailReceiver($object);
+  }
+
+  protected function willPublish(PhabricatorLiskDAO $object, array $xactions) {
+    // We need the purchases in order to build mail.
+    return id(new PhortuneCartQuery())
+      ->setViewer($this->getActor())
+      ->withIDs(array($object->getID()))
+      ->needPurchases(true)
+      ->executeOne();
+  }
+
+  protected function getCustomWorkerState() {
+    return array(
+      'invoiceIssues' => $this->invoiceIssues,
+    );
+  }
+
+  protected function loadCustomWorkerState(array $state) {
+    $this->invoiceIssues = idx($state, 'invoiceIssues');
+    return $this;
   }
 
 }

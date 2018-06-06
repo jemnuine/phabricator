@@ -18,7 +18,7 @@ final class PhabricatorCalendarApplication extends PhabricatorApplication {
     return '/calendar/';
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-calendar';
   }
 
@@ -28,41 +28,124 @@ final class PhabricatorCalendarApplication extends PhabricatorApplication {
     return "\xE2\x8C\xA8";
   }
 
+  public function getApplicationGroup() {
+    return self::GROUP_UTILITIES;
+  }
+
   public function isPrototype() {
     return true;
   }
 
+  public function getRemarkupRules() {
+    return array(
+      new PhabricatorCalendarRemarkupRule(),
+    );
+  }
+
   public function getRoutes() {
     return array(
+      '/E(?P<id>[1-9]\d*)(?:/(?P<sequence>\d+)/)?'
+        => 'PhabricatorCalendarEventViewController',
       '/calendar/' => array(
-        '' => 'PhabricatorCalendarViewController',
-        'all/' => 'PhabricatorCalendarBrowseController',
+        '(?:query/(?P<queryKey>[^/]+)/(?:(?P<year>\d+)/'.
+          '(?P<month>\d+)/)?(?:(?P<day>\d+)/)?)?'
+          => 'PhabricatorCalendarEventListController',
         'event/' => array(
-          '(?:query/(?P<queryKey>[^/]+)/)?'
-            => 'PhabricatorCalendarEventListController',
-          'create/'
+          $this->getEditRoutePattern('edit/')
             => 'PhabricatorCalendarEventEditController',
-          'edit/(?P<id>[1-9]\d*)/'
-            => 'PhabricatorCalendarEventEditController',
+          'drag/(?P<id>[1-9]\d*)/'
+            => 'PhabricatorCalendarEventDragController',
+          'cancel/(?P<id>[1-9]\d*)/'
+            => 'PhabricatorCalendarEventCancelController',
+          '(?P<action>join|decline|accept)/(?P<id>[1-9]\d*)/'
+            => 'PhabricatorCalendarEventJoinController',
+          'export/(?P<id>[1-9]\d*)/(?P<filename>[^/]*)'
+            => 'PhabricatorCalendarEventExportController',
+          'availability/(?P<id>[1-9]\d*)/(?P<availability>[^/]+)/'
+            => 'PhabricatorCalendarEventAvailabilityController',
+        ),
+        'export/' => array(
+          $this->getQueryRoutePattern()
+            => 'PhabricatorCalendarExportListController',
+          $this->getEditRoutePattern('edit/')
+            => 'PhabricatorCalendarExportEditController',
+          '(?P<id>[1-9]\d*)/'
+            => 'PhabricatorCalendarExportViewController',
+          'ics/(?P<secretKey>[^/]+)/(?P<filename>[^/]*)'
+            => 'PhabricatorCalendarExportICSController',
+          'disable/(?P<id>[1-9]\d*)/'
+            => 'PhabricatorCalendarExportDisableController',
+        ),
+        'import/' => array(
+          $this->getQueryRoutePattern()
+            => 'PhabricatorCalendarImportListController',
+          $this->getEditRoutePattern('edit/')
+            => 'PhabricatorCalendarImportEditController',
+          '(?P<id>[1-9]\d*)/'
+            => 'PhabricatorCalendarImportViewController',
+          'disable/(?P<id>[1-9]\d*)/'
+            => 'PhabricatorCalendarImportDisableController',
           'delete/(?P<id>[1-9]\d*)/'
-            => 'PhabricatorCalendarEventDeleteController',
-          'view/(?P<id>[1-9]\d*)/'
-            => 'PhabricatorCalendarEventViewController',
+            => 'PhabricatorCalendarImportDeleteController',
+          'reload/(?P<id>[1-9]\d*)/'
+            => 'PhabricatorCalendarImportReloadController',
+          'drop/'
+            => 'PhabricatorCalendarImportDropController',
+          'log/' => array(
+            $this->getQueryRoutePattern()
+              => 'PhabricatorCalendarImportLogListController',
+          ),
         ),
       ),
     );
   }
 
-  public function getQuickCreateItems(PhabricatorUser $viewer) {
-    $items = array();
+  public function getHelpDocumentationArticles(PhabricatorUser $viewer) {
+    return array(
+      array(
+        'name' => pht('Calendar User Guide'),
+        'href' => PhabricatorEnv::getDoclink('Calendar User Guide'),
+      ),
+      array(
+        'name' => pht('Importing Events'),
+        'href' => PhabricatorEnv::getDoclink(
+          'Calendar User Guide: Importing Events'),
+      ),
+      array(
+        'name' => pht('Exporting Events'),
+        'href' => PhabricatorEnv::getDoclink(
+          'Calendar User Guide: Exporting Events'),
+      ),
+    );
+  }
 
-    $item = id(new PHUIListItemView())
-      ->setName(pht('Calendar Event'))
-      ->setIcon('fa-calendar')
-      ->setHref($this->getBaseURI().'event/create/');
-    $items[] = $item;
+  public function getMailCommandObjects() {
+    return array(
+      'event' => array(
+        'name' => pht('Email Commands: Events'),
+        'header' => pht('Interacting with Calendar Events'),
+        'object' => new PhabricatorCalendarEvent(),
+        'summary' => pht(
+          'This page documents the commands you can use to interact with '.
+          'events in Calendar. These commands work when creating new tasks '.
+          'via email and when replying to existing tasks.'),
+      ),
+    );
+  }
 
-    return $items;
+  protected function getCustomCapabilities() {
+    return array(
+      PhabricatorCalendarEventDefaultViewCapability::CAPABILITY => array(
+        'caption' => pht('Default view policy for newly created events.'),
+        'template' => PhabricatorCalendarEventPHIDType::TYPECONST,
+        'capability' => PhabricatorPolicyCapability::CAN_VIEW,
+      ),
+      PhabricatorCalendarEventDefaultEditCapability::CAPABILITY => array(
+        'caption' => pht('Default edit policy for newly created events.'),
+        'template' => PhabricatorCalendarEventPHIDType::TYPECONST,
+        'capability' => PhabricatorPolicyCapability::CAN_EDIT,
+      ),
+    );
   }
 
 }

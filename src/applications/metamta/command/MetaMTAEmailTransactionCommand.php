@@ -60,21 +60,11 @@ abstract class MetaMTAEmailTransactionCommand extends Phobject {
   }
 
   public static function getAllCommands() {
-    static $commands;
-
-    if ($commands === null) {
-      $kinds = id(new PhutilSymbolLoader())
-        ->setAncestorClass(__CLASS__)
-        ->loadObjects();
-      $commands = array();
-      foreach ($kinds as $kind) {
-        foreach ($kind->getCommandObjects() as $command) {
-          $commands[] = $command;
-        }
-      }
-    }
-
-    return $commands;
+    return id(new PhutilClassMapQuery())
+      ->setAncestorClass(__CLASS__)
+      ->setExpandMethod('getCommandObjects')
+      ->setUniqueMethod('getCommand')
+      ->execute();
   }
 
   public static function getAllCommandsForObject(
@@ -91,7 +81,7 @@ abstract class MetaMTAEmailTransactionCommand extends Phobject {
   }
 
   public static function getCommandMap(array $commands) {
-    assert_instances_of($commands, 'MetaMTAEmailTransactionCommand');
+    assert_instances_of($commands, __CLASS__);
 
     $map = array();
     foreach ($commands as $command) {

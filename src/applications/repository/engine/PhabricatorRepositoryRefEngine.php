@@ -7,49 +7,56 @@
 final class PhabricatorRepositoryRefEngine
   extends PhabricatorRepositoryEngine {
 
-  private $newRefs = array();
-  private $deadRefs = array();
+  private $newPositions = array();
+  private $deadPositions = array();
   private $closeCommits = array();
   private $hasNoCursors;
 
   public function updateRefs() {
-    $this->newRefs = array();
-    $this->deadRefs = array();
+    $this->newPositions = array();
+    $this->deadPositions = array();
     $this->closeCommits = array();
 
     $repository = $this->getRepository();
+    $viewer = $this->getViewer();
+
+    $branches_may_close = false;
 
     $vcs = $repository->getVersionControlSystem();
     switch ($vcs) {
       case PhabricatorRepositoryType::REPOSITORY_TYPE_SVN:
         // No meaningful refs of any type in Subversion.
-        $branches = array();
-        $bookmarks = array();
-        $tags = array();
+        $maps = array();
         break;
       case PhabricatorRepositoryType::REPOSITORY_TYPE_MERCURIAL:
         $branches = $this->loadMercurialBranchPositions($repository);
         $bookmarks = $this->loadMercurialBookmarkPositions($repository);
-        $tags = array();
+        $maps = array(
+          PhabricatorRepositoryRefCursor::TYPE_BRANCH => $branches,
+          PhabricatorRepositoryRefCursor::TYPE_BOOKMARK => $bookmarks,
+        );
+
+        $branches_may_close = true;
         break;
       case PhabricatorRepositoryType::REPOSITORY_TYPE_GIT:
-        $branches = $this->loadGitBranchPositions($repository);
-        $bookmarks = array();
-        $tags = $this->loadGitTagPositions($repository);
+        $maps = $this->loadGitRefPositions($repository);
         break;
       default:
         throw new Exception(pht('Unknown VCS "%s"!', $vcs));
     }
 
-    $maps = array(
-      PhabricatorRepositoryRefCursor::TYPE_BRANCH => $branches,
-      PhabricatorRepositoryRefCursor::TYPE_TAG => $tags,
-      PhabricatorRepositoryRefCursor::TYPE_BOOKMARK => $bookmarks,
+    // Fill in any missing types with empty lists.
+    $maps = $maps + array(
+      PhabricatorRepositoryRefCursor::TYPE_BRANCH => array(),
+      PhabricatorRepositoryRefCursor::TYPE_TAG => array(),
+      PhabricatorRepositoryRefCursor::TYPE_BOOKMARK => array(),
+      PhabricatorRepositoryRefCursor::TYPE_REF => array(),
     );
 
     $all_cursors = id(new PhabricatorRepositoryRefCursorQuery())
-      ->setViewer(PhabricatorUser::getOmnipotentUser())
+      ->setViewer($viewer)
       ->withRepositoryPHIDs(array($repository->getPHID()))
+      ->needPositions(true)
       ->execute();
     $cursor_groups = mgroup($all_cursors, 'getRefType');
 
@@ -58,8 +65,15 @@ final class PhabricatorRepositoryRefEngine
     // Find all the heads of closing refs.
     $all_closing_heads = array();
     foreach ($all_cursors as $cursor) {
-      if ($this->shouldCloseRef($cursor->getRefType(), $cursor->getRefName())) {
-        $all_closing_heads[] = $cursor->getCommitIdentifier();
+      $should_close = $this->shouldCloseRef(
+        $cursor->getRefType(),
+        $cursor->getRefName());
+      if (!$should_close) {
+        continue;
+      }
+
+      foreach ($cursor->getPositionIdentifiers() as $identifier) {
+        $all_closing_heads[] = $identifier;
       }
     }
     $all_closing_heads = array_unique($all_closing_heads);
@@ -74,28 +88,92 @@ final class PhabricatorRepositoryRefEngine
       $this->setCloseFlagOnCommits($this->closeCommits);
     }
 
-    if ($this->newRefs || $this->deadRefs) {
+    if ($this->newPositions || $this->deadPositions) {
       $repository->openTransaction();
-        foreach ($this->newRefs as $ref) {
-          $ref->save();
-        }
-        foreach ($this->deadRefs as $ref) {
-          $ref->delete();
-        }
-      $repository->saveTransaction();
 
-      $this->newRefs = array();
-      $this->deadRefs = array();
+        $this->saveNewPositions();
+        $this->deleteDeadPositions();
+
+      $repository->saveTransaction();
+    }
+
+    $branches = $maps[PhabricatorRepositoryRefCursor::TYPE_BRANCH];
+    if ($branches && $branches_may_close) {
+      $this->updateBranchStates($repository, $branches);
     }
   }
 
-  private function markRefNew(PhabricatorRepositoryRefCursor $cursor) {
-    $this->newRefs[] = $cursor;
+  private function updateBranchStates(
+    PhabricatorRepository $repository,
+    array $branches) {
+
+    assert_instances_of($branches, 'DiffusionRepositoryRef');
+    $viewer = $this->getViewer();
+
+    $all_cursors = id(new PhabricatorRepositoryRefCursorQuery())
+      ->setViewer($viewer)
+      ->withRepositoryPHIDs(array($repository->getPHID()))
+      ->needPositions(true)
+      ->execute();
+
+    $state_map = array();
+    $type_branch = PhabricatorRepositoryRefCursor::TYPE_BRANCH;
+    foreach ($all_cursors as $cursor) {
+      if ($cursor->getRefType() !== $type_branch) {
+        continue;
+      }
+      $raw_name = $cursor->getRefNameRaw();
+
+      foreach ($cursor->getPositions() as $position) {
+        $hash = $position->getCommitIdentifier();
+        $state_map[$raw_name][$hash] = $position;
+      }
+    }
+
+    $updates = array();
+    foreach ($branches as $branch) {
+      $position = idx($state_map, $branch->getShortName(), array());
+      $position = idx($position, $branch->getCommitIdentifier());
+      if (!$position) {
+        continue;
+      }
+
+      $fields = $branch->getRawFields();
+
+      $position_state = (bool)$position->getIsClosed();
+      $branch_state = (bool)idx($fields, 'closed');
+
+      if ($position_state != $branch_state) {
+        $updates[$position->getID()] = (int)$branch_state;
+      }
+    }
+
+    if ($updates) {
+      $position_table = id(new PhabricatorRepositoryRefPosition());
+      $conn = $position_table->establishConnection('w');
+
+      $position_table->openTransaction();
+        foreach ($updates as $position_id => $branch_state) {
+          queryfx(
+            $conn,
+            'UPDATE %T SET isClosed = %d WHERE id = %d',
+            $position_table->getTableName(),
+            $branch_state,
+            $position_id);
+        }
+      $position_table->saveTransaction();
+    }
+  }
+
+  private function markPositionNew(
+    PhabricatorRepositoryRefPosition $position) {
+    $this->newPositions[] = $position;
     return $this;
   }
 
-  private function markRefDead(PhabricatorRepositoryRefCursor $cursor) {
-    $this->deadRefs[] = $cursor;
+  private function markPositionDead(
+    PhabricatorRepositoryRefPosition $position) {
+    $this->deadPositions[] = $position;
     return $this;
   }
 
@@ -145,10 +223,7 @@ final class PhabricatorRepositoryRefEngine
     // NOTE: Mercurial branches may have multiple branch heads; this logic
     // is complex primarily to account for that.
 
-    // Group all the cursors by their ref name, like "master". Since Mercurial
-    // branches may have multiple heads, there could be several cursors with
-    // the same name.
-    $cursor_groups = mgroup($cursors, 'getRefNameRaw');
+    $cursors = mpull($cursors, null, 'getRefNameRaw');
 
     // Group all the new ref values by their name. As above, these groups may
     // have multiple members in Mercurial.
@@ -157,38 +232,47 @@ final class PhabricatorRepositoryRefEngine
     foreach ($ref_groups as $name => $refs) {
       $new_commits = mpull($refs, 'getCommitIdentifier', 'getCommitIdentifier');
 
-      $ref_cursors = idx($cursor_groups, $name, array());
-      $old_commits = mpull($ref_cursors, null, 'getCommitIdentifier');
+      $ref_cursor = idx($cursors, $name);
+      if ($ref_cursor) {
+        $old_positions = $ref_cursor->getPositions();
+      } else {
+        $old_positions = array();
+      }
 
       // We're going to delete all the cursors pointing at commits which are
       // no longer associated with the refs. This primarily makes the Mercurial
       // multiple head case easier, and means that when we update a ref we
       // delete the old one and write a new one.
-      foreach ($ref_cursors as $cursor) {
-        if (isset($new_commits[$cursor->getCommitIdentifier()])) {
+      foreach ($old_positions as $old_position) {
+        $hash = $old_position->getCommitIdentifier();
+        if (isset($new_commits[$hash])) {
           // This ref previously pointed at this commit, and still does.
           $this->log(
             pht(
               'Ref %s "%s" still points at %s.',
               $ref_type,
               $name,
-              $cursor->getCommitIdentifier()));
-        } else {
-          // This ref previously pointed at this commit, but no longer does.
-          $this->log(
-            pht(
-              'Ref %s "%s" no longer points at %s.',
-              $ref_type,
-              $name,
-              $cursor->getCommitIdentifier()));
-
-          // Nuke the obsolete cursor.
-          $this->markRefDead($cursor);
+              $hash));
+          continue;
         }
+
+        // This ref previously pointed at this commit, but no longer does.
+        $this->log(
+          pht(
+            'Ref %s "%s" no longer points at %s.',
+            $ref_type,
+            $name,
+            $hash));
+
+        // Nuke the obsolete cursor.
+        $this->markPositionDead($old_position);
       }
 
       // Now, we're going to insert new cursors for all the commits which are
       // associated with this ref that don't currently have cursors.
+      $old_commits = mpull($old_positions, 'getCommitIdentifier');
+      $old_commits = array_fuse($old_commits);
+
       $added_commits = array_diff_key($new_commits, $old_commits);
       foreach ($added_commits as $identifier) {
         $this->log(
@@ -197,12 +281,24 @@ final class PhabricatorRepositoryRefEngine
             $ref_type,
             $name,
             $identifier));
-        $this->markRefNew(
-          id(new PhabricatorRepositoryRefCursor())
-            ->setRepositoryPHID($repository->getPHID())
-            ->setRefType($ref_type)
-            ->setRefName($name)
-            ->setCommitIdentifier($identifier));
+
+        if (!$ref_cursor) {
+          // If this is the first time we've seen a particular ref (for
+          // example, a new branch) we need to insert a RefCursor record
+          // for it before we can insert a RefPosition.
+
+          $ref_cursor = $this->newRefCursor(
+            $repository,
+            $ref_type,
+            $name);
+        }
+
+        $new_position = id(new PhabricatorRepositoryRefPosition())
+          ->setCursorID($ref_cursor->getID())
+          ->setCommitIdentifier($identifier)
+          ->setIsClosed(0);
+
+        $this->markPositionNew($new_position);
       }
 
       if ($this->shouldCloseRef($ref_type, $name)) {
@@ -219,16 +315,21 @@ final class PhabricatorRepositoryRefEngine
     // Find any cursors for refs which no longer exist. This happens when a
     // branch, tag or bookmark is deleted.
 
-    foreach ($cursor_groups as $name => $cursor_group) {
-      if (idx($ref_groups, $name) === null) {
-        foreach ($cursor_group as $cursor) {
-          $this->log(
-            pht(
-              'Ref %s "%s" no longer exists.',
-              $cursor->getRefType(),
-              $cursor->getRefName()));
-          $this->markRefDead($cursor);
-        }
+    foreach ($cursors as $name => $cursor) {
+      if (!empty($ref_groups[$name])) {
+        // This ref still has some positions, so we don't need to wipe it
+        // out. Try the next one.
+        continue;
+      }
+
+      foreach ($cursor->getPositions() as $position) {
+        $this->log(
+          pht(
+            'Ref %s "%s" no longer exists.',
+            $cursor->getRefType(),
+            $cursor->getRefName()));
+
+        $this->markPositionDead($position);
       }
     }
   }
@@ -262,15 +363,36 @@ final class PhabricatorRepositoryRefEngine
     switch ($vcs) {
       case PhabricatorRepositoryType::REPOSITORY_TYPE_MERCURIAL:
         if ($all_closing_heads) {
-          $escheads = array();
+          $parts = array();
           foreach ($all_closing_heads as $head) {
-            $escheads[] = hgsprintf('%s', $head);
+            $parts[] = hgsprintf('%s', $head);
           }
-          $escheads = implode(' or ', $escheads);
+
+          // See T5896. Mercurial can not parse an "X or Y or ..." rev list
+          // with more than about 300 items, because it exceeds the maximum
+          // allowed recursion depth. Split all the heads into chunks of
+          // 256, and build a query like this:
+          //
+          //   ((1 or 2 or ... or 255) or (256 or 257 or ... 511))
+          //
+          // If we have more than 65535 heads, we'll do that again:
+          //
+          //   (((1 or ...) or ...) or ((65536 or ...) or ...))
+
+          $chunk_size = 256;
+          while (count($parts) > $chunk_size) {
+            $chunks = array_chunk($parts, $chunk_size);
+            foreach ($chunks as $key => $chunk) {
+              $chunks[$key] = '('.implode(' or ', $chunk).')';
+            }
+            $parts = array_values($chunks);
+          }
+          $parts = '('.implode(' or ', $parts).')';
+
           list($stdout) = $this->getRepository()->execxLocalCommand(
             'log --template %s --rev %s',
             '{node}\n',
-            hgsprintf('%s', $new_head).' - ('.$escheads.')');
+            hgsprintf('%s', $new_head).' - '.$parts);
         } else {
           list($stdout) = $this->getRepository()->execxLocalCommand(
             'log --template %s --rev %s',
@@ -328,7 +450,7 @@ final class PhabricatorRepositoryRefEngine
         $class = 'PhabricatorRepositoryMercurialCommitMessageParserWorker';
         break;
       default:
-        throw new Exception("Unknown repository type '{$vcs}'!");
+        throw new Exception(pht("Unknown repository type '%s'!", $vcs));
     }
 
     $all_commits = queryfx_all(
@@ -369,7 +491,84 @@ final class PhabricatorRepositoryRefEngine
         PhabricatorWorker::scheduleTask($class, $data);
       }
     }
+
+    return $this;
   }
+
+  private function newRefCursor(
+    PhabricatorRepository $repository,
+    $ref_type,
+    $ref_name) {
+
+    $cursor = id(new PhabricatorRepositoryRefCursor())
+      ->setRepositoryPHID($repository->getPHID())
+      ->setRefType($ref_type)
+      ->setRefName($ref_name);
+
+    try {
+      return $cursor->save();
+    } catch (AphrontDuplicateKeyQueryException $ex) {
+      // If we raced another daemon to create this position and lost the race,
+      // load the cursor the other daemon created instead.
+    }
+
+    $viewer = $this->getViewer();
+
+    $cursor = id(new PhabricatorRepositoryRefCursorQuery())
+      ->setViewer($viewer)
+      ->withRepositoryPHIDs(array($repository->getPHID()))
+      ->withRefTypes(array($ref_type))
+      ->withRefNames(array($ref_name))
+      ->needPositions(true)
+      ->executeOne();
+    if (!$cursor) {
+      throw new Exception(
+        pht(
+          'Failed to create a new ref cursor (for "%s", of type "%s", in '.
+          'repository "%s") because it collided with an existing cursor, '.
+          'but then failed to load that cursor.',
+          $ref_name,
+          $ref_type,
+          $repository->getDisplayName()));
+    }
+
+    return $cursor;
+  }
+
+  private function saveNewPositions() {
+    $positions = $this->newPositions;
+
+    foreach ($positions as $position) {
+      try {
+        $position->save();
+      } catch (AphrontDuplicateKeyQueryException $ex) {
+        // We may race another daemon to create this position. If we do, and
+        // we lose the race, that's fine: the other daemon did our work for
+        // us and we can continue.
+      }
+    }
+
+    $this->newPositions = array();
+  }
+
+  private function deleteDeadPositions() {
+    $positions = $this->deadPositions;
+    $repository = $this->getRepository();
+
+    foreach ($positions as $position) {
+      // Shove this ref into the old refs table so the discovery engine
+      // can check if any commits have been rendered unreachable.
+      id(new PhabricatorRepositoryOldRef())
+        ->setRepositoryPHID($repository->getPHID())
+        ->setCommitIdentifier($position->getCommitIdentifier())
+        ->save();
+
+      $position->delete();
+    }
+
+    $this->deadPositions = array();
+  }
+
 
 
 /* -(  Updating Git Refs  )-------------------------------------------------- */
@@ -378,22 +577,12 @@ final class PhabricatorRepositoryRefEngine
   /**
    * @task git
    */
-  private function loadGitBranchPositions(PhabricatorRepository $repository) {
-    return id(new DiffusionLowLevelGitRefQuery())
+  private function loadGitRefPositions(PhabricatorRepository $repository) {
+    $refs = id(new DiffusionLowLevelGitRefQuery())
       ->setRepository($repository)
-      ->withIsOriginBranch(true)
       ->execute();
-  }
 
-
-  /**
-   * @task git
-   */
-  private function loadGitTagPositions(PhabricatorRepository $repository) {
-    return id(new DiffusionLowLevelGitRefQuery())
-      ->setRepository($repository)
-      ->withIsTag(true)
-      ->execute();
+    return mgroup($refs, 'getRefType');
   }
 
 

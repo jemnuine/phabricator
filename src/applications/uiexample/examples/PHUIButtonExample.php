@@ -3,74 +3,25 @@
 final class PHUIButtonExample extends PhabricatorUIExample {
 
   public function getName() {
-    return 'Buttons';
+    return pht('Buttons');
   }
 
   public function getDescription() {
-    return hsprintf('Use <tt>&lt;button&gt;</tt> to render buttons.');
+    return pht(
+      'Use %s to render buttons.',
+      phutil_tag('tt', array(), '&lt;button&gt;'));
   }
 
   public function renderExample() {
     $request = $this->getRequest();
     $user = $request->getUser();
 
-    $colors = array('', 'green', 'grey', 'black', 'disabled');
-    $sizes = array('', 'small');
-    $tags = array('a', 'button');
-
-    // phutil_tag
-
-    $column = array();
-    foreach ($tags as $tag) {
-      foreach ($colors as $color) {
-        foreach ($sizes as $key => $size) {
-          $class = implode(' ', array($color, $size));
-
-          if ($tag == 'a') {
-            $class .= ' button';
-          }
-
-          $column[$key][] = phutil_tag(
-            $tag,
-            array(
-              'class' => $class,
-            ),
-            phutil_utf8_ucwords($size.' '.$color.' '.$tag));
-
-          $column[$key][] = hsprintf('<br /><br />');
-        }
-      }
-    }
-
-    $column3 = array();
-    foreach ($colors as $color) {
-      $caret = phutil_tag('span', array('class' => 'caret'), '');
-      $column3[] = phutil_tag(
-          'a',
-            array(
-              'class' => $color.' button dropdown',
-            ),
-          array(
-            phutil_utf8_ucwords($color.' Dropdown'),
-            $caret,
-          ));
-        $column3[] = hsprintf('<br /><br />');
-    }
-
-    $layout1 = id(new AphrontMultiColumnView())
-      ->addColumn($column[0])
-      ->addColumn($column[1])
-      ->addColumn($column3)
-      ->setFluidLayout(true)
-      ->setGutter(AphrontMultiColumnView::GUTTER_MEDIUM);
-
    // PHUIButtonView
-
-   $colors = array(null,
+   $colors = array(
+     null,
      PHUIButtonView::GREEN,
+     PHUIButtonView::RED,
      PHUIButtonView::GREY,
-     PHUIButtonView::BLACK,
-     PHUIButtonView::DISABLED,
     );
    $sizes = array(null, PHUIButtonView::SMALL);
    $column = array();
@@ -80,7 +31,7 @@ final class PHUIButtonExample extends PhabricatorUIExample {
         ->setColor($color)
         ->setSize($size)
         ->setTag('a')
-        ->setText('Clicky');
+        ->setText(pht('Clicky'));
       $column[$key][] = hsprintf('<br /><br />');
      }
    }
@@ -88,7 +39,7 @@ final class PHUIButtonExample extends PhabricatorUIExample {
      $column[2][] = id(new PHUIButtonView())
         ->setColor($color)
         ->setTag('button')
-        ->setText('Button')
+        ->setText(pht('Button'))
         ->setDropdown(true);
       $column[2][] = hsprintf('<br /><br />');
    }
@@ -104,20 +55,70 @@ final class PHUIButtonExample extends PhabricatorUIExample {
 
     $column = array();
     $icons = array(
-      'Comment' => 'fa-comment',
-      'Give Token' => 'fa-trophy',
-      'Reverse Time' => 'fa-clock-o',
-      'Implode Earth' => 'fa-exclamation-triangle red',
+      array(
+        'text' => pht('Comment'),
+        'icon' => 'fa-comment',
+        'dropdown' => true,
+      ),
+      array(
+        'text' => pht('Give Token'),
+        'icon' => 'fa-trophy',
+        'dropdown' => true,
+      ),
+      array(
+        'text' => pht('Reverse Time'),
+        'icon' => 'fa-clock-o',
+      ),
+      array(
+        'text' => pht('Implode Earth'),
+        'icon' => 'fa-exclamation-triangle',
+      ),
+      array(
+        'icon' => 'fa-rocket',
+        'dropdown' => true,
+      ),
+      array(
+        'icon' => 'fa-clipboard',
+        'dropdown' => true,
+      ),
+      array(
+        'icon' => 'fa-upload',
+        'disabled' => true,
+      ),
+      array(
+        'icon' => 'fa-street-view',
+        'selected' => true,
+      ),
+      array(
+        'text' => pht('Copy "Quack" to Clipboard'),
+        'icon' => 'fa-clipboard',
+        'copy' => pht('Quack'),
+      ),
     );
-    foreach ($icons as $text => $icon) {
-      $image = id(new PHUIIconView())
-          ->setIconFont($icon);
-      $column[] = id(new PHUIButtonView())
+    foreach ($icons as $text => $spec) {
+      $button = id(new PHUIButtonView())
         ->setTag('a')
         ->setColor(PHUIButtonView::GREY)
-        ->setIcon($image)
-        ->setText($text)
-        ->addClass(PHUI::MARGIN_SMALL_RIGHT);
+        ->setIcon(idx($spec, 'icon'))
+        ->setText(idx($spec, 'text'))
+        ->setSelected(idx($spec, 'selected'))
+        ->setDisabled(idx($spec, 'disabled'))
+        ->addClass(PHUI::MARGIN_SMALL_RIGHT)
+        ->setDropdown(idx($spec, 'dropdown'));
+
+      $copy = idx($spec, 'copy');
+      if ($copy !== null) {
+        Javelin::initBehavior('phabricator-clipboard-copy');
+
+        $button->addClass('clipboard-copy');
+        $button->addSigil('clipboard-copy');
+        $button->setMetadata(
+          array(
+            'text' => $copy,
+          ));
+      }
+
+      $column[] = $button;
     }
 
     $layout3 = id(new AphrontMultiColumnView())
@@ -129,23 +130,22 @@ final class PHUIButtonExample extends PhabricatorUIExample {
       'Subscribe' => 'fa-check-circle bluegrey',
       'Edit' => 'fa-pencil bluegrey',
     );
-    $colors = array(
-      PHUIButtonView::SIMPLE,
-      PHUIButtonView::SIMPLE_YELLOW,
-      PHUIButtonView::SIMPLE_GREY,
-      PHUIButtonView::SIMPLE_BLUE,
+    $designs = array(
+      PHUIButtonView::BUTTONTYPE_SIMPLE,
     );
+    $colors = array('', 'red', 'green', 'yellow');
     $column = array();
-    foreach ($colors as $color) {
-      foreach ($icons as $text => $icon) {
-        $image = id(new PHUIIconView())
-            ->setIconFont($icon);
-        $column[] = id(new PHUIButtonView())
-          ->setTag('a')
-          ->setColor($color)
-          ->setIcon($image)
-          ->setText($text)
-          ->addClass(PHUI::MARGIN_SMALL_RIGHT);
+    foreach ($designs as $design) {
+      foreach ($colors as $color) {
+        foreach ($icons as $text => $icon) {
+          $column[] = id(new PHUIButtonView())
+            ->setTag('a')
+            ->setButtonType($design)
+            ->setColor($color)
+            ->setIcon($icon)
+            ->setText($text)
+            ->addClass(PHUI::MARGIN_SMALL_RIGHT);
+        }
       }
     }
 
@@ -161,14 +161,14 @@ final class PHUIButtonExample extends PhabricatorUIExample {
     $icons = array('Asana', 'Github', 'Facebook', 'Google', 'LDAP');
     foreach ($icons as $icon) {
       $image = id(new PHUIIconView())
-          ->setSpriteSheet(PHUIIconView::SPRITE_LOGIN)
-          ->setSpriteIcon($icon);
+        ->setSpriteSheet(PHUIIconView::SPRITE_LOGIN)
+        ->setSpriteIcon($icon);
       $column[] = id(new PHUIButtonView())
         ->setTag('a')
         ->setSize(PHUIButtonView::BIG)
         ->setColor(PHUIButtonView::GREY)
         ->setIcon($image)
-        ->setText('Login or Register')
+        ->setText(pht('Log In or Register'))
         ->setSubtext($icon)
         ->addClass(PHUI::MARGIN_MEDIUM_RIGHT);
     }
@@ -181,24 +181,21 @@ final class PHUIButtonExample extends PhabricatorUIExample {
 
     // Set it and forget it
 
-    $head1 = id(new PHUIHeaderView())
-      ->setHeader('phutil_tag');
-
     $head2 = id(new PHUIHeaderView())
-      ->setHeader('PHUIButtonView');
+      ->setHeader('PHUIButtonView')
+      ->addClass('ml');
 
     $head3 = id(new PHUIHeaderView())
-      ->setHeader('Icon Buttons');
+      ->setHeader(pht('Icon Buttons'))
+      ->addClass('ml');
 
     $head4 = id(new PHUIHeaderView())
-      ->setHeader('Simple Buttons');
+      ->setHeader(pht('Simple Buttons'))
+      ->addClass('ml');
 
     $head5 = id(new PHUIHeaderView())
-      ->setHeader('Big Icon Buttons');
-
-    $wrap1 = id(new PHUIBoxView())
-      ->appendChild($layout1)
-      ->addMargin(PHUI::MARGIN_LARGE);
+      ->setHeader(pht('Big Icon Buttons'))
+      ->addClass('ml');
 
     $wrap2 = id(new PHUIBoxView())
       ->appendChild($layout2)
@@ -216,8 +213,15 @@ final class PHUIButtonExample extends PhabricatorUIExample {
       ->appendChild($layout5)
       ->addMargin(PHUI::MARGIN_LARGE);
 
-    return array($head1, $wrap1, $head2, $wrap2, $head3, $wrap3,
-      $head4, $wrap4, $head5, $wrap5,
+    return array(
+      $head2,
+      $wrap2,
+      $head3,
+      $wrap3,
+      $head4,
+      $wrap4,
+      $head5,
+      $wrap5,
     );
   }
 }

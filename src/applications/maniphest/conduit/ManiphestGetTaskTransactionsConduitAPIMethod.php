@@ -8,7 +8,7 @@ final class ManiphestGetTaskTransactionsConduitAPIMethod
   }
 
   public function getMethodDescription() {
-    return 'Retrieve Maniphest Task Transactions.';
+    return pht('Retrieve Maniphest task transactions.');
   }
 
   protected function defineParamTypes() {
@@ -19,6 +19,16 @@ final class ManiphestGetTaskTransactionsConduitAPIMethod
 
   protected function defineReturnType() {
     return 'nonempty list<dict<string, wild>>';
+  }
+
+  public function getMethodStatus() {
+    return self::METHOD_STATUS_FROZEN;
+  }
+
+  public function getMethodStatusDescription() {
+    return pht(
+      'This method is frozen and will eventually be deprecated. New code '.
+      'should use "transaction.search" instead.');
   }
 
   protected function execute(ConduitAPIRequest $request) {
@@ -59,6 +69,7 @@ final class ManiphestGetTaskTransactionsConduitAPIMethod
 
       $results[$task_id][] = array(
         'taskID'  => $task_id,
+        'transactionID' => $transaction->getID(),
         'transactionPHID' => $transaction->getPHID(),
         'transactionType'  => $transaction->getTransactionType(),
         'oldValue'  => $transaction->getOldValue(),

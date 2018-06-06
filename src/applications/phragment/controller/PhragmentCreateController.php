@@ -2,18 +2,12 @@
 
 final class PhragmentCreateController extends PhragmentController {
 
-  private $dblob;
-
-  public function willProcessRequest(array $data) {
-    $this->dblob = idx($data, 'dblob', '');
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $viewer = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $dblob = $request->getURIData('dblob');
 
     $parent = null;
-    $parents = $this->loadParentFragments($this->dblob);
+    $parents = $this->loadParentFragments($dblob);
     if ($parents === null) {
       return new Aphront404Response();
     }
@@ -40,7 +34,7 @@ final class PhragmentCreateController extends PhragmentController {
       $v_editpolicy = $request->getStr('editPolicy');
 
       if (strpos($v_name, '/') !== false) {
-        $errors[] = pht('The fragment name can not contain \'/\'.');
+        $errors[] = pht("The fragment name can not contain '/'.");
       }
 
       $file = id(new PhabricatorFileQuery())
@@ -48,7 +42,7 @@ final class PhragmentCreateController extends PhragmentController {
         ->withIDs(array($v_fileid))
         ->executeOne();
       if (!$file) {
-        $errors[] = pht('The specified file doesn\'t exist.');
+        $errors[] = pht("The specified file doesn't exist.");
       }
 
       if (!count($errors)) {
@@ -117,22 +111,25 @@ final class PhragmentCreateController extends PhragmentController {
     $crumbs->addTextCrumb(pht('Create Fragment'));
 
     $box = id(new PHUIObjectBoxView())
-      ->setHeaderText('Create Fragment')
+      ->setHeaderText(pht('Create Fragment'))
       ->setForm($form);
 
     if ($error_view) {
       $box->setInfoView($error_view);
     }
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
-        $this->renderConfigurationWarningIfRequired(),
-        $box,
-      ),
-      array(
-        'title' => pht('Create Fragment'),
-      ));
+    $title = pht('Create Fragments');
+
+    $view = array(
+      $this->renderConfigurationWarningIfRequired(),
+      $box,
+    );
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($view);
+
   }
 
 }

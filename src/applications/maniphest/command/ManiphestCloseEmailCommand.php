@@ -8,7 +8,11 @@ final class ManiphestCloseEmailCommand
   }
 
   public function getCommandSummary() {
-    return pht('Close a task.');
+    return pht(
+      'Close a task. This changes the task status to the default closed '.
+      'status. For a more powerful (but less concise) way to change task '.
+      'statuses, see `%s`.',
+      '!status');
   }
 
   public function buildTransactions(
@@ -20,7 +24,7 @@ final class ManiphestCloseEmailCommand
     $xactions = array();
 
     $xactions[] = $object->getApplicationTransactionTemplate()
-      ->setTransactionType(ManiphestTransaction::TYPE_STATUS)
+      ->setTransactionType(ManiphestTaskStatusTransaction::TRANSACTIONTYPE)
       ->setNewValue(ManiphestTaskStatus::getDefaultClosedStatus());
 
     return $xactions;

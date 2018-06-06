@@ -1,10 +1,12 @@
 <?php
 
 final class PhabricatorAuditInlineComment
+  extends Phobject
   implements PhabricatorInlineCommentInterface {
 
   private $proxy;
   private $syntheticAuthor;
+  private $isGhost;
 
   public function __construct() {
     $this->proxy = new PhabricatorAuditTransactionComment();
@@ -22,10 +24,17 @@ final class PhabricatorAuditInlineComment
     return $this->proxy;
   }
 
+  public function supportsHiding() {
+    return false;
+  }
+
+  public function isHidden() {
+    return false;
+  }
+
   public function getTransactionCommentForSave() {
     $content_source = PhabricatorContentSource::newForSource(
-      PhabricatorContentSource::SOURCE_LEGACY,
-      array());
+      PhabricatorOldWorldContentSource::SOURCECONST);
 
     $this->proxy
       ->setViewPolicy('public')
@@ -59,7 +68,8 @@ final class PhabricatorAuditInlineComment
 
   public static function loadDraftComments(
     PhabricatorUser $viewer,
-    $commit_phid) {
+    $commit_phid,
+    $raw = false) {
 
     $inlines = id(new DiffusionDiffInlineCommentQuery())
       ->setViewer($viewer)
@@ -70,6 +80,10 @@ final class PhabricatorAuditInlineComment
       ->withIsDeleted(false)
       ->needReplyToComments(true)
       ->execute();
+
+    if ($raw) {
+      return $inlines;
+    }
 
     return self::buildProxies($inlines);
   }
@@ -114,7 +128,7 @@ final class PhabricatorAuditInlineComment
   private static function buildProxies(array $inlines) {
     $results = array();
     foreach ($inlines as $key => $inline) {
-      $results[$key] = PhabricatorAuditInlineComment::newFromModernComment(
+      $results[$key] = self::newFromModernComment(
         $inline);
     }
     return $results;
@@ -306,6 +320,23 @@ final class PhabricatorAuditInlineComment
 
   public function getFixedState() {
     return $this->proxy->getFixedState();
+  }
+
+  public function setIsGhost($is_ghost) {
+    $this->isGhost = $is_ghost;
+    return $this;
+  }
+
+  public function getIsGhost() {
+    return $this->isGhost;
+  }
+
+  public function getDateModified() {
+    return $this->proxy->getDateModified();
+  }
+
+  public function getDateCreated() {
+    return $this->proxy->getDateCreated();
   }
 
 

@@ -13,6 +13,8 @@ final class DifferentialTransactionComment
   protected $replyToCommentPHID;
 
   private $replyToComment = self::ATTACHABLE;
+  private $isHidden = self::ATTACHABLE;
+  private $changeset = self::ATTACHABLE;
 
   public function getApplicationTransactionObject() {
     return new DifferentialTransaction();
@@ -97,6 +99,15 @@ final class DifferentialTransactionComment
     }
 
     return $inline_groups;
+  }
+
+  public function getIsHidden() {
+    return $this->assertAttached($this->isHidden);
+  }
+
+  public function attachIsHidden($hidden) {
+    $this->isHidden = $hidden;
+    return $this;
   }
 
 }

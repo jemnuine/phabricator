@@ -2,6 +2,10 @@
  * @provides phui-list-view-css
  */
 
+.phui-list-item-view {
+  position: relative;
+}
+
 .phui-list-item-header,
 .phui-list-item-header a {
   color: {$bluetext};
@@ -29,7 +33,7 @@
 
 .phui-list-sidenav .phui-list-item-type-divider {
   margin: 8px 8px 12px 8px;
-  border-bottom: 1px solid #e7e7e7;
+  border-bottom: 1px solid {$thinblueborder};
 }
 
 .phui-list-sidenav .phui-list-item-icon {
@@ -37,7 +41,8 @@
   width: 14px;
   display: inline-block;
   position: absolute;
-  top: 4px;
+  top: 6px;
+  text-align: center;
 }
 
 .phui-list-sidenav .phui-list-item-icon + .phui-list-item-name {
@@ -61,13 +66,19 @@
   line-height: 18px;
 }
 
+.phabricator-side-menu .phui-list-item-disabled .phui-list-item-href,
 .phui-list-sidenav .phui-list-item-disabled .phui-list-item-href {
   color: {$lightgreytext};
 }
 
 .phui-list-sidenav .phui-list-item-has-icon .phui-list-item-href {
-  padding: 2px 10px;
+  padding: 4px 10px;
 }
+
+.phui-list-sidenav .phui-list-item-has-icon .phui-list-item-indented {
+  padding-left: 18px;
+}
+
 
 .device-desktop .phui-list-sidenav .phui-list-item-href:hover {
   background: {$sky};
@@ -77,7 +88,7 @@
 }
 
 .device-desktop .phui-list-sidenav .phui-list-item-href:hover .phui-icon-view {
-  color: #fff;
+  color: {$page.content};
 }
 
 /* - Top, Full Width Navigations -----------------------------------------------
@@ -89,15 +100,14 @@
 .phui-list-view.phui-list-navbar {
   list-style: none;
   overflow: hidden;
-  border-bottom: 1px solid #e7e7e7;
-  background: {$lightgreybackground};
+  border-bottom: 1px solid {$thinblueborder};
 }
 
 .phui-list-view.phui-list-navbar > li {
   list-style: none;
   float: left;
   display: block;
-  border-right: 1px solid #e7e7e7;
+  border-right: 1px solid {$thinblueborder};
 }
 
 .phui-list-view.phui-list-navbar > li > * {
@@ -105,19 +115,19 @@
 }
 
 .phui-list-navbar .phui-list-item-href {
-  color: {$lightbluetext};
+  color: {$bluetext};
   padding: 8px 16px;
-  font-size: 12px;
-  letter-spacing: 0.5px;
+  line-height: 16px;
 }
 
 .phui-list-navbar .phui-list-item-selected .phui-list-item-href {
-  background: {$greybackground};
+  background: {$lightbluebackground};
   color: {$darkbluetext};
+  font-weight: bold;
 }
 
 .phui-list-navbar .phui-list-item-href:hover {
-  background: #DEE0E4;
+  background: rgba(100,100,100,.1);
   color: {$darkgreytext};
   text-decoration: none;
 }
@@ -127,6 +137,76 @@
   width: 14px;
   display: block;
   font-size: 14px;
+}
+
+.device-phone .phui-list-view.phui-list-navbar > li {
+  float: none;
+  border: none;
+}
+
+/* - Two Column View, Responsive Navigations -----------------------------------
+
+  Sets a two column page with a responsive, top navbar
+
+*/
+
+.phui-list-view.phui-list-tabbar {
+  list-style: none;
+  overflow: hidden;
+}
+
+.phui-list-view.phui-list-tabbar > li {
+  list-style: none;
+  float: left;
+  display: block;
+}
+
+.phui-list-view.phui-list-tabbar > li > * {
+  display: block;
+}
+
+.phui-list-tabbar .phui-list-item-href {
+  color: {$bluetext};
+  padding: 8px 24px;
+  line-height: 24px;
+  font-weight: bold;
+  font-size: {$biggerfontsize};
+  border-top: 4px solid transparent;
+}
+
+.phui-list-tabbar .phui-list-item-selected .phui-list-item-href {
+  color: {$sky};
+  border-bottom: 4px solid {$sky};
+}
+
+.phui-list-tabbar .phui-list-item-selected .phui-list-item-href
+  .phui-icon-view {
+    color: {$sky};
+}
+
+.device-desktop .phui-list-tabbar .phui-list-item-href:hover {
+  color: {$sky};
+  text-decoration: none;
+}
+
+.phui-list-tabbar .phui-list-item-icon {
+  height: 20px;
+  width: 20px;
+  display: none;
+  font-size: 20px;
+  text-align: center;
+}
+
+.device-phone .phui-list-tabbar .phui-list-item-icon {
+  display: inline-block;
+}
+
+.device-phone .phui-list-tabbar .phui-list-item-name {
+  display: none;
+}
+
+.device-phone .phui-list-tabbar .phui-list-item-href {
+  padding: 8px 16px;
 }
 
 .device-phone .phui-list-view.phui-list-navbar > li {
@@ -174,4 +254,61 @@
   border-left: 1px solid {$lightblueborder};
   border-right: 1px solid {$lightblueborder};
   border-bottom: 1px solid {$thinblueborder};
+}
+
+/* - Info Stack ------------------------------------------------------------ */
+
+.phui-info-view + .phui-list-view {
+  margin-top: 16px;
+  border-top: 1px solid {$thinblueborder};
+}
+
+/* - Action Icon ----------------------------------------------------------- */
+
+.phui-list-item-has-action-icon .phui-list-item-action-href {
+  position: absolute;
+  width: 28px;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  text-align: center;
+  line-height: 28px;
+  background-color: transparent;
+  display: none;
+}
+
+.phui-list-item-has-action-icon.phui-list-item-selected .phui-list-item-href {
+  padding-right: 32px;
+}
+
+.phui-list-item-has-action-icon.phui-list-item-selected
+  .phui-list-item-action-href {
+    display: block;
+}
+
+.phui-list-item-has-action-icon .phui-list-item-action-href:hover {
+  background-color: rgba({$alphablack},.05);
+}
+
+.phui-list-item-has-action-icon .phui-list-item-action-icon {
+  opacity: 0.5;
+}
+
+.phui-list-item-has-action-icon .phui-list-item-action-href:hover
+  .phui-list-item-action-icon {
+    opacity: 1;
+}
+
+/* - Item Counts ----------------------------------------------------------- */
+
+.phui-list-item-count {
+  position: absolute;
+  right: 7px;
+  top: 7px;
+  background: {$blue};
+  border-radius: 2px;
+  color: #fff;
+  font-weight: bold;
+  padding: 0 5px 1px;
+  font-size: {$smallestfontsize};
 }

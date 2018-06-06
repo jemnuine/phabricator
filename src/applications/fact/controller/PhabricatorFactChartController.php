@@ -2,36 +2,42 @@
 
 final class PhabricatorFactChartController extends PhabricatorFactController {
 
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
-
-    $table = new PhabricatorFactRaw();
-    $conn_r = $table->establishConnection('r');
-    $table_name = $table->getTableName();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
 
     $series = $request->getStr('y1');
 
-    $specs = PhabricatorFactSpec::newSpecsForFactTypes(
-      PhabricatorFactEngine::loadAllEngines(),
-      array($series));
-    $spec = idx($specs, $series);
+    $facts = PhabricatorFact::getAllFacts();
+    $fact = idx($facts, $series);
+
+    if (!$fact) {
+      return new Aphront404Response();
+    }
+
+    $key_id = id(new PhabricatorFactKeyDimension())
+      ->newDimensionID($fact->getKey());
+    if (!$key_id) {
+      return new Aphront404Response();
+    }
+
+    $table = $fact->newDatapoint();
+    $conn_r = $table->establishConnection('r');
+    $table_name = $table->getTableName();
 
     $data = queryfx_all(
       $conn_r,
-      'SELECT valueX, epoch FROM %T WHERE factType = %s ORDER BY epoch ASC',
+      'SELECT value, epoch FROM %T WHERE keyID = %d ORDER BY epoch ASC',
       $table_name,
-      $series);
+      $key_id);
 
     $points = array();
     $sum = 0;
     foreach ($data as $key => $row) {
-      $sum += (int)$row['valueX'];
+      $sum += (int)$row['value'];
       $points[(int)$row['epoch']] = $sum;
     }
 
     if (!$points) {
-      // NOTE: Raphael crashes Safari if you hand it series with no points.
       throw new Exception('No data to show!');
     }
 
@@ -57,16 +63,12 @@ final class PhabricatorFactChartController extends PhabricatorFactController {
       'div',
       array(
         'id' => $id,
-        'style' => 'border: 1px solid #6f6f6f; '.
-                   'margin: 1em 2em; '.
-                   'background: #ffffff; '.
-                   'height: 400px; ',
+        'style' => 'background: #ffffff; '.
+                   'height: 480px; ',
       ),
       '');
 
-    require_celerity_resource('raphael-core');
-    require_celerity_resource('raphael-g');
-    require_celerity_resource('raphael-g-line');
+    require_celerity_resource('d3');
 
     Javelin::initBehavior('line-chart', array(
       'hardpoint' => $id,
@@ -76,21 +78,20 @@ final class PhabricatorFactChartController extends PhabricatorFactController {
       'colors' => array('#0000ff'),
     ));
 
-    $panel = new PHUIObjectBoxView();
-    $panel->setHeaderText(pht('Count of %s', $spec->getName()));
-    $panel->appendChild($chart);
+    $box = id(new PHUIObjectBoxView())
+      ->setHeaderText(pht('Count of %s', $fact->getName()))
+      ->appendChild($chart);
 
     $crumbs = $this->buildApplicationCrumbs();
     $crumbs->addTextCrumb(pht('Chart'));
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
-        $panel,
-      ),
-      array(
-        'title' => pht('Chart'),
-      ));
+    $title = pht('Chart');
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($box);
+
   }
 
 }

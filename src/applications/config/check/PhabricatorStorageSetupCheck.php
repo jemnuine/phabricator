@@ -13,8 +13,10 @@ final class PhabricatorStorageSetupCheck extends PhabricatorSetupCheck {
     $engines = PhabricatorFileStorageEngine::loadWritableChunkEngines();
     $chunk_engine_active = (bool)$engines;
 
+    $this->checkS3();
+
     if (!$chunk_engine_active) {
-      $doc_href = PhabricatorEnv::getDocLink('Configuring File Storage');
+      $doc_href = PhabricatorEnv::getDoclink('Configuring File Storage');
 
       $message = pht(
         'Large file storage has not been configured, which will limit '.
@@ -83,7 +85,7 @@ final class PhabricatorStorageSetupCheck extends PhabricatorSetupCheck {
           'be buffered into memory before being written to permanent '.
           'storage. Phabricator needs memory available to store these '.
           'chunks while they are uploaded, but PHP is currently configured '.
-          'to severly limit the available memory.'.
+          'to severely limit the available memory.'.
           "\n\n".
           'PHP processes currently have very little free memory available '.
           '(%s). To work well, processes should have at least %s.'.
@@ -140,4 +142,55 @@ final class PhabricatorStorageSetupCheck extends PhabricatorSetupCheck {
         ->addPhabricatorConfig('storage.local-disk.path');
     }
   }
+
+  private function checkS3() {
+    $access_key = PhabricatorEnv::getEnvConfig('amazon-s3.access-key');
+    $secret_key = PhabricatorEnv::getEnvConfig('amazon-s3.secret-key');
+    $region = PhabricatorEnv::getEnvConfig('amazon-s3.region');
+    $endpoint = PhabricatorEnv::getEnvConfig('amazon-s3.endpoint');
+
+    $how_many = 0;
+
+    if (strlen($access_key)) {
+      $how_many++;
+    }
+
+    if (strlen($secret_key)) {
+      $how_many++;
+    }
+
+    if (strlen($region)) {
+      $how_many++;
+    }
+
+    if (strlen($endpoint)) {
+      $how_many++;
+    }
+
+    // Nothing configured, no issues here.
+    if ($how_many === 0) {
+      return;
+    }
+
+    // Everything configured, no issues here.
+    if ($how_many === 4) {
+      return;
+    }
+
+    $message = pht(
+      'File storage in Amazon S3 has been partially configured, but you are '.
+      'missing some required settings. S3 will not be available to store '.
+      'files until you complete the configuration. Either configure S3 fully '.
+      'or remove the partial configuration.');
+
+    $this->newIssue('storage.s3.partial-config')
+      ->setShortName(pht('S3 Partially Configured'))
+      ->setName(pht('Amazon S3 is Only Partially Configured'))
+      ->setMessage($message)
+      ->addPhabricatorConfig('amazon-s3.access-key')
+      ->addPhabricatorConfig('amazon-s3.secret-key')
+      ->addPhabricatorConfig('amazon-s3.region')
+      ->addPhabricatorConfig('amazon-s3.endpoint');
+  }
+
 }

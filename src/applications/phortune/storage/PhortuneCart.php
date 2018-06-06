@@ -21,6 +21,7 @@ final class PhortuneCart extends PhortuneDAO
   protected $status;
   protected $metadata = array();
   protected $mailKey;
+  protected $isInvoice;
 
   private $account = self::ATTACHABLE;
   private $purchases = self::ATTACHABLE;
@@ -35,6 +36,7 @@ final class PhortuneCart extends PhortuneDAO
       ->setAuthorPHID($actor->getPHID())
       ->setStatus(self::STATUS_BUILDING)
       ->setAccountPHID($account->getPHID())
+      ->setIsInvoice(0)
       ->attachAccount($account)
       ->setMerchantPHID($merchant->getPHID())
       ->attachMerchant($merchant);
@@ -85,8 +87,9 @@ final class PhortuneCart extends PhortuneDAO
         if ($copy->getStatus() !== self::STATUS_BUILDING) {
           throw new Exception(
             pht(
-              'Cart has wrong status ("%s") to call willApplyCharge().',
-              $copy->getStatus()));
+              'Cart has wrong status ("%s") to call %s.',
+              $copy->getStatus(),
+              'willApplyCharge()'));
         }
 
         $this->setStatus(self::STATUS_READY)->save();
@@ -115,6 +118,13 @@ final class PhortuneCart extends PhortuneDAO
       ->setAmountAsCurrency($this->getTotalPriceAsCurrency());
 
     if ($method) {
+      if (!$method->isActive()) {
+        throw new Exception(
+          pht(
+            'Attempting to apply a charge using an inactive '.
+            'payment method ("%s")!',
+            $method->getPHID()));
+      }
       $charge->setPaymentMethodPHID($method->getPHID());
     }
 
@@ -127,14 +137,14 @@ final class PhortuneCart extends PhortuneDAO
         if ($copy->getStatus() !== self::STATUS_READY) {
           throw new Exception(
             pht(
-              'Cart has wrong status ("%s") to call willApplyCharge(), '.
-              'expected "%s".',
+              'Cart has wrong status ("%s") to call %s, expected "%s".',
               $copy->getStatus(),
+              'willApplyCharge()',
               self::STATUS_READY));
         }
 
         $charge->save();
-        $this->setStatus(PhortuneCart::STATUS_PURCHASING)->save();
+        $this->setStatus(self::STATUS_PURCHASING)->save();
 
       $this->endReadLocking();
     $this->saveTransaction();
@@ -154,9 +164,9 @@ final class PhortuneCart extends PhortuneDAO
         if ($copy->getStatus() !== self::STATUS_PURCHASING) {
           throw new Exception(
             pht(
-              'Cart has wrong status ("%s") to call didHoldCharge(), '.
-              'expected "%s".',
+              'Cart has wrong status ("%s") to call %s, expected "%s".',
               $copy->getStatus(),
+              'didHoldCharge()',
               self::STATUS_PURCHASING));
         }
 
@@ -182,8 +192,9 @@ final class PhortuneCart extends PhortuneDAO
             ($copy->getStatus() !== self::STATUS_HOLD)) {
           throw new Exception(
             pht(
-              'Cart has wrong status ("%s") to call didApplyCharge().',
-              $copy->getStatus()));
+              'Cart has wrong status ("%s") to call %s.',
+              $copy->getStatus(),
+              'didApplyCharge()'));
         }
 
         $charge->save();
@@ -217,8 +228,9 @@ final class PhortuneCart extends PhortuneDAO
         if (($copy->getStatus() !== self::STATUS_CHARGED)) {
           throw new Exception(
             pht(
-              'Cart has wrong status ("%s") to call willReviewCart()!',
-              $copy->getStatus()));
+              'Cart has wrong status ("%s") to call %s!',
+              $copy->getStatus(),
+              'willReviewCart()'));
         }
 
         $this->setStatus(self::STATUS_REVIEW)->save();
@@ -242,8 +254,9 @@ final class PhortuneCart extends PhortuneDAO
             ($copy->getStatus() !== self::STATUS_REVIEW)) {
           throw new Exception(
             pht(
-              'Cart has wrong status ("%s") to call didReviewCart()!',
-              $copy->getStatus()));
+              'Cart has wrong status ("%s") to call %s!',
+              $copy->getStatus(),
+              'didReviewCart()'));
         }
 
         foreach ($this->purchases as $purchase) {
@@ -273,8 +286,9 @@ final class PhortuneCart extends PhortuneDAO
             ($copy->getStatus() !== self::STATUS_HOLD)) {
           throw new Exception(
             pht(
-              'Cart has wrong status ("%s") to call didFailCharge().',
-              $copy->getStatus()));
+              'Cart has wrong status ("%s") to call %s.',
+              $copy->getStatus(),
+              'didFailCharge()'));
         }
 
         $charge->save();
@@ -298,7 +312,7 @@ final class PhortuneCart extends PhortuneDAO
 
     if (!$amount->isPositive()) {
       throw new Exception(
-        pht('Trying to refund nonpositive amount of money!'));
+        pht('Trying to refund non-positive amount of money!'));
     }
 
     if ($amount->isGreaterThan($charge->getAmountRefundableAsCurrency())) {
@@ -424,8 +438,7 @@ final class PhortuneCart extends PhortuneDAO
       ->setNewValue(true);
 
     $content_source = PhabricatorContentSource::newForSource(
-      PhabricatorContentSource::SOURCE_PHORTUNE,
-      array());
+      PhabricatorPhortuneContentSource::SOURCECONST);
 
     $editor = id(new PhortuneCartEditor())
       ->setActor($omnipotent_user)
@@ -451,6 +464,10 @@ final class PhortuneCart extends PhortuneDAO
 
   public function getCancelURI() {
     return $this->getImplementation()->getCancelURI($this);
+  }
+
+  public function getDescription() {
+    return $this->getImplementation()->getDescription($this);
   }
 
   public function getDetailURI(PhortuneMerchant $authority = null) {
@@ -527,6 +544,7 @@ final class PhortuneCart extends PhortuneDAO
         'cartClass' => 'text128',
         'mailKey' => 'bytes20',
         'subscriptionPHID' => 'phid?',
+        'isInvoice' => 'bool',
       ),
       self::CONFIG_KEY_SCHEMA => array(
         'key_account' => array(

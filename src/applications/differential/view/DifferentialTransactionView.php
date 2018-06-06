@@ -3,7 +3,7 @@
 final class DifferentialTransactionView
   extends PhabricatorApplicationTransactionView {
 
-  private $changesets;
+  private $changesets = array();
   private $revision;
   private $rightDiff;
   private $leftDiff;
@@ -93,6 +93,13 @@ final class DifferentialTransactionView
       $out[] = parent::renderTransactionContent($xaction);
     }
 
+    // If we're rendering a preview, we show the inline comments in a separate
+    // section underneath the main transaction preview, so we skip rendering
+    // them in the preview body.
+    if ($this->getIsPreview()) {
+      return $out;
+    }
+
     if (!$group) {
       return $out;
     }
@@ -104,7 +111,7 @@ final class DifferentialTransactionView
           $inlines[] = $xaction;
           break;
         default:
-          throw new Exception('Unknown grouped transaction type!');
+          throw new Exception(pht('Unknown grouped transaction type!'));
       }
     }
 

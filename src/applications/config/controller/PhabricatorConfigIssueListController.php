@@ -3,80 +3,80 @@
 final class PhabricatorConfigIssueListController
   extends PhabricatorConfigController {
 
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
 
     $nav = $this->buildSideNavView();
     $nav->selectFilter('issue/');
 
-    $issues = PhabricatorSetupCheck::runAllChecks();
-    PhabricatorSetupCheck::setOpenSetupIssueKeys(
-      PhabricatorSetupCheck::getUnignoredIssueKeys($issues));
+    $engine = new PhabricatorSetupEngine();
+    $response = $engine->execute();
+    if ($response) {
+      return $response;
+    }
+    $issues = $engine->getIssues();
 
     $important = $this->buildIssueList(
-      $issues, PhabricatorSetupCheck::GROUP_IMPORTANT);
+      $issues,
+      PhabricatorSetupCheck::GROUP_IMPORTANT,
+      'fa-warning');
     $php = $this->buildIssueList(
-      $issues, PhabricatorSetupCheck::GROUP_PHP);
+      $issues,
+      PhabricatorSetupCheck::GROUP_PHP,
+      'fa-code');
     $mysql = $this->buildIssueList(
-      $issues, PhabricatorSetupCheck::GROUP_MYSQL);
+      $issues,
+      PhabricatorSetupCheck::GROUP_MYSQL,
+      'fa-database');
     $other = $this->buildIssueList(
-      $issues, PhabricatorSetupCheck::GROUP_OTHER);
+      $issues,
+      PhabricatorSetupCheck::GROUP_OTHER,
+      'fa-question-circle');
 
-    $setup_issues = array();
-    if ($important) {
-      $setup_issues[] = id(new PHUIObjectBoxView())
-        ->setHeaderText(pht('Important Setup Issues'))
-        ->appendChild($important);
-    }
-
-    if ($php) {
-      $setup_issues[] = id(new PHUIObjectBoxView())
-        ->setHeaderText(pht('PHP Setup Issues'))
-        ->appendChild($php);
-    }
-
-    if ($mysql) {
-      $setup_issues[] = id(new PHUIObjectBoxView())
-        ->setHeaderText(pht('MySQL Setup Issues'))
-        ->appendChild($mysql);
-    }
-
-    if ($other) {
-      $setup_issues[] = id(new PHUIObjectBoxView())
-        ->setHeaderText(pht('Other Setup Issues'))
-        ->appendChild($other);
-    }
-
-    if (empty($setup_issues)) {
-      $setup_issues[] = id(new PHUIInfoView())
+    $no_issues = null;
+    if (empty($issues)) {
+      $no_issues = id(new PHUIInfoView())
         ->setTitle(pht('No Issues'))
         ->appendChild(
           pht('Your install has no current setup issues to resolve.'))
         ->setSeverity(PHUIInfoView::SEVERITY_NOTICE);
     }
 
-    $nav->appendChild($setup_issues);
-
     $title = pht('Setup Issues');
+    $header = $this->buildHeaderView($title);
 
-    $crumbs = $this
-      ->buildApplicationCrumbs($nav)
-      ->addTextCrumb(pht('Setup'), $this->getApplicationURI('issue/'));
+    $issue_list = array(
+      $important,
+      $php,
+      $mysql,
+      $other,
+    );
 
-    $nav->setCrumbs($crumbs);
+    $issue_list = $this->buildConfigBoxView(pht('Issues'), $issue_list);
 
-    return $this->buildApplicationPage(
-      $nav,
-      array(
-        'title' => $title,
+    $crumbs = $this->buildApplicationCrumbs()
+      ->addTextCrumb($title)
+      ->setBorder(true);
+
+    $content = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->setNavigation($nav)
+      ->setFixed(true)
+      ->setMainColumn(array(
+        $no_issues,
+        $issue_list,
       ));
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($content);
   }
 
-  private function buildIssueList(array $issues, $group) {
+  private function buildIssueList(array $issues, $group, $fonticon) {
     assert_instances_of($issues, 'PhabricatorSetupIssue');
     $list = new PHUIObjectItemListView();
-    $list->setStackable(true);
+    $list->setBig(true);
     $ignored_items = array();
     $items = 0;
 
@@ -89,12 +89,17 @@ final class PhabricatorConfigIssueListController
           ->setHref($href)
           ->addAttribute($issue->getSummary());
         if (!$issue->getIsIgnored()) {
-          $item->setBarColor('yellow');
+          $icon = id(new PHUIIconView())
+            ->setIcon($fonticon)
+            ->setBackground('bg-sky');
+          $item->setImageIcon($icon);
           $list->addItem($item);
         } else {
-          $item->addIcon('fa-eye-slash', pht('Ignored'));
+          $icon = id(new PHUIIconView())
+            ->setIcon('fa-eye-slash')
+            ->setBackground('bg-grey');
           $item->setDisabled(true);
-          $item->setBarColor('none');
+          $item->setImageIcon($icon);
           $ignored_items[] = $item;
         }
       }

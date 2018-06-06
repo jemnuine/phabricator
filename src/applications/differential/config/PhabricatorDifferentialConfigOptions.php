@@ -11,7 +11,7 @@ final class PhabricatorDifferentialConfigOptions
     return pht('Configure Differential code review.');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-cog';
   }
 
@@ -25,23 +25,12 @@ final class PhabricatorDifferentialConfigOptions
     $custom_field_type = 'custom:PhabricatorCustomFieldConfigOptionType';
 
     $fields = array(
-      new DifferentialTitleField(),
       new DifferentialSummaryField(),
       new DifferentialTestPlanField(),
-      new DifferentialAuthorField(),
       new DifferentialReviewersField(),
       new DifferentialProjectReviewersField(),
-      new DifferentialReviewedByField(),
-      new DifferentialSubscribersField(),
       new DifferentialRepositoryField(),
-      new DifferentialLintField(),
-      new DifferentialProjectsField(),
-      new DifferentialUnitField(),
-      new DifferentialViewPolicyField(),
-      new DifferentialEditPolicyField(),
 
-      new DifferentialDependsOnField(),
-      new DifferentialDependenciesField(),
       new DifferentialManiphestTasksField(),
       new DifferentialCommitsField(),
 
@@ -54,11 +43,9 @@ final class PhabricatorDifferentialConfigOptions
       new DifferentialBlameRevisionField(),
       new DifferentialPathField(),
       new DifferentialHostField(),
+      new DifferentialLintField(),
+      new DifferentialUnitField(),
       new DifferentialRevertPlanField(),
-
-      new DifferentialApplyPatchField(),
-
-      new DifferentialRevisionIDField(),
     );
 
     $default_fields = array();
@@ -67,6 +54,19 @@ final class PhabricatorDifferentialConfigOptions
         'disabled' => $field->shouldDisableByDefault(),
       );
     }
+
+    $inline_description = $this->deformat(
+      pht(<<<EOHELP
+To include patches inline in email bodies, set this option to a positive
+integer. Patches will be inlined if they are at most that many lines and at
+most 256 times that many bytes.
+
+For example, a value of 100 means "inline patches if they are at not more than
+100 lines long and not more than 25,600 bytes large".
+
+By default, patches are not inlined.
+EOHELP
+      ));
 
     return array(
       $this->newOption(
@@ -86,6 +86,7 @@ final class PhabricatorDifferentialConfigOptions
         array(
           '/\.py$/',
           '/\.l?hs$/',
+          '/\.ya?ml$/',
         ))
         ->setDescription(
           pht(
@@ -133,7 +134,7 @@ final class PhabricatorDifferentialConfigOptions
             'to affect existing revisions. For instructions, see '.
             '**[[ %s | Managing Caches ]]** in the documentation.',
             $caches_href))
-        ->addExample("/config\.h$/\n#/autobuilt/#", pht('Valid Setting')),
+        ->addExample("/config\.h$/\n#(^|/)autobuilt/#", pht('Valid Setting')),
       $this->newOption('differential.sticky-accept', 'bool', true)
         ->setBoolOptions(
           array(
@@ -201,11 +202,12 @@ final class PhabricatorDifferentialConfigOptions
           ))
         ->setSummary(pht('Allows any user to reopen a closed revision.'))
         ->setDescription(
-          pht('If you set this to true, any user can reopen a revision so '.
-              'long as it has been closed. This can be useful if a revision '.
-              'is accidentally closed or if a developer changes his or her '.
-              'mind after closing a revision. If it is false, reopening '.
-              'is not allowed.')),
+          pht(
+            'If you set this to true, any user can reopen a revision so '.
+            'long as it has been closed. This can be useful if a revision '.
+            'is accidentally closed or if a developer changes his or her '.
+            'mind after closing a revision. If it is false, reopening '.
+            'is not allowed.')),
       $this->newOption('differential.close-on-accept', 'bool', false)
         ->setBoolOptions(
           array(
@@ -226,24 +228,6 @@ final class PhabricatorDifferentialConfigOptions
             "\n\n".
             'This sort of workflow is very unusual. Very few installs should '.
             'need to change this option.')),
-      $this->newOption('differential.days-fresh', 'int', 1)
-        ->setSummary(
-          pht(
-            "For how many business days should a revision be considered ".
-            "'fresh'?"))
-        ->setDescription(
-          pht(
-            'Revisions newer than this number of days are marked as fresh in '.
-            'Action Required and Revisions Waiting on You views. Only work '.
-            'days (not weekends and holidays) are included. Set to 0 to '.
-            'disable this feature.')),
-      $this->newOption('differential.days-stale', 'int', 3)
-        ->setSummary(
-          pht("After this many days, a revision will be considered 'stale'."))
-        ->setDescription(
-          pht(
-            "Similar to `differential.days-fresh` but marks stale revisions. ".
-            "If the revision is even older than it is when marked as 'old'.")),
       $this->newOption(
         'metamta.differential.subject-prefix',
         'string',
@@ -269,35 +253,18 @@ final class PhabricatorDifferentialConfigOptions
         'int',
         0)
         ->setSummary(pht('Inline patches in email, as body text.'))
-        ->setDescription(
-          pht(
-            "To include patches inline in email bodies, set this to a ".
-            "positive integer. Patches will be inlined if they are at most ".
-            "that many lines. For instance, a value of 100 means 'inline ".
-            "patches if they are no longer than 100 lines'. By default, ".
-            "patches are not inlined.")),
-      // TODO: Implement 'enum'? Options are 'unified' or 'git'.
+        ->setDescription($inline_description),
       $this->newOption(
         'metamta.differential.patch-format',
-        'string',
+        'enum',
         'unified')
         ->setDescription(
-          pht("Format for inlined or attached patches: 'git' or 'unified'.")),
-      $this->newOption(
-        'metamta.differential.unified-comment-context',
-        'bool',
-        false)
-        ->setBoolOptions(
+          pht('Format for inlined or attached patches.'))
+        ->setEnumOptions(
           array(
-            pht('Show context'),
-            pht('Do not show context'),
-          ))
-        ->setSummary(pht('Show diff context around inline comments in email.'))
-        ->setDescription(
-          pht(
-            'Normally, inline comments in emails are shown with a file and '.
-            'line but without any diff context. Enabling this option adds '.
-            'diff context and the comment thread.')),
+            'unified' => pht('Unified'),
+            'git' => pht('Git'),
+          )),
     );
   }
 

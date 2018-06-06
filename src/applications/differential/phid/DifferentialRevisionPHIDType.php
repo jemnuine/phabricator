@@ -5,15 +5,15 @@ final class DifferentialRevisionPHIDType extends PhabricatorPHIDType {
   const TYPECONST = 'DREV';
 
   public function getTypeName() {
-    return pht('Revision');
-  }
-
-  public function getPHIDTypeApplicationClass() {
-    return 'PhabricatorDifferentialApplication';
+    return pht('Differential Revision');
   }
 
   public function newObject() {
     return new DifferentialRevision();
+  }
+
+  public function getPHIDTypeApplicationClass() {
+    return 'PhabricatorDifferentialApplication';
   }
 
   protected function buildQueryForObjects(
@@ -33,21 +33,31 @@ final class DifferentialRevisionPHIDType extends PhabricatorPHIDType {
       $revision = $objects[$phid];
 
       $title = $revision->getTitle();
-      $id = $revision->getID();
-      $status = $revision->getStatus();
+      $monogram = $revision->getMonogram();
+      $uri = $revision->getURI();
 
-      $handle->setName("D{$id}");
-      $handle->setURI("/D{$id}");
-      $handle->setFullName("D{$id}: {$title}");
+      $handle
+        ->setName($monogram)
+        ->setURI($uri)
+        ->setFullName("{$monogram}: {$title}");
 
       if ($revision->isClosed()) {
-        $handle->setStatus(PhabricatorObjectHandleStatus::STATUS_CLOSED);
+        $handle->setStatus(PhabricatorObjectHandle::STATUS_CLOSED);
       }
+
+      $icon = $revision->getStatusIcon();
+      $color = $revision->getStatusIconColor();
+      $name = $revision->getStatusDisplayName();
+
+      $handle
+        ->setStateIcon($icon)
+        ->setStateColor($color)
+        ->setStateName($name);
     }
   }
 
   public function canLoadNamedObject($name) {
-    return preg_match('/^D\d*[1-9]\d*$/i', $name);
+    return preg_match('/^D[1-9]\d*$/i', $name);
   }
 
   public function loadNamedObjects(

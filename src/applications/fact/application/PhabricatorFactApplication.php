@@ -14,7 +14,7 @@ final class PhabricatorFactApplication extends PhabricatorApplication {
     return '/fact/';
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-line-chart';
   }
 
@@ -31,6 +31,7 @@ final class PhabricatorFactApplication extends PhabricatorApplication {
       '/fact/' => array(
         '' => 'PhabricatorFactHomeController',
         'chart/' => 'PhabricatorFactChartController',
+        'object/(?<phid>[^/]+)/' => 'PhabricatorFactObjectController',
       ),
     );
   }

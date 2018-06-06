@@ -42,7 +42,7 @@ abstract class PhabricatorLiskDAO extends LiskDAO {
       $namespace = self::getDefaultStorageNamespace();
     }
     if (!strlen($namespace)) {
-      throw new Exception('No storage namespace configured!');
+      throw new Exception(pht('No storage namespace configured!'));
     }
     return $namespace;
   }
@@ -52,24 +52,112 @@ abstract class PhabricatorLiskDAO extends LiskDAO {
    */
   protected function establishLiveConnection($mode) {
     $namespace = self::getStorageNamespace();
+    $database = $namespace.'_'.$this->getApplicationName();
 
-    $conf = PhabricatorEnv::newObjectFromConfig(
-      'mysql.configuration-provider',
-      array($this, $mode, $namespace));
+    $is_readonly = PhabricatorEnv::isReadOnly();
 
-    return PhabricatorEnv::newObjectFromConfig(
-      'mysql.implementation',
-      array(
-        array(
-          'user'      => $conf->getUser(),
-          'pass'      => $conf->getPassword(),
-          'host'      => $conf->getHost(),
-          'port'      => $conf->getPort(),
-          'database'  => $conf->getDatabase(),
-          'retries'   => 3,
-        ),
-      ));
+    if ($is_readonly && ($mode != 'r')) {
+      $this->raiseImproperWrite($database);
+    }
+
+    $connection = $this->newClusterConnection(
+      $this->getApplicationName(),
+      $database,
+      $mode);
+
+    // TODO: This should be testing if the mode is "r", but that would probably
+    // break a lot of things. Perform a more narrow test for readonly mode
+    // until we have greater certainty that this works correctly most of the
+    // time.
+    if ($is_readonly) {
+      $connection->setReadOnly(true);
+    }
+
+    return $connection;
   }
+
+  private function newClusterConnection($application, $database, $mode) {
+    $master = PhabricatorDatabaseRef::getMasterDatabaseRefForApplication(
+      $application);
+
+    $master_exception = null;
+
+    if ($master && !$master->isSevered()) {
+      $connection = $master->newApplicationConnection($database);
+      if ($master->isReachable($connection)) {
+        return $connection;
+      } else {
+        if ($mode == 'w') {
+          $this->raiseImpossibleWrite($database);
+        }
+        PhabricatorEnv::setReadOnly(
+          true,
+          PhabricatorEnv::READONLY_UNREACHABLE);
+
+        $master_exception = $master->getConnectionException();
+      }
+    }
+
+    $replica = PhabricatorDatabaseRef::getReplicaDatabaseRefForApplication(
+      $application);
+    if ($replica) {
+      $connection = $replica->newApplicationConnection($database);
+      $connection->setReadOnly(true);
+      if ($replica->isReachable($connection)) {
+        return $connection;
+      }
+    }
+
+    if (!$master && !$replica) {
+      $this->raiseUnconfigured($database);
+    }
+
+    $this->raiseUnreachable($database, $master_exception);
+  }
+
+  private function raiseImproperWrite($database) {
+    throw new PhabricatorClusterImproperWriteException(
+      pht(
+        'Unable to establish a write-mode connection (to application '.
+        'database "%s") because Phabricator is in read-only mode. Whatever '.
+        'you are trying to do does not function correctly in read-only mode.',
+        $database));
+  }
+
+  private function raiseImpossibleWrite($database) {
+    throw new PhabricatorClusterImpossibleWriteException(
+      pht(
+        'Unable to connect to master database ("%s"). This is a severe '.
+        'failure; your request did not complete.',
+        $database));
+  }
+
+  private function raiseUnconfigured($database) {
+    throw new Exception(
+      pht(
+        'Unable to establish a connection to any database host '.
+        '(while trying "%s"). No masters or replicas are configured.',
+        $database));
+  }
+
+  private function raiseUnreachable($database, Exception $proxy = null) {
+    $message = pht(
+      'Unable to establish a connection to any database host '.
+      '(while trying "%s"). All masters and replicas are completely '.
+      'unreachable.',
+      $database);
+
+    if ($proxy) {
+      $proxy_message = pht(
+        '%s: %s',
+        get_class($proxy),
+        $proxy->getMessage());
+      $message = $message."\n\n".$proxy_message;
+    }
+
+    throw new PhabricatorClusterStrandedException($message);
+  }
+
 
   /**
    * @task config

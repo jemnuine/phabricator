@@ -15,6 +15,13 @@ final class PhortuneSubscriptionWorker extends PhabricatorWorker {
       return;
     }
 
+    $currency = $subscription->getCostForBillingPeriodAsCurrency(
+      $last_epoch,
+      $next_epoch);
+    if (!$currency->isPositive()) {
+      return;
+    }
+
     $account = $subscription->getAccount();
     $merchant = $subscription->getMerchant();
 
@@ -29,17 +36,32 @@ final class PhortuneSubscriptionWorker extends PhabricatorWorker {
       ->setSubscription($subscription);
 
     // TODO: This isn't really ideal. It would be better to use an application
-    // actor than the original author of the subscription. In particular, if
-    // someone initiates a subscription, adds some other account managers, and
-    // later leaves the company, they'll continue "acting" here indefinitely.
+    // actor than a fairly arbitrary account member.
+
     // However, for now, some of the stuff later in the pipeline requires a
     // valid actor with a real PHID. The subscription should eventually be
     // able to create these invoices "as" the application it is acting on
     // behalf of.
-    $actor = id(new PhabricatorPeopleQuery())
+
+    $members = id(new PhabricatorPeopleQuery())
       ->setViewer($viewer)
-      ->withPHIDs(array($subscription->getAuthorPHID()))
-      ->executeOne();
+      ->withPHIDs($account->getMemberPHIDs())
+      ->execute();
+    $actor = null;
+    foreach ($members as $member) {
+
+      // Don't act as a disabled user. If all of the users on the account are
+      // disabled this means we won't charge the subscription, but that's
+      // probably correct since it means no one can cancel or pay it anyway.
+      if ($member->getIsDisabled()) {
+        continue;
+      }
+
+      // For now, just pick the first valid user we encounter as the actor.
+      $actor = $member;
+      break;
+    }
+
     if (!$actor) {
       throw new Exception(pht('Failed to load actor to bill subscription!'));
     }
@@ -48,10 +70,6 @@ final class PhortuneSubscriptionWorker extends PhabricatorWorker {
 
     $purchase = $cart->newPurchase($actor, $product);
 
-    $currency = $subscription->getCostForBillingPeriodAsCurrency(
-      $last_epoch,
-      $next_epoch);
-
     $purchase
       ->setBasePriceAsCurrency($currency)
       ->setMetadataValue('subscriptionPHID', $subscription->getPHID())
@@ -59,7 +77,11 @@ final class PhortuneSubscriptionWorker extends PhabricatorWorker {
       ->setMetadataValue('epoch.end', $next_epoch)
       ->save();
 
-    $cart->setSubscriptionPHID($subscription->getPHID());
+    $cart
+      ->setSubscriptionPHID($subscription->getPHID())
+      ->setIsInvoice(1)
+      ->save();
+
     $cart->activateCart();
 
     try {
@@ -89,8 +111,7 @@ final class PhortuneSubscriptionWorker extends PhabricatorWorker {
       ->setNewValue(true);
 
     $content_source = PhabricatorContentSource::newForSource(
-      PhabricatorContentSource::SOURCE_PHORTUNE,
-      array());
+      PhabricatorPhortuneContentSource::SOURCECONST);
 
     $acting_phid = id(new PhabricatorPhortuneApplication())->getPHID();
     $editor = id(new PhortuneCartEditor())
@@ -120,6 +141,10 @@ final class PhortuneSubscriptionWorker extends PhabricatorWorker {
     $method = id(new PhortunePaymentMethodQuery())
       ->setViewer($viewer)
       ->withPHIDs(array($subscription->getDefaultPaymentMethodPHID()))
+      ->withStatuses(
+        array(
+          PhortunePaymentMethod::STATUS_ACTIVE,
+        ))
       ->executeOne();
     if (!$method) {
       $issues[] = pht(
@@ -191,8 +216,7 @@ final class PhortuneSubscriptionWorker extends PhabricatorWorker {
 
     if (!$last_epoch || !$this_epoch) {
       throw new PhabricatorWorkerPermanentFailureException(
-        pht(
-          'Subscription is missing billing period information.'));
+        pht('Subscription is missing billing period information.'));
     }
 
     $period_length = ($this_epoch - $last_epoch);

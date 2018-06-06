@@ -5,19 +5,21 @@ final class PhabricatorConpherenceThreadPHIDType extends PhabricatorPHIDType {
   const TYPECONST = 'CONP';
 
   public function getTypeName() {
-    return pht('Conpherence Thread');
+    return pht('Conpherence Room');
   }
 
   public function newObject() {
     return new ConpherenceThread();
   }
 
+  public function getPHIDTypeApplicationClass() {
+    return 'PhabricatorConpherenceApplication';
+  }
+
   protected function buildQueryForObjects(
     PhabricatorObjectQuery $query,
     array $phids) {
-
     return id(new ConpherenceThreadQuery())
-      ->needParticipantCache(true)
       ->withPHIDs($phids);
   }
 
@@ -28,10 +30,13 @@ final class PhabricatorConpherenceThreadPHIDType extends PhabricatorPHIDType {
 
     foreach ($handles as $phid => $handle) {
       $thread = $objects[$phid];
-      $data = $thread->getDisplayData($query->getViewer());
-      $handle->setName($data['title']);
-      $handle->setFullName($data['title']);
-      $handle->setURI('/'.$thread->getMonogram());
+
+      $title = $thread->getStaticTitle();
+      $monogram = $thread->getMonogram();
+
+      $handle->setName($title);
+      $handle->setFullName(pht('%s: %s', $monogram, $title));
+      $handle->setURI('/'.$monogram);
     }
   }
 

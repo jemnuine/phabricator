@@ -3,15 +3,9 @@
 final class PhabricatorDashboardPanelEditController
   extends PhabricatorDashboardController {
 
-  private $id;
-
-  public function willProcessRequest(array $data) {
-    $this->id = idx($data, 'id');
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $viewer = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $id = $request->getURIData('id');
 
     // If the user is trying to create a panel directly on a dashboard, make
     // sure they have permission to see and edit the dashboard.
@@ -32,10 +26,10 @@ final class PhabricatorDashboardPanelEditController
         return new Aphront404Response();
       }
 
-      $manage_uri = $this->getApplicationURI('manage/'.$dashboard_id.'/');
+      $manage_uri = $this->getApplicationURI('arrange/'.$dashboard_id.'/');
     }
 
-    if ($this->id) {
+    if ($id) {
       $is_create = false;
 
       if ($dashboard) {
@@ -51,32 +45,13 @@ final class PhabricatorDashboardPanelEditController
 
       $panel = id(new PhabricatorDashboardPanelQuery())
         ->setViewer($viewer)
-        ->withIDs(array($this->id))
+        ->withIDs(array($id))
         ->requireCapabilities($capabilities)
         ->executeOne();
       if (!$panel) {
         return new Aphront404Response();
       }
 
-      if ($dashboard) {
-        $can_edit = PhabricatorPolicyFilter::hasCapability(
-          $viewer,
-          $panel,
-          PhabricatorPolicyCapability::CAN_EDIT);
-        if (!$can_edit) {
-          if ($request->isFormPost() && $request->getBool('copy')) {
-            $panel = $this->copyPanel(
-              $request,
-              $dashboard,
-              $panel);
-          } else {
-            return $this->processPanelCloneRequest(
-              $request,
-              $dashboard,
-              $panel);
-          }
-        }
-      }
     } else {
       $is_create = true;
 
@@ -91,18 +66,18 @@ final class PhabricatorDashboardPanelEditController
     }
 
     if ($is_create) {
-      $title = pht('New Panel');
-      $header = pht('Create New Panel');
+      $title = pht('Create New Panel');
       $button = pht('Create Panel');
+      $header_icon = 'fa-plus-square';
       if ($dashboard) {
         $cancel_uri = $manage_uri;
       } else {
         $cancel_uri = $this->getApplicationURI('panel/');
       }
     } else {
-      $title = pht('Edit %s', $panel->getMonogram());
-      $header = pht('Edit %s %s', $panel->getMonogram(), $panel->getName());
+      $title = pht('Edit Panel: %s', $panel->getName());
       $button = pht('Save Panel');
+      $header_icon = 'fa-pencil';
       if ($dashboard) {
         $cancel_uri = $manage_uri;
       } else {
@@ -168,7 +143,7 @@ final class PhabricatorDashboardPanelEditController
           ->applyTransactions($panel, $xactions);
 
         // If we're creating a panel directly on a dashboard, add it now.
-        if ($dashboard) {
+        if ($dashboard && $is_create) {
           PhabricatorDashboardTransactionEditor::addPanelToDashboard(
             $viewer,
             PhabricatorContentSource::newFromRequest($request),
@@ -218,19 +193,23 @@ final class PhabricatorDashboardPanelEditController
           ->setLabel(pht('Name'))
           ->setName('name')
           ->setValue($v_name)
-          ->setError($e_name))
-      ->appendChild(
-        id(new AphrontFormPolicyControl())
-          ->setName('viewPolicy')
-          ->setPolicyObject($panel)
-          ->setCapability(PhabricatorPolicyCapability::CAN_VIEW)
-          ->setPolicies($policies))
-      ->appendChild(
-        id(new AphrontFormPolicyControl())
-          ->setName('editPolicy')
-          ->setPolicyObject($panel)
-          ->setCapability(PhabricatorPolicyCapability::CAN_EDIT)
-          ->setPolicies($policies));
+          ->setError($e_name));
+
+      if (!$request->isAjax() || !$is_create) {
+        $form
+          ->appendChild(
+            id(new AphrontFormPolicyControl())
+              ->setName('viewPolicy')
+              ->setPolicyObject($panel)
+              ->setCapability(PhabricatorPolicyCapability::CAN_VIEW)
+              ->setPolicies($policies))
+          ->appendChild(
+            id(new AphrontFormPolicyControl())
+              ->setName('editPolicy')
+              ->setPolicyObject($panel)
+              ->setCapability(PhabricatorPolicyCapability::CAN_EDIT)
+              ->setPolicies($policies));
+    }
 
     $field_list->appendFieldsToForm($form);
 
@@ -247,10 +226,11 @@ final class PhabricatorDashboardPanelEditController
         '/'.$panel->getMonogram());
       $crumbs->addTextCrumb(pht('Edit'));
     }
+    $crumbs->setBorder(true);
 
     if ($request->isAjax()) {
       return $this->newDialog()
-        ->setTitle($header)
+        ->setTitle($title)
         ->setSubmitURI($submit_uri)
         ->setWidth(AphrontDialogView::WIDTH_FORM)
         ->setValidationException($validation_exception)
@@ -266,18 +246,23 @@ final class PhabricatorDashboardPanelEditController
     }
 
     $box = id(new PHUIObjectBoxView())
-      ->setHeaderText($header)
+      ->setHeaderText(pht('Panel'))
       ->setValidationException($validation_exception)
+      ->setBackground(PHUIObjectBoxView::BLUE_PROPERTY)
       ->setForm($form);
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
-        $box,
-      ),
-      array(
-        'title' => $title,
-      ));
+    $header = id(new PHUIHeaderView())
+      ->setHeader($title)
+      ->setHeaderIcon($header_icon);
+
+    $view = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->setFooter($box);
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($view);
   }
 
   private function processPanelTypeRequest(AphrontRequest $request) {
@@ -336,100 +321,33 @@ final class PhabricatorDashboardPanelEditController
     }
 
     $title = pht('Create Dashboard Panel');
+    $header_icon = 'fa-plus-square';
 
     $crumbs = $this->buildApplicationCrumbs();
     $crumbs->addTextCrumb(
       pht('Panels'),
       $this->getApplicationURI('panel/'));
     $crumbs->addTextCrumb(pht('New Panel'));
+    $crumbs->setBorder(true);
 
     $box = id(new PHUIObjectBoxView())
-      ->setHeaderText($title)
+      ->setHeaderText(pht('Panel'))
       ->setFormErrors($errors)
+      ->setBackground(PHUIObjectBoxView::BLUE_PROPERTY)
       ->setForm($form);
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
-        $box,
-      ),
-      array(
-        'title' => $title,
-      ));
-  }
+    $header = id(new PHUIHeaderView())
+      ->setHeader($title)
+      ->setHeaderIcon($header_icon);
 
-  private function processPanelCloneRequest(
-    AphrontRequest $request,
-    PhabricatorDashboard $dashboard,
-    PhabricatorDashboardPanel $panel) {
+    $view = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->setFooter($box);
 
-    $viewer = $request->getUser();
-
-    $manage_uri = $this->getApplicationURI('manage/'.$dashboard->getID().'/');
-
-    return $this->newDialog()
-      ->setTitle(pht('Copy Panel?'))
-      ->addHiddenInput('copy', true)
-      ->addHiddenInput('dashboardID', $request->getInt('dashboardID'))
-      ->addHiddenInput('column', $request->getInt('column'))
-      ->appendParagraph(
-        pht(
-          'You do not have permission to edit this dashboard panel, but you '.
-          'can make a copy and edit that instead. If you choose to copy the '.
-          'panel, the original will be replaced with the new copy on this '.
-          'dashboard.'))
-      ->appendParagraph(
-        pht(
-          'Do you want to make a copy of this panel?'))
-      ->addCancelButton($manage_uri)
-      ->addSubmitButton(pht('Copy Panel'));
-  }
-
-  private function copyPanel(
-    AphrontRequest $request,
-    PhabricatorDashboard $dashboard,
-    PhabricatorDashboardPanel $panel) {
-
-    $viewer = $request->getUser();
-
-    $copy = PhabricatorDashboardPanel::initializeNewPanel($viewer);
-    $copy = PhabricatorDashboardPanel::copyPanel($copy, $panel);
-
-    $copy->openTransaction();
-      $copy->save();
-
-      // TODO: This should record a transaction on the panel copy, too.
-
-      $xactions = array();
-      $xactions[] = id(new PhabricatorDashboardTransaction())
-        ->setTransactionType(PhabricatorTransactions::TYPE_EDGE)
-        ->setMetadataValue(
-          'edge:type',
-          PhabricatorDashboardDashboardHasPanelEdgeType::EDGECONST)
-        ->setNewValue(
-          array(
-            '+' => array(
-              $copy->getPHID() => $copy->getPHID(),
-            ),
-            '-' => array(
-              $panel->getPHID() => $panel->getPHID(),
-            ),
-          ));
-
-      $layout_config = $dashboard->getLayoutConfigObject();
-      $layout_config->replacePanel($panel->getPHID(), $copy->getPHID());
-      $dashboard->setLayoutConfigFromObject($layout_config);
-      $dashboard->save();
-
-      $editor = id(new PhabricatorDashboardTransactionEditor())
-        ->setActor($viewer)
-        ->setContentSourceFromRequest($request)
-        ->setContinueOnMissingFields(true)
-        ->setContinueOnNoEffect(true)
-        ->applyTransactions($dashboard, $xactions);
-    $copy->saveTransaction();
-
-    return $copy;
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($view);
   }
 
 

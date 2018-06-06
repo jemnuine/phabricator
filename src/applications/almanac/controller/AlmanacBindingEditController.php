@@ -58,7 +58,7 @@ final class AlmanacBindingEditController
     if ($request->isFormPost()) {
       $v_interface = $request->getArr('interfacePHIDs');
 
-      $type_interface = AlmanacBindingTransaction::TYPE_INTERFACE;
+      $type_interface = AlmanacBindingInterfaceTransaction::TRANSACTIONTYPE;
 
       $xactions = array();
 
@@ -87,7 +87,7 @@ final class AlmanacBindingEditController
       ->appendControl(
         id(new AphrontFormTokenizerControl())
           ->setName('interfacePHIDs')
-          ->setLabel('Interface')
+          ->setLabel(pht('Interface'))
           ->setLimit(1)
           ->setDatasource(new AlmanacInterfaceDatasource())
           ->setValue($v_interface)
@@ -99,25 +99,35 @@ final class AlmanacBindingEditController
 
     $box = id(new PHUIObjectBoxView())
       ->setValidationException($validation_exception)
-      ->setHeaderText($title)
+      ->setHeaderText(pht('Binding'))
+      ->setBackground(PHUIObjectBoxView::BLUE_PROPERTY)
       ->appendChild($form);
 
     $crumbs = $this->buildApplicationCrumbs();
     $crumbs->addTextCrumb($service->getName(), $service_uri);
     if ($is_new) {
       $crumbs->addTextCrumb(pht('Create Binding'));
+      $header = id(new PHUIHeaderView())
+        ->setHeader(pht('Create Binding'))
+        ->setHeaderIcon('fa-plus-square');
     } else {
       $crumbs->addTextCrumb(pht('Edit Binding'));
+      $header = id(new PHUIHeaderView())
+        ->setHeader(pht('Create Binding'))
+        ->setHeaderIcon('fa-pencil');
     }
+    $crumbs->setBorder(true);
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
+    $view = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->setFooter(array(
         $box,
-      ),
-      array(
-        'title' => $title,
       ));
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($view);
   }
 
 }

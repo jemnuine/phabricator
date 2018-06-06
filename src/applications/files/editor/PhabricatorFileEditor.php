@@ -20,29 +20,6 @@ final class PhabricatorFileEditor
     return $types;
   }
 
-  protected function getCustomTransactionOldValue(
-    PhabricatorLiskDAO $object,
-    PhabricatorApplicationTransaction $xaction) {}
-
-  protected function getCustomTransactionNewValue(
-    PhabricatorLiskDAO $object,
-    PhabricatorApplicationTransaction $xaction) {}
-
-  protected function applyCustomInternalTransaction(
-    PhabricatorLiskDAO $object,
-    PhabricatorApplicationTransaction $xaction) {
-
-    switch ($xaction->getTransactionType()) {
-      case PhabricatorTransactions::TYPE_VIEW_POLICY:
-        $object->setViewPolicy($xaction->getNewValue());
-        break;
-    }
-  }
-
-  protected function applyCustomExternalTransaction(
-    PhabricatorLiskDAO $object,
-    PhabricatorApplicationTransaction $xaction) {}
-
   protected function shouldSendMail(
     PhabricatorLiskDAO $object,
     array $xactions) {
@@ -70,8 +47,7 @@ final class PhabricatorFileEditor
     $name = $object->getName();
 
     return id(new PhabricatorMetaMTAMail())
-      ->setSubject("F{$id}: {$name}")
-      ->addHeader('Thread-Topic', "F{$id}");
+      ->setSubject("F{$id}: {$name}");
   }
 
   protected function buildMailBody(
@@ -94,7 +70,7 @@ final class PhabricatorFileEditor
   }
 
   protected function supportsSearch() {
-    return false;
+    return true;
   }
 
 }

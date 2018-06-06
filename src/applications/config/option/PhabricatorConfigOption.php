@@ -76,7 +76,9 @@ final class PhabricatorConfigOption
     }
     return pht(
       'This configuration is locked and can not be edited from the web '.
-      'interface. Use `./bin/config` in `phabricator/` to edit it.');
+      'interface. Use %s in %s to edit it.',
+      phutil_tag('tt', array(), './bin/config'),
+      phutil_tag('tt', array(), 'phabricator/'));
   }
 
   public function addExample($value, $description) {
@@ -122,8 +124,7 @@ final class PhabricatorConfigOption
       return $this->enumOptions;
     }
 
-    throw new Exception(
-      'Call setEnumOptions() before trying to access them!');
+    throw new PhutilInvalidStateException('setEnumOptions');
   }
 
   public function setKey($key) {
@@ -174,6 +175,12 @@ final class PhabricatorConfigOption
     return $this->type;
   }
 
+  public function newOptionType() {
+    $type_key = $this->getType();
+    $type_map = PhabricatorConfigType::getAllTypes();
+    return idx($type_map, $type_key);
+  }
+
   public function isCustomType() {
     return !strncmp($this->getType(), 'custom:', 7);
   }
@@ -181,7 +188,7 @@ final class PhabricatorConfigOption
   public function getCustomObject() {
     if (!$this->customObject) {
       if (!$this->isCustomType()) {
-        throw new Exception('This option does not have a custom type!');
+        throw new Exception(pht('This option does not have a custom type!'));
       }
       $this->customObject = newv(substr($this->getType(), 7), array());
     }

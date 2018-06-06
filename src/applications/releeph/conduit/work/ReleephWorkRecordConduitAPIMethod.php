@@ -25,8 +25,9 @@ final class ReleephWorkRecordConduitAPIMethod
    * reverted.
    */
   public function getMethodDescription() {
-    return 'Record whether we committed a pick or revert '.
-      'to the upstream repository.';
+    return pht(
+      'Record whether we committed a pick or revert '.
+      'to the upstream repository.');
   }
 
   protected function defineParamTypes() {
@@ -64,10 +65,7 @@ final class ReleephWorkRecordConduitAPIMethod
     $editor = id(new ReleephRequestTransactionalEditor())
       ->setActor($request->getUser())
       ->setContinueOnNoEffect(true)
-      ->setContentSource(
-        PhabricatorContentSource::newForSource(
-          PhabricatorContentSource::SOURCE_CONDUIT,
-          array()));
+      ->setContentSource($request->newContentSource());
 
     $editor->applyTransactions($releeph_request, $xactions);
   }

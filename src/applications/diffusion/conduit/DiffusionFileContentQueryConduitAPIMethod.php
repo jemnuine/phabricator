@@ -8,7 +8,7 @@ final class DiffusionFileContentQueryConduitAPIMethod
   }
 
   public function getMethodDescription() {
-    return 'Retrieve file content from a repository.';
+    return pht('Retrieve file content from a repository.');
   }
 
   protected function defineReturnType() {
@@ -19,29 +19,14 @@ final class DiffusionFileContentQueryConduitAPIMethod
     return array(
       'path' => 'required string',
       'commit' => 'required string',
-      'needsBlame' => 'optional bool',
-    );
+    ) + DiffusionFileFutureQuery::getConduitParameters();
   }
 
   protected function getResult(ConduitAPIRequest $request) {
     $drequest = $this->getDiffusionRequest();
-    $needs_blame = $request->getValue('needsBlame');
-    $file_query = DiffusionFileContentQuery::newFromDiffusionRequest(
-      $drequest);
-    $file_query
-      ->setViewer($request->getUser())
-      ->setNeedsBlame($needs_blame);
-    $file_content = $file_query->loadFileContent();
-    if ($needs_blame) {
-      list($text_list, $rev_list, $blame_dict) = $file_query->getBlameData();
-    } else {
-      $text_list = $rev_list = $blame_dict = array();
-    }
-    $file_content
-      ->setBlameDict($blame_dict)
-      ->setRevList($rev_list)
-      ->setTextList($text_list);
-    return $file_content->toDictionary();
+
+    return DiffusionFileContentQuery::newFromDiffusionRequest($drequest)
+      ->respondToConduitRequest($request);
   }
 
 }

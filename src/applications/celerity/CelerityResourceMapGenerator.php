@@ -1,6 +1,6 @@
 <?php
 
-final class CelerityResourceMapGenerator {
+final class CelerityResourceMapGenerator extends Phobject {
 
   private $debug = false;
   private $resources;
@@ -232,11 +232,8 @@ EOFILE;
 
     list($description, $metadata) = $parser->parse($matches[0]);
 
-    $provides = preg_split('/\s+/', trim(idx($metadata, 'provides')));
-    $requires = preg_split('/\s+/', trim(idx($metadata, 'requires')));
-    $provides = array_filter($provides);
-    $requires = array_filter($requires);
-
+    $provides = $this->parseResourceSymbolList(idx($metadata, 'provides'));
+    $requires = $this->parseResourceSymbolList(idx($metadata, 'requires'));
     if (!$provides) {
       // Tests and documentation-only JS is permitted to @provide no targets.
       return array(null, null);
@@ -244,7 +241,10 @@ EOFILE;
 
     if (count($provides) > 1) {
       throw new Exception(
-        pht('Resource "%s" must @provide at most one Celerity target.', $name));
+        pht(
+          'Resource "%s" must %s at most one Celerity target.',
+          $name,
+          '@provide'));
     }
 
     return array(head($provides), $requires);
@@ -268,7 +268,9 @@ EOFILE;
       $cycle = $graph->detectCycles($provides);
       if ($cycle) {
         throw new Exception(
-          pht('Cycle detected in resource graph: %s', implode(' > ', $cycle)));
+          pht(
+            'Cycle detected in resource graph: %s',
+            implode(' > ', $cycle)));
       }
     }
   }
@@ -298,9 +300,10 @@ EOFILE;
           throw new Exception(
             pht(
               'Package specification for "%s" includes "%s", but that symbol '.
-              'is not @provided by any resource.',
+              'is not %s by any resource.',
               $package_name,
-              $symbol));
+              $symbol,
+              '@provided'));
         }
 
         $resource_name = $reverse_map[$symbol_hash];
@@ -356,6 +359,39 @@ EOFILE;
       }
     }
     return $result;
+  }
+
+  private function parseResourceSymbolList($list) {
+    if (!$list) {
+      return array();
+    }
+
+    // This is valid:
+    //
+    //   @requires x y
+    //
+    // But so is this:
+    //
+    //   @requires x
+    //   @requires y
+    //
+    // Accept either form and produce a list of symbols.
+
+    $list = (array)$list;
+
+    // We can get `true` values if there was a bare `@requires` in the input.
+    foreach ($list as $key => $item) {
+      if ($item === true) {
+        unset($list[$key]);
+      }
+    }
+
+    $list = implode(' ', $list);
+    $list = trim($list);
+    $list = preg_split('/\s+/', $list);
+    $list = array_filter($list);
+
+    return $list;
   }
 
 }

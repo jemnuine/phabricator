@@ -3,25 +3,18 @@
 final class PhabricatorConfigEditController
   extends PhabricatorConfigController {
 
-  private $key;
-
-  public function willProcessRequest(array $data) {
-    $this->key = $data['key'];
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
-
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $key = $request->getURIData('key');
 
     $options = PhabricatorApplicationConfigOptions::loadAllOptions();
-    if (empty($options[$this->key])) {
+    if (empty($options[$key])) {
       $ancient = PhabricatorExtraConfigSetupCheck::getAncientConfig();
-      if (isset($ancient[$this->key])) {
+      if (isset($ancient[$key])) {
         $desc = pht(
           "This configuration has been removed. You can safely delete ".
           "it.\n\n%s",
-          $ancient[$this->key]);
+          $ancient[$key]);
       } else {
         $desc = pht(
           'This configuration option is unknown. It may be misspelled, '.
@@ -32,14 +25,14 @@ final class PhabricatorConfigEditController
       // longer exists. Allow it to be edited so it can be reviewed and
       // deleted.
       $option = id(new PhabricatorConfigOption())
-        ->setKey($this->key)
+        ->setKey($key)
         ->setType('wild')
         ->setDefault(null)
         ->setDescription($desc);
       $group = null;
       $group_uri = $this->getApplicationURI();
     } else {
-      $option = $options[$this->key];
+      $option = $options[$key];
       $group = $option->getGroup();
       $group_uri = $this->getApplicationURI('group/'.$group->getKey().'/');
     }
@@ -57,11 +50,11 @@ final class PhabricatorConfigEditController
     $config_entry = id(new PhabricatorConfigEntry())
       ->loadOneWhere(
         'configKey = %s AND namespace = %s',
-        $this->key,
+        $key,
         'default');
     if (!$config_entry) {
       $config_entry = id(new PhabricatorConfigEntry())
-        ->setConfigKey($this->key)
+        ->setConfigKey($key)
         ->setNamespace('default')
         ->setIsDeleted(true);
       $config_entry->setPHID($config_entry->generatePHID());
@@ -81,7 +74,7 @@ final class PhabricatorConfigEditController
       if (!$errors) {
 
         $editor = id(new PhabricatorConfigEditor())
-          ->setActor($user)
+          ->setActor($viewer)
           ->setContinueOnNoEffect(true)
           ->setContentSourceFromRequest($request);
 
@@ -104,41 +97,64 @@ final class PhabricatorConfigEditController
       }
     }
 
-    $form = new AphrontFormView();
+    $form = id(new AphrontFormView())
+      ->setEncType('multipart/form-data');
 
     $error_view = null;
     if ($errors) {
       $error_view = id(new PHUIInfoView())
+        ->setSeverity(PHUIInfoView::SEVERITY_ERROR)
         ->setErrors($errors);
-    } else if ($option->getHidden()) {
-      $msg = pht(
-        'This configuration is hidden and can not be edited or viewed from '.
-        'the web interface.');
-
-      $error_view = id(new PHUIInfoView())
-        ->setTitle(pht('Configuration Hidden'))
-        ->setSeverity(PHUIInfoView::SEVERITY_WARNING)
-        ->appendChild(phutil_tag('p', array(), $msg));
-    } else if ($option->getLocked()) {
-
-      $msg = $option->getLockedMessage();
-      $error_view = id(new PHUIInfoView())
-        ->setTitle(pht('Configuration Locked'))
-        ->setSeverity(PHUIInfoView::SEVERITY_NOTICE)
-        ->appendChild(phutil_tag('p', array(), $msg));
     }
 
+    $doc_href = PhabricatorEnv::getDoclink(
+        'Configuration Guide: Locked and Hidden Configuration');
+
+    $doc_link = phutil_tag(
+      'a',
+      array(
+        'href' => $doc_href,
+        'target' => '_blank',
+      ),
+      pht('Learn more about locked and hidden options.'));
+
+    $status_items = array();
+    $tag = null;
     if ($option->getHidden()) {
-      $control = null;
+      $tag = id(new PHUITagView())
+        ->setName(pht('Hidden'))
+        ->setColor(PHUITagView::COLOR_GREY)
+        ->setBorder(PHUITagView::BORDER_NONE)
+        ->setType(PHUITagView::TYPE_SHADE);
+
+      $message = pht(
+        'This configuration is hidden and can not be edited or viewed from '.
+        'the web interface.');
+      $status_items[] = id(new PHUIInfoView())
+        ->appendChild(array($message, ' ', $doc_link));
+    } else if ($option->getLocked()) {
+      $tag = id(new PHUITagView())
+        ->setName(pht('Locked'))
+        ->setColor(PHUITagView::COLOR_RED)
+        ->setBorder(PHUITagView::BORDER_NONE)
+        ->setType(PHUITagView::TYPE_SHADE);
+
+      $message = $option->getLockedMessage();
+      $status_items[] = id(new PHUIInfoView())
+        ->appendChild(array($message, ' ', $doc_link));
+    }
+
+    if ($option->getHidden() || $option->getLocked()) {
+      $controls = array();
     } else {
-      $control = $this->renderControl(
+      $controls = $this->renderControls(
         $option,
         $display_value,
         $e_value);
     }
 
     $engine = new PhabricatorMarkupEngine();
-    $engine->setViewer($user);
+    $engine->setViewer($viewer);
     $engine->addObject($option, 'description');
     $engine->process();
     $description = phutil_tag(
@@ -149,12 +165,19 @@ final class PhabricatorConfigEditController
       $engine->getOutput($option, 'description'));
 
     $form
-      ->setUser($user)
-      ->addHiddenInput('issue', $request->getStr('issue'))
-      ->appendChild(
-        id(new AphrontFormMarkupControl())
-          ->setLabel(pht('Description'))
-          ->setValue($description));
+      ->setUser($viewer)
+      ->addHiddenInput('issue', $request->getStr('issue'));
+
+    $description = $option->getDescription();
+    if (strlen($description)) {
+      $description_view = new PHUIRemarkupView($viewer, $description);
+
+      $form
+        ->appendChild(
+          id(new AphrontFormMarkupControl())
+            ->setLabel(pht('Description'))
+            ->setValue($description_view));
+    }
 
     if ($group) {
       $extra = $group->renderContextualDescription(
@@ -167,72 +190,137 @@ final class PhabricatorConfigEditController
       }
     }
 
-    $form
-      ->appendChild($control);
-
-    $submit_control = id(new AphrontFormSubmitControl())
-      ->addCancelButton($done_uri);
-
-    if (!$option->getLocked()) {
-      $submit_control->setValue(pht('Save Config Entry'));
+    foreach ($controls as $control) {
+      $form->appendControl($control);
     }
 
-    $form->appendChild($submit_control);
+    if (!$option->getLocked()) {
+      $form->appendChild(
+        id(new AphrontFormSubmitControl())
+          ->addCancelButton($done_uri)
+          ->setValue(pht('Save Config Entry')));
+    }
+
+    $current_config = null;
+    if (!$option->getHidden()) {
+      $current_config = $this->renderDefaults($option, $config_entry);
+      $current_config = $this->buildConfigBoxView(
+        pht('Current Configuration'),
+        $current_config);
+    }
 
     $examples = $this->renderExamples($option);
     if ($examples) {
-      $form->appendChild(
-        id(new AphrontFormMarkupControl())
-          ->setLabel(pht('Examples'))
-          ->setValue($examples));
+      $examples = $this->buildConfigBoxView(
+        pht('Examples'),
+        $examples);
     }
 
-    if (!$option->getHidden()) {
-      $form->appendChild(
-        id(new AphrontFormMarkupControl())
-          ->setLabel(pht('Default'))
-          ->setValue($this->renderDefaults($option, $config_entry)));
+    $title = $key;
+
+    $box_header = array();
+    if ($group) {
+      $box_header[] = phutil_tag(
+        'a',
+        array(
+          'href' => $group_uri,
+        ),
+        $group->getName());
+      $box_header[] = " \xC2\xBB ";
     }
-
-    $title = pht('Edit %s', $this->key);
-    $short = pht('Edit');
-
-    $form_box = id(new PHUIObjectBoxView())
-      ->setHeaderText($title)
-      ->setForm($form);
-
-    if ($error_view) {
-       $form_box->setInfoView($error_view);
-    }
+    $box_header[] = $key;
 
     $crumbs = $this->buildApplicationCrumbs();
     $crumbs->addTextCrumb(pht('Config'), $this->getApplicationURI());
-
     if ($group) {
       $crumbs->addTextCrumb($group->getName(), $group_uri);
     }
+    $crumbs->addTextCrumb($key, '/config/edit/'.$key);
+    $crumbs->setBorder(true);
 
-    $crumbs->addTextCrumb($this->key, '/config/edit/'.$this->key);
+    $form_box = $this->buildConfigBoxView($box_header, $form, $tag);
 
     $timeline = $this->buildTransactionTimeline(
       $config_entry,
       new PhabricatorConfigTransactionQuery());
     $timeline->setShouldTerminate(true);
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
+    $nav = $this->buildSideNavView();
+    $nav->selectFilter($group_uri);
+
+    $header = $this->buildHeaderView($title);
+
+    $view = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->setNavigation($nav)
+      ->setFixed(true)
+      ->setMainColumn(array(
+        $error_view,
         $form_box,
-        $timeline,
-      ),
-      array(
-        'title' => $title,
+        $status_items,
+        $examples,
+        $current_config,
       ));
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($view);
   }
 
   private function readRequest(
     PhabricatorConfigOption $option,
     AphrontRequest $request) {
+
+    $type = $option->newOptionType();
+    if ($type) {
+      $is_set = $type->isValuePresentInRequest($option, $request);
+      if ($is_set) {
+        $value = $type->readValueFromRequest($option, $request);
+
+        $errors = array();
+        try {
+          $canonical_value = $type->newValueFromRequestValue(
+            $option,
+            $value);
+          $type->validateStoredValue($option, $canonical_value);
+          $xaction = $type->newTransaction($option, $canonical_value);
+        } catch (PhabricatorConfigValidationException $ex) {
+          $errors[] = $ex->getMessage();
+          $xaction = null;
+        } catch (Exception $ex) {
+          // NOTE: Some older validators throw bare exceptions. Purely in good
+          // taste, it would be nice to convert these at some point.
+          $errors[] = $ex->getMessage();
+          $xaction = null;
+        }
+
+        return array(
+          $errors ? pht('Invalid') : null,
+          $errors,
+          $value,
+          $xaction,
+        );
+      } else {
+        $delete_xaction = id(new PhabricatorConfigTransaction())
+          ->setTransactionType(PhabricatorConfigTransaction::TYPE_EDIT)
+          ->setNewValue(
+            array(
+              'deleted' => true,
+              'value' => null,
+            ));
+
+        return array(
+          null,
+          array(),
+          null,
+          $delete_xaction,
+        );
+      }
+    }
+
+    // TODO: If we missed on the new `PhabricatorConfigType` map, fall back
+    // to the old semi-modular, semi-hacky way of doing things.
 
     $xaction = new PhabricatorConfigTransaction();
     $xaction->setTransactionType(PhabricatorConfigTransaction::TYPE_EDIT);
@@ -240,96 +328,14 @@ final class PhabricatorConfigEditController
     $e_value = null;
     $errors = array();
 
-    $value = $request->getStr('value');
-    if (!strlen($value)) {
-      $value = null;
-
-      $xaction->setNewValue(
-        array(
-          'deleted' => true,
-          'value'   => null,
-        ));
-
-      return array($e_value, $errors, $value, $xaction);
-    }
-
     if ($option->isCustomType()) {
       $info = $option->getCustomObject()->readRequest($option, $request);
       list($e_value, $errors, $set_value, $value) = $info;
     } else {
-      $type = $option->getType();
-      $set_value = null;
-
-      switch ($type) {
-        case 'int':
-          if (preg_match('/^-?[0-9]+$/', trim($value))) {
-            $set_value = (int)$value;
-          } else {
-            $e_value = pht('Invalid');
-            $errors[] = pht('Value must be an integer.');
-          }
-          break;
-        case 'string':
-        case 'enum':
-          $set_value = (string)$value;
-          break;
-        case 'list<string>':
-        case 'list<regex>':
-          $set_value = phutil_split_lines(
-            $request->getStr('value'),
-            $retain_endings = false);
-
-          foreach ($set_value as $key => $v) {
-            if (!strlen($v)) {
-              unset($set_value[$key]);
-            }
-          }
-          $set_value = array_values($set_value);
-
-          break;
-        case 'set':
-          $set_value = array_fill_keys($request->getStrList('value'), true);
-          break;
-        case 'bool':
-          switch ($value) {
-            case 'true':
-              $set_value = true;
-              break;
-            case 'false':
-              $set_value = false;
-              break;
-            default:
-              $e_value = pht('Invalid');
-              $errors[] = pht('Value must be boolean, "true" or "false".');
-              break;
-          }
-          break;
-        case 'class':
-          if (!class_exists($value)) {
-            $e_value = pht('Invalid');
-            $errors[] = pht('Class does not exist.');
-          } else {
-            $base = $option->getBaseClass();
-            if (!is_subclass_of($value, $base)) {
-              $e_value = pht('Invalid');
-              $errors[] = pht('Class is not of valid type.');
-            } else {
-              $set_value = $value;
-            }
-          }
-          break;
-        default:
-          $json = json_decode($value, true);
-          if ($json === null && strtolower($value) != 'null') {
-            $e_value = pht('Invalid');
-            $errors[] = pht(
-              'The given value must be valid JSON. This means, among '.
-              'other things, that you must wrap strings in double-quotes.');
-          } else {
-            $set_value = $json;
-          }
-          break;
-      }
+      throw new Exception(
+        pht(
+          'Unknown configuration option type "%s".',
+          $option->getType()));
     }
 
     if (!$errors) {
@@ -350,111 +356,50 @@ final class PhabricatorConfigEditController
     PhabricatorConfigEntry $entry,
     $value) {
 
+    $type = $option->newOptionType();
+    if ($type) {
+      return $type->newDisplayValue($option, $value);
+    }
+
     if ($option->isCustomType()) {
       return $option->getCustomObject()->getDisplayValue(
         $option,
         $entry,
         $value);
-    } else {
-      $type = $option->getType();
-      switch ($type) {
-        case 'int':
-        case 'string':
-        case 'enum':
-        case 'class':
-          return $value;
-        case 'bool':
-          return $value ? 'true' : 'false';
-        case 'list<string>':
-        case 'list<regex>':
-          return implode("\n", nonempty($value, array()));
-        case 'set':
-          return implode("\n", nonempty(array_keys($value), array()));
-        default:
-          return PhabricatorConfigJSON::prettyPrintJSON($value);
-      }
     }
+
+    throw new Exception(
+      pht(
+        'Unknown configuration option type "%s".',
+        $option->getType()));
   }
 
-  private function renderControl(
+  private function renderControls(
     PhabricatorConfigOption $option,
     $display_value,
     $e_value) {
 
+    $type = $option->newOptionType();
+    if ($type) {
+      return $type->newControls(
+        $option,
+        $display_value,
+        $e_value);
+    }
+
     if ($option->isCustomType()) {
-      $control = $option->getCustomObject()->renderControl(
+      $controls = $option->getCustomObject()->renderControls(
         $option,
         $display_value,
         $e_value);
     } else {
-      $type = $option->getType();
-      switch ($type) {
-        case 'int':
-        case 'string':
-          $control = id(new AphrontFormTextControl());
-          break;
-        case 'bool':
-          $control = id(new AphrontFormSelectControl())
-            ->setOptions(
-              array(
-                ''      => pht('(Use Default)'),
-                'true'  => idx($option->getBoolOptions(), 0),
-                'false' => idx($option->getBoolOptions(), 1),
-              ));
-          break;
-        case 'enum':
-          $options = array_mergev(
-            array(
-              array('' => pht('(Use Default)')),
-              $option->getEnumOptions(),
-            ));
-          $control = id(new AphrontFormSelectControl())
-            ->setOptions($options);
-          break;
-        case 'class':
-          $symbols = id(new PhutilSymbolLoader())
-            ->setType('class')
-            ->setAncestorClass($option->getBaseClass())
-            ->setConcreteOnly(true)
-            ->selectSymbolsWithoutLoading();
-          $names = ipull($symbols, 'name', 'name');
-          asort($names);
-          $names = array(
-            '' => pht('(Use Default)'),
-          ) + $names;
-
-          $control = id(new AphrontFormSelectControl())
-            ->setOptions($names);
-          break;
-        case 'list<string>':
-        case 'list<regex>':
-          $control = id(new AphrontFormTextAreaControl())
-            ->setCaption(pht('Separate values with newlines.'));
-          break;
-        case 'set':
-          $control = id(new AphrontFormTextAreaControl())
-            ->setCaption(pht('Separate values with newlines or commas.'));
-          break;
-        default:
-          $control = id(new AphrontFormTextAreaControl())
-            ->setHeight(AphrontFormTextAreaControl::HEIGHT_VERY_TALL)
-            ->setCustomClass('PhabricatorMonospaced')
-            ->setCaption(pht('Enter value in JSON.'));
-          break;
-      }
-
-      $control
-        ->setLabel(pht('Value'))
-        ->setError($e_value)
-        ->setValue($display_value)
-        ->setName('value');
+      throw new Exception(
+        pht(
+          'Unknown configuration option type "%s".',
+          $option->getType()));
     }
 
-    if ($option->getLocked()) {
-      $control->setDisabled(true);
-    }
-
-    return $control;
+    return $controls;
   }
 
   private function renderExamples(PhabricatorConfigOption $option) {
@@ -479,7 +424,7 @@ final class PhabricatorConfigEditController
         }
       }
 
-      $table[] = phutil_tag('tr', array(), array(
+      $table[] = phutil_tag('tr', array('class' => 'column-labels'), array(
         phutil_tag('th', array(), $description),
         phutil_tag('td', array(), $value),
       ));
@@ -491,6 +436,8 @@ final class PhabricatorConfigEditController
       'table',
       array(
         'class' => 'config-option-table',
+        'cellspacing' => '0',
+        'cellpadding' => '0',
       ),
       $table);
   }
@@ -507,25 +454,41 @@ final class PhabricatorConfigEditController
       phutil_tag('th', array(), pht('Source')),
       phutil_tag('th', array(), pht('Value')),
     ));
+
+    $is_effective_value = true;
     foreach ($stack as $key => $source) {
+      $row_classes = array(
+        'column-labels',
+      );
+
       $value = $source->getKeys(
         array(
           $option->getKey(),
         ));
 
       if (!array_key_exists($option->getKey(), $value)) {
-        $value = phutil_tag('em', array(), pht('(empty)'));
+        $value = phutil_tag('em', array(), pht('(No Value Configured)'));
       } else {
         $value = $this->getDisplayValue(
           $option,
           $entry,
           $value[$option->getKey()]);
+
+        if ($is_effective_value) {
+          $is_effective_value = false;
+          $row_classes[] = 'config-options-effective-value';
+        }
       }
 
-      $table[] = phutil_tag('tr', array('class' => 'column-labels'), array(
-        phutil_tag('th', array(), $source->getName()),
-        phutil_tag('td', array(), $value),
-      ));
+      $table[] = phutil_tag(
+        'tr',
+        array(
+          'class' => implode(' ', $row_classes),
+        ),
+        array(
+          phutil_tag('th', array(), $source->getName()),
+          phutil_tag('td', array(), $value),
+        ));
     }
 
     require_celerity_resource('config-options-css');
@@ -534,6 +497,8 @@ final class PhabricatorConfigEditController
       'table',
       array(
         'class' => 'config-option-table',
+        'cellspacing' => '0',
+        'cellpadding' => '0',
       ),
       $table);
   }

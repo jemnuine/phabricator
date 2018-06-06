@@ -4,30 +4,33 @@ $project_table = new PhabricatorProject();
 $table_name = $project_table->getTableName();
 $conn_w = $project_table->establishConnection('w');
 $slug_table_name = id(new PhabricatorProjectSlug())->getTableName();
-$time = time();
+$time = PhabricatorTime::getNow();
 
-echo "Migrating project phriction slugs...\n";
+echo pht('Migrating projects to slugs...')."\n";
 foreach (new LiskMigrationIterator($project_table) as $project) {
   $id = $project->getID();
 
-  echo "Migrating project {$id}...\n";
-  $phriction_slug = rtrim($project->getPhrictionSlug(), '/');
+  echo pht('Migrating project %d...', $id)."\n";
+
+  $slug_text = PhabricatorSlug::normalizeProjectSlug($project->getName());
   $slug = id(new PhabricatorProjectSlug())
-    ->loadOneWhere('slug = %s', $phriction_slug);
+    ->loadOneWhere('slug = %s', $slug_text);
+
   if ($slug) {
-    echo "Already migrated {$id}... Continuing.\n";
+    echo pht('Already migrated %d... Continuing.', $id)."\n";
     continue;
   }
+
   queryfx(
     $conn_w,
     'INSERT INTO %T (projectPHID, slug, dateCreated, dateModified) '.
     'VALUES (%s, %s, %d, %d)',
     $slug_table_name,
     $project->getPHID(),
-    $phriction_slug,
+    $slug_text,
     $time,
     $time);
-  echo "Migrated {$id}.\n";
+  echo pht('Migrated %d.', $id)."\n";
 }
 
-echo "Done.\n";
+echo pht('Done.')."\n";

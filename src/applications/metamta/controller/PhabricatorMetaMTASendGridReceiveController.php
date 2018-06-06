@@ -7,12 +7,20 @@ final class PhabricatorMetaMTASendGridReceiveController
     return false;
   }
 
-  public function processRequest() {
+  public function handleRequest(AphrontRequest $request) {
+    // SendGrid doesn't sign payloads so we can't be sure that SendGrid
+    // actually sent this request, but require a configured SendGrid mailer
+    // before we activate this endpoint.
+    $mailers = PhabricatorMetaMTAMail::newMailersWithTypes(
+      array(
+        PhabricatorMailImplementationSendGridAdapter::ADAPTERTYPE,
+      ));
+    if (!$mailers) {
+      return new Aphront404Response();
+    }
 
     // No CSRF for SendGrid.
     $unguarded = AphrontWriteGuard::beginScopedUnguardedWrites();
-
-    $request = $this->getRequest();
     $user = $request->getUser();
 
     $raw_headers = $request->getStr('headers');
@@ -55,7 +63,7 @@ final class PhabricatorMetaMTASendGridReceiveController
     $received->processReceivedMail();
 
     $response = new AphrontWebpageResponse();
-    $response->setContent(pht("Got it! Thanks, SendGrid!\n"));
+    $response->setContent(pht('Got it! Thanks, SendGrid!')."\n");
     return $response;
   }
 

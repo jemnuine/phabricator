@@ -14,7 +14,7 @@ final class PhabricatorFundApplication extends PhabricatorApplication {
     return pht('Donate');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-heart';
   }
 
@@ -42,7 +42,8 @@ final class PhabricatorFundApplication extends PhabricatorApplication {
       '/fund/' => array(
         '(?:query/(?P<queryKey>[^/]+)/)?' => 'FundInitiativeListController',
         'create/' => 'FundInitiativeEditController',
-        'edit/(?:(?P<id>\d+)/)?' => 'FundInitiativeEditController',
+        $this->getEditRoutePattern('edit/')
+          => 'FundInitiativeEditController',
         'close/(?P<id>\d+)/' => 'FundInitiativeCloseController',
         'back/(?P<id>\d+)/' => 'FundInitiativeBackController',
         'backers/(?:(?P<id>\d+)/)?(?:query/(?P<queryKey>[^/]+)/)?'
@@ -55,10 +56,17 @@ final class PhabricatorFundApplication extends PhabricatorApplication {
     return array(
       FundDefaultViewCapability::CAPABILITY => array(
         'caption' => pht('Default view policy for newly created initiatives.'),
+        'template' => FundInitiativePHIDType::TYPECONST,
       ),
       FundCreateInitiativesCapability::CAPABILITY => array(
         'default' => PhabricatorPolicies::POLICY_ADMIN,
       ),
+    );
+  }
+
+  public function getApplicationSearchDocumentTypes() {
+    return array(
+      FundInitiativePHIDType::TYPECONST,
     );
   }
 

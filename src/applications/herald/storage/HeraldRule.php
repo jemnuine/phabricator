@@ -5,7 +5,8 @@ final class HeraldRule extends HeraldDAO
     PhabricatorApplicationTransactionInterface,
     PhabricatorFlaggableInterface,
     PhabricatorPolicyInterface,
-    PhabricatorDestructibleInterface {
+    PhabricatorDestructibleInterface,
+    PhabricatorSubscribableInterface {
 
   const TABLE_RULE_APPLIED = 'herald_ruleapplied';
 
@@ -29,23 +30,27 @@ final class HeraldRule extends HeraldDAO
   private $actions;
   private $triggerObject = self::ATTACHABLE;
 
+  const REPEAT_EVERY = 'every';
+  const REPEAT_FIRST = 'first';
+  const REPEAT_CHANGE = 'change';
+
   protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_COLUMN_SCHEMA => array(
-        'name' => 'text255',
+        'name' => 'sort255',
         'contentType' => 'text255',
         'mustMatchAll' => 'bool',
         'configVersion' => 'uint32',
+        'repetitionPolicy' => 'text32',
         'ruleType' => 'text32',
         'isDisabled' => 'uint32',
         'triggerObjectPHID' => 'phid?',
-
-        // T6203/NULLABILITY
-        // This should not be nullable.
-        'repetitionPolicy' => 'uint32?',
       ),
       self::CONFIG_KEY_SCHEMA => array(
+        'key_name' => array(
+          'columns' => array('name(128)'),
+        ),
         'key_author' => array(
           'columns' => array('authorPHID'),
         ),
@@ -99,14 +104,14 @@ final class HeraldRule extends HeraldDAO
     if (!$this->getID()) {
       return array();
     }
-    return id(new HeraldAction())->loadAllWhere(
+    return id(new HeraldActionRecord())->loadAllWhere(
       'ruleID = %d',
       $this->getID());
   }
 
   public function attachActions(array $actions) {
     // TODO: validate actions have been attached.
-    assert_instances_of($actions, 'HeraldAction');
+    assert_instances_of($actions, 'HeraldActionRecord');
     $this->actions = $actions;
     return $this;
   }
@@ -123,9 +128,9 @@ final class HeraldRule extends HeraldDAO
   }
 
   public function saveActions(array $actions) {
-    assert_instances_of($actions, 'HeraldAction');
+    assert_instances_of($actions, 'HeraldActionRecord');
     return $this->saveChildren(
-      id(new HeraldAction())->getTableName(),
+      id(new HeraldActionRecord())->getTableName(),
       $actions);
   }
 
@@ -133,7 +138,7 @@ final class HeraldRule extends HeraldDAO
     assert_instances_of($children, 'HeraldDAO');
 
     if (!$this->getID()) {
-      throw new Exception('Save rule before saving children.');
+      throw new PhutilInvalidStateException('save');
     }
 
     foreach ($children as $child) {
@@ -162,7 +167,7 @@ final class HeraldRule extends HeraldDAO
       queryfx(
         $this->establishConnection('w'),
         'DELETE FROM %T WHERE ruleID = %d',
-        id(new HeraldAction())->getTableName(),
+        id(new HeraldActionRecord())->getTableName(),
         $this->getID());
       $result = parent::delete();
     $this->saveTransaction();
@@ -249,6 +254,62 @@ final class HeraldRule extends HeraldDAO
     return 'H'.$this->getID();
   }
 
+  public function getURI() {
+    return '/'.$this->getMonogram();
+  }
+
+
+/* -(  Repetition Policies  )------------------------------------------------ */
+
+
+  public function getRepetitionPolicyStringConstant() {
+    return $this->getRepetitionPolicy();
+  }
+
+  public function setRepetitionPolicyStringConstant($value) {
+    $map = self::getRepetitionPolicyMap();
+
+    if (!isset($map[$value])) {
+      throw new Exception(
+        pht(
+          'Rule repetition string constant "%s" is unknown.',
+          $value));
+    }
+
+    return $this->setRepetitionPolicy($value);
+  }
+
+  public function isRepeatEvery() {
+    return ($this->getRepetitionPolicyStringConstant() === self::REPEAT_EVERY);
+  }
+
+  public function isRepeatFirst() {
+    return ($this->getRepetitionPolicyStringConstant() === self::REPEAT_FIRST);
+  }
+
+  public function isRepeatOnChange() {
+    return ($this->getRepetitionPolicyStringConstant() === self::REPEAT_CHANGE);
+  }
+
+  public static function getRepetitionPolicySelectOptionMap() {
+    $map = self::getRepetitionPolicyMap();
+    return ipull($map, 'select');
+  }
+
+  private static function getRepetitionPolicyMap() {
+    return array(
+      self::REPEAT_EVERY => array(
+        'select' => pht('every time this rule matches:'),
+      ),
+      self::REPEAT_FIRST => array(
+        'select' => pht('only the first time this rule matches:'),
+      ),
+      self::REPEAT_CHANGE => array(
+        'select' => pht('if this rule did not match the last time:'),
+      ),
+    );
+  }
+
 
 /* -(  PhabricatorApplicationTransactionInterface  )------------------------- */
 
@@ -284,43 +345,53 @@ final class HeraldRule extends HeraldDAO
   }
 
   public function getPolicy($capability) {
+    if ($capability == PhabricatorPolicyCapability::CAN_VIEW) {
+      return PhabricatorPolicies::getMostOpenPolicy();
+    }
+
     if ($this->isGlobalRule()) {
-      switch ($capability) {
-        case PhabricatorPolicyCapability::CAN_VIEW:
-          return PhabricatorPolicies::POLICY_USER;
-        case PhabricatorPolicyCapability::CAN_EDIT:
-          $app = 'PhabricatorHeraldApplication';
-          $herald = PhabricatorApplication::getByClass($app);
-          $global = HeraldManageGlobalRulesCapability::CAPABILITY;
-          return $herald->getPolicy($global);
-      }
+      $app = 'PhabricatorHeraldApplication';
+      $herald = PhabricatorApplication::getByClass($app);
+      $global = HeraldManageGlobalRulesCapability::CAPABILITY;
+      return $herald->getPolicy($global);
     } else if ($this->isObjectRule()) {
       return $this->getTriggerObject()->getPolicy($capability);
     } else {
-      return PhabricatorPolicies::POLICY_NOONE;
+      return $this->getAuthorPHID();
     }
   }
 
   public function hasAutomaticCapability($capability, PhabricatorUser $viewer) {
-    if ($this->isPersonalRule()) {
-      return ($viewer->getPHID() == $this->getAuthorPHID());
-    } else {
-      return false;
-    }
+    return false;
   }
 
   public function describeAutomaticCapability($capability) {
-    if ($this->isPersonalRule()) {
-      return pht("A personal rule's owner can always view and edit it.");
-    } else if ($this->isObjectRule()) {
-      return pht('Object rules inherit the policies of their objects.');
+    if ($capability == PhabricatorPolicyCapability::CAN_VIEW) {
+      return null;
     }
 
-    return null;
+    if ($this->isGlobalRule()) {
+      return pht(
+        'Global Herald rules can be edited by users with the "Can Manage '.
+        'Global Rules" Herald application permission.');
+    } else if ($this->isObjectRule()) {
+      return pht('Object rules inherit the edit policies of their objects.');
+    } else {
+      return pht('A personal rule can only be edited by its owner.');
+    }
+  }
+
+
+/* -(  PhabricatorSubscribableInterface  )----------------------------------- */
+
+
+  public function isAutomaticallySubscribed($phid) {
+    return $this->isPersonalRule() && $phid == $this->getAuthorPHID();
   }
 
 
 /* -(  PhabricatorDestructibleInterface  )----------------------------------- */
+
 
   public function destroyObjectPermanently(
     PhabricatorDestructionEngine $engine) {

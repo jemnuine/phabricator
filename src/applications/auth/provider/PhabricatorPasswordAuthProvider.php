@@ -13,7 +13,8 @@ final class PhabricatorPasswordAuthProvider extends PhabricatorAuthProvider {
       "(WARNING) Examine the table below for information on how password ".
       "hashes will be stored in the database.\n\n".
       "(NOTE) You can select a minimum password length by setting ".
-      "`account.minimum-password-length` in configuration.");
+      "`%s` in configuration.",
+      'account.minimum-password-length');
   }
 
   public function renderConfigurationFooter() {
@@ -94,12 +95,12 @@ final class PhabricatorPasswordAuthProvider extends PhabricatorAuthProvider {
 
     return id(new PHUIObjectBoxView())
       ->setHeader($header)
-      ->appendChild($table);
+      ->setTable($table);
   }
 
   public function getDescriptionForCreate() {
     return pht(
-      'Allow users to login or register using a username and password.');
+      'Allow users to log in or register using a username and password.');
   }
 
   public function getAdapter() {
@@ -160,7 +161,7 @@ final class PhabricatorPasswordAuthProvider extends PhabricatorAuthProvider {
 
   public function buildLinkForm(
     PhabricatorAuthLinkController $controller) {
-    throw new Exception("Password providers can't be linked.");
+    throw new Exception(pht("Password providers can't be linked."));
   }
 
   private function renderPasswordLoginForm(
@@ -173,8 +174,8 @@ final class PhabricatorPasswordAuthProvider extends PhabricatorAuthProvider {
     $dialog = id(new AphrontDialogView())
       ->setSubmitURI($this->getLoginURI())
       ->setUser($viewer)
-      ->setTitle(pht('Login to Phabricator'))
-      ->addSubmitButton(pht('Login'));
+      ->setTitle(pht('Log In'))
+      ->addSubmitButton(pht('Log In'));
 
     if ($this->shouldAllowRegistration()) {
       $dialog->addCancelButton(
@@ -205,8 +206,9 @@ final class PhabricatorPasswordAuthProvider extends PhabricatorAuthProvider {
         $errors[] = pht('CAPTCHA was not entered correctly.');
       } else {
         $e_captcha = pht('Required');
-        $errors[] = pht('Too many login failures recently. You must '.
-                    'submit a CAPTCHA with your login request.');
+        $errors[] = pht(
+          'Too many login failures recently. You must '.
+          'submit a CAPTCHA with your login request.');
       }
     } else if ($request->isHTTPPost()) {
       // NOTE: This is intentionally vague so as not to disclose whether a
@@ -225,13 +227,13 @@ final class PhabricatorPasswordAuthProvider extends PhabricatorAuthProvider {
       ->appendChild($errors)
       ->appendChild(
         id(new AphrontFormTextControl())
-          ->setLabel('Username or Email')
+          ->setLabel(pht('Username or Email'))
           ->setName('username')
           ->setValue($v_user)
           ->setError($e_user))
       ->appendChild(
         id(new AphrontFormPasswordControl())
-          ->setLabel('Password')
+          ->setLabel(pht('Password'))
           ->setName('password')
           ->setError($e_pass));
 
@@ -251,6 +253,7 @@ final class PhabricatorPasswordAuthProvider extends PhabricatorAuthProvider {
 
     $request = $controller->getRequest();
     $viewer = $request->getUser();
+    $content_source = PhabricatorContentSource::newFromRequest($request);
 
     $require_captcha = false;
     $captcha_valid = false;
@@ -283,22 +286,16 @@ final class PhabricatorPasswordAuthProvider extends PhabricatorAuthProvider {
 
           if ($user) {
             $envelope = new PhutilOpaqueEnvelope($request->getStr('password'));
-            if ($user->comparePassword($envelope)) {
+
+            $engine = id(new PhabricatorAuthPasswordEngine())
+              ->setViewer($user)
+              ->setContentSource($content_source)
+              ->setPasswordType(PhabricatorAuthPassword::PASSWORD_TYPE_ACCOUNT)
+              ->setObject($user);
+
+            if ($engine->isValidPassword($envelope)) {
               $account = $this->loadOrCreateAccount($user->getPHID());
               $log_user = $user;
-
-              // If the user's password is stored using a less-than-optimal
-              // hash, upgrade them to the strongest available hash.
-
-              $hash_envelope = new PhutilOpaqueEnvelope(
-                $user->getPasswordHash());
-              if (PhabricatorPasswordHasher::canUpgradeHash($hash_envelope)) {
-                $user->setPassword($envelope);
-
-                $unguarded = AphrontWriteGuard::beginScopedUnguardedWrites();
-                  $user->save();
-                unset($unguarded);
-              }
             }
           }
         }

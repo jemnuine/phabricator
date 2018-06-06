@@ -3,9 +3,8 @@
 final class PhabricatorNotificationIndividualController
   extends PhabricatorNotificationController {
 
-  public function processRequest() {
-    $request = $this->getRequest();
-    $viewer = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
 
     $stories = id(new PhabricatorNotificationQuery())
       ->setViewer($viewer)
@@ -31,13 +30,19 @@ final class PhabricatorNotificationIndividualController
       return $this->buildEmptyResponse();
     }
 
-    $builder = new PhabricatorNotificationBuilder(array($story));
-    $content = $builder->buildView()->render();
+    $builder = id(new PhabricatorNotificationBuilder(array($story)))
+      ->setUser($viewer)
+      ->setShowTimestamps(false);
 
-    $response = array(
+    $content = $builder->buildView()->render();
+    $dict = $builder->buildDict();
+    $data = $dict[0];
+
+    $response = $data + array(
       'pertinent'         => true,
       'primaryObjectPHID' => $story->getPrimaryObjectPHID(),
       'content'           => hsprintf('%s', $content),
+      'uniqueID' => 'story/'.$story->getChronologicalKey(),
     );
 
     return id(new AphrontAjaxResponse())->setContent($response);

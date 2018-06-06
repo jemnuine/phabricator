@@ -3,8 +3,14 @@
 final class PhabricatorFileTestDataGenerator
   extends PhabricatorTestDataGenerator {
 
-  public function generate() {
-    $author_phid = $this->loadPhabrictorUserPHID();
+  const GENERATORKEY = 'files';
+
+  public function getGeneratorName() {
+    return pht('Files');
+  }
+
+  public function generateObject() {
+    $author_phid = $this->loadPhabricatorUserPHID();
     $dimension = 1 << rand(5, 12);
     $image = id(new PhabricatorLipsumMondrianArtist())
       ->generate($dimension, $dimension);

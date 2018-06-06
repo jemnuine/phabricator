@@ -33,7 +33,24 @@ final class DiffusionSubversionWireProtocol extends Phobject {
 
     $messages = array();
     while (true) {
-      if ($this->state == 'item') {
+      if ($this->state == 'space') {
+        // Consume zero or more extra spaces after matching an item. The
+        // protocol requires at least one space, but allows more than one.
+
+        $matches = null;
+        if (!preg_match('/^(\s*)\S/', $this->buffer, $matches)) {
+         // Wait for more data.
+          break;
+        }
+
+        // We have zero or more spaces and then some other character, so throw
+        // the spaces away and continue parsing frames.
+        if (strlen($matches[1])) {
+          $this->buffer = substr($this->buffer, strlen($matches[1]));
+        }
+
+        $this->state = 'item';
+      } else if ($this->state == 'item') {
         $match = null;
         $result = null;
         $buf = $this->buffer;
@@ -69,6 +86,12 @@ final class DiffusionSubversionWireProtocol extends Phobject {
             );
             $this->raw = '';
           }
+
+          // Consume any extra whitespace after an item. If we're in the
+          // "bytes" state, we aren't looking for whitespace.
+          if ($this->state == 'item') {
+            $this->state = 'space';
+          }
         } else {
           // No matches yet, wait for more data.
           break;
@@ -90,10 +113,10 @@ final class DiffusionSubversionWireProtocol extends Phobject {
           // Strip off the terminal space.
           $this->pushItem(substr($this->byteBuffer, 0, -1), 'string');
           $this->byteBuffer = '';
-          $this->state = 'item';
+          $this->state = 'space';
         }
       } else {
-        throw new Exception("Invalid state '{$this->state}'!");
+        throw new Exception(pht("Invalid state '%s'!", $this->state));
       }
     }
 
@@ -124,7 +147,10 @@ final class DiffusionSubversionWireProtocol extends Phobject {
           $out[] = self::serializeStruct($value);
           break;
         default:
-          throw new Exception("Unknown SVN wire protocol structure '{$type}'!");
+          throw new Exception(
+            pht(
+              "Unknown SVN wire protocol structure '%s'!",
+              $type));
       }
       if ($type != 'list') {
         $out[] = ' ';
@@ -139,7 +165,9 @@ final class DiffusionSubversionWireProtocol extends Phobject {
     if (empty($struct[0]['type']) || ($struct[0]['type'] != 'word')) {
       // This isn't what we expect; fail defensively.
       throw new Exception(
-        pht("Unexpected command structure, expected '( word ... )'."));
+        pht(
+          "Unexpected command structure, expected '%s'.",
+          '( word ... )'));
     }
 
     switch ($struct[0]['value']) {

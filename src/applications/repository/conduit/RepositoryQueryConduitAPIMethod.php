@@ -8,11 +8,13 @@ final class RepositoryQueryConduitAPIMethod
   }
 
   public function getMethodStatus() {
-    return self::METHOD_STATUS_UNSTABLE;
+    return self::METHOD_STATUS_FROZEN;
   }
 
   public function getMethodStatusDescription() {
-    return pht('Repository methods are new and subject to change.');
+    return pht(
+      'This method is frozen and will eventually be deprecated. New code '.
+      'should use "diffusion.repository.search" instead.');
   }
 
   public function getMethodDescription() {
@@ -63,7 +65,7 @@ final class RepositoryQueryConduitAPIMethod
 
     $remote_uris = $request->getValue('remoteURIs', array());
     if ($remote_uris) {
-      $query->withRemoteURIs($remote_uris);
+      $query->withURIs($remote_uris);
     }
 
     $uuids = $request->getValue('uuids', array());

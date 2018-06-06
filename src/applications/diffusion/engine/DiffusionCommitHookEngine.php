@@ -10,7 +10,9 @@
  */
 final class DiffusionCommitHookEngine extends Phobject {
 
+  const ENV_REPOSITORY = 'PHABRICATOR_REPOSITORY';
   const ENV_USER = 'PHABRICATOR_USER';
+  const ENV_REQUEST = 'PHABRICATOR_REQUEST';
   const ENV_REMOTE_ADDRESS = 'PHABRICATOR_REMOTE_ADDRESS';
   const ENV_REMOTE_PROTOCOL = 'PHABRICATOR_REMOTE_PROTOCOL';
 
@@ -24,6 +26,7 @@ final class DiffusionCommitHookEngine extends Phobject {
   private $subversionRepository;
   private $remoteAddress;
   private $remoteProtocol;
+  private $requestIdentifier;
   private $transactionKey;
   private $mercurialHook;
   private $mercurialCommits = array();
@@ -33,6 +36,8 @@ final class DiffusionCommitHookEngine extends Phobject {
   private $rejectCode = PhabricatorRepositoryPushLog::REJECT_BROKEN;
   private $rejectDetails;
   private $emailPHIDs = array();
+  private $changesets = array();
+  private $changesetsSize = 0;
 
 
 /* -(  Config  )------------------------------------------------------------- */
@@ -56,13 +61,13 @@ final class DiffusionCommitHookEngine extends Phobject {
     return $this->remoteAddress;
   }
 
-  private function getRemoteAddressForLog() {
-    // If whatever we have here isn't a valid IPv4 address, just store `null`.
-    // Older versions of PHP return `-1` on failure instead of `false`.
-    $remote_address = $this->getRemoteAddress();
-    $remote_address = max(0, ip2long($remote_address));
-    $remote_address = nonempty($remote_address, null);
-    return $remote_address;
+  public function setRequestIdentifier($request_identifier) {
+    $this->requestIdentifier = $request_identifier;
+    return $this;
+  }
+
+  public function getRequestIdentifier() {
+    return $this->requestIdentifier;
   }
 
   public function setSubversionTransactionInfo($transaction, $repository) {
@@ -136,12 +141,32 @@ final class DiffusionCommitHookEngine extends Phobject {
         throw $ex;
       }
 
-      $this->applyHeraldRefRules($ref_updates, $all_updates);
-
       $content_updates = $this->findContentUpdates($ref_updates);
-      $all_updates = array_merge($all_updates, $content_updates);
+      $all_updates = array_merge($ref_updates, $content_updates);
 
-      $this->applyHeraldContentRules($content_updates, $all_updates);
+      // If this is an "initial import" (a sizable push to a previously empty
+      // repository) we'll allow enormous changes and disable Herald rules.
+      // These rulesets can consume a large amount of time and memory and are
+      // generally not relevant when importing repository history.
+      $is_initial_import = $this->isInitialImport($all_updates);
+
+      if (!$is_initial_import) {
+        $this->applyHeraldRefRules($ref_updates);
+      }
+
+      try {
+        if (!$is_initial_import) {
+          $this->rejectEnormousChanges($content_updates);
+        }
+      } catch (DiffusionCommitHookRejectException $ex) {
+        // If we're rejecting enormous changes, flag everything.
+        $this->rejectCode = PhabricatorRepositoryPushLog::REJECT_ENORMOUS;
+        throw $ex;
+      }
+
+      if (!$is_initial_import) {
+        $this->applyHeraldContentRules($content_updates);
+      }
 
       // Run custom scripts in `hook.d/` directories.
       $this->applyCustomHooks($all_updates);
@@ -173,21 +198,12 @@ final class DiffusionCommitHookEngine extends Phobject {
       throw $caught;
     }
 
-    // If this went through cleanly, detect pushes which are actually imports
-    // of an existing repository rather than an addition of new commits. If
-    // this push is importing a bunch of stuff, set the importing flag on
-    // the repository. It will be cleared once we fully process everything.
+    // If this went through cleanly and was an import, set the importing flag
+    // on the repository. It will be cleared once we fully process everything.
 
-    if ($this->isInitialImport($all_updates)) {
+    if ($is_initial_import) {
       $repository = $this->getRepository();
-
-      $repository->openTransaction();
-        $repository->beginReadLocking();
-          $repository = $repository->reload();
-          $repository->setDetail('importing', true);
-          $repository->save();
-        $repository->endReadLocking();
-      $repository->saveTransaction();
+      $repository->markImporting();
     }
 
     if ($this->emailPHIDs) {
@@ -275,39 +291,37 @@ final class DiffusionCommitHookEngine extends Phobject {
 
 /* -(  Herald  )------------------------------------------------------------- */
 
-  private function applyHeraldRefRules(
-    array $ref_updates,
-    array $all_updates) {
+  private function applyHeraldRefRules(array $ref_updates) {
     $this->applyHeraldRules(
       $ref_updates,
-      new HeraldPreCommitRefAdapter(),
-      $all_updates);
+      new HeraldPreCommitRefAdapter());
   }
 
-  private function applyHeraldContentRules(
-    array $content_updates,
-    array $all_updates) {
+  private function applyHeraldContentRules(array $content_updates) {
     $this->applyHeraldRules(
       $content_updates,
-      new HeraldPreCommitContentAdapter(),
-      $all_updates);
+      new HeraldPreCommitContentAdapter());
   }
 
   private function applyHeraldRules(
     array $updates,
-    HeraldAdapter $adapter_template,
-    array $all_updates) {
+    HeraldAdapter $adapter_template) {
 
     if (!$updates) {
       return;
     }
 
-    $adapter_template->setHookEngine($this);
+    $viewer = $this->getViewer();
+
+    $adapter_template
+      ->setHookEngine($this)
+      ->setActingAsPHID($viewer->getPHID());
 
     $engine = new HeraldEngine();
     $rules = null;
     $blocking_effect = null;
     $blocked_update = null;
+    $blocking_xscript = null;
     foreach ($updates as $update) {
       $adapter = id(clone $adapter_template)
         ->setPushLog($update);
@@ -325,11 +339,14 @@ final class DiffusionCommitHookEngine extends Phobject {
         $this->emailPHIDs[$email_phid] = $email_phid;
       }
 
+      $block_action = DiffusionBlockHeraldAction::ACTIONCONST;
+
       if ($blocking_effect === null) {
         foreach ($effects as $effect) {
-          if ($effect->getAction() == HeraldAdapter::ACTION_BLOCK) {
+          if ($effect->getAction() == $block_action) {
             $blocking_effect = $effect;
             $blocked_update = $update;
+            $blocking_xscript = $xscript;
             break;
           }
         }
@@ -355,13 +372,16 @@ final class DiffusionCommitHookEngine extends Phobject {
       throw new DiffusionCommitHookRejectException(
         pht(
           "This push was rejected by Herald push rule %s.\n".
-          "Change: %s\n".
-          "  Rule: %s\n".
-          "Reason: %s",
+          "    Change: %s\n".
+          "      Rule: %s\n".
+          "    Reason: %s\n".
+          "Transcript: %s",
           $rule->getMonogram(),
           $blocked_name,
           $rule->getName(),
-          $message));
+          $message,
+          PhabricatorEnv::getProductionURI(
+            '/herald/transcript/'.$blocking_xscript->getID().'/')));
     }
   }
 
@@ -612,13 +632,18 @@ final class DiffusionCommitHookEngine extends Phobject {
     $console = PhutilConsole::getConsole();
 
     $env = array(
-      'PHABRICATOR_REPOSITORY' => $this->getRepository()->getCallsign(),
+      self::ENV_REPOSITORY => $this->getRepository()->getPHID(),
       self::ENV_USER => $this->getViewer()->getUsername(),
+      self::ENV_REQUEST => $this->getRequestIdentifier(),
       self::ENV_REMOTE_PROTOCOL => $this->getRemoteProtocol(),
       self::ENV_REMOTE_ADDRESS => $this->getRemoteAddress(),
     );
 
-    $directories = $this->getRepository()->getHookDirectories();
+    $repository = $this->getRepository();
+
+    $env += $repository->getPassthroughEnvironmentalVariables();
+
+    $directories = $repository->getHookDirectories();
     foreach ($directories as $directory) {
       $hooks = $this->getExecutablesInDirectory($directory);
       sort($hooks);
@@ -697,7 +722,10 @@ final class DiffusionCommitHookEngine extends Phobject {
   private function findMercurialChangegroupRefUpdates() {
     $hg_node = getenv('HG_NODE');
     if (!$hg_node) {
-      throw new Exception(pht('Expected HG_NODE in environment!'));
+      throw new Exception(
+        pht(
+          'Expected %s in environment!',
+          'HG_NODE'));
     }
 
     // NOTE: We need to make sure this is passed to subprocesses, or they won't
@@ -768,10 +796,10 @@ final class DiffusionCommitHookEngine extends Phobject {
       }
 
       $stray_heads = array();
+      $head_map = array();
 
       if ($old_heads && !$new_heads) {
         // This is a branch deletion with "--close-branch".
-        $head_map = array();
         foreach ($old_heads as $old_head) {
           $head_map[$old_head] = array(self::EMPTY_HASH);
         }
@@ -796,7 +824,6 @@ final class DiffusionCommitHookEngine extends Phobject {
             '{node}\1');
         }
 
-        $head_map = array();
         foreach (new FutureIterator($dfutures) as $future_head => $dfuture) {
           list($stdout) = $dfuture->resolvex();
           $descendant_heads = array_filter(explode("\1", $stdout));
@@ -1057,23 +1084,80 @@ final class DiffusionCommitHookEngine extends Phobject {
     // up.
     $phid = id(new PhabricatorRepositoryPushLog())->generatePHID();
 
+    $device = AlmanacKeys::getLiveDevice();
+    if ($device) {
+      $device_phid = $device->getPHID();
+    } else {
+      $device_phid = null;
+    }
+
     return PhabricatorRepositoryPushLog::initializeNewLog($this->getViewer())
       ->setPHID($phid)
+      ->setDevicePHID($device_phid)
       ->setRepositoryPHID($this->getRepository()->getPHID())
       ->attachRepository($this->getRepository())
-      ->setEpoch(time());
+      ->setEpoch(PhabricatorTime::getNow());
   }
 
   private function newPushEvent() {
     $viewer = $this->getViewer();
-    return PhabricatorRepositoryPushEvent::initializeNewEvent($viewer)
+
+    $event = PhabricatorRepositoryPushEvent::initializeNewEvent($viewer)
       ->setRepositoryPHID($this->getRepository()->getPHID())
-      ->setRemoteAddress($this->getRemoteAddressForLog())
+      ->setRemoteAddress($this->getRemoteAddress())
       ->setRemoteProtocol($this->getRemoteProtocol())
-      ->setEpoch(time());
+      ->setEpoch(PhabricatorTime::getNow());
+
+    $identifier = $this->getRequestIdentifier();
+    if (strlen($identifier)) {
+      $event->setRequestIdentifier($identifier);
+    }
+
+    return $event;
   }
 
-  public function loadChangesetsForCommit($identifier) {
+  private function rejectEnormousChanges(array $content_updates) {
+    $repository = $this->getRepository();
+    if ($repository->shouldAllowEnormousChanges()) {
+      return;
+    }
+
+    // See T13142. Don't cache more than 64MB of changesets. For normal small
+    // pushes, caching everything here can let us hit the cache from Herald if
+    // we need to run content rules, which speeds things up a bit. For large
+    // pushes, we may not be able to hold everything in memory.
+    $cache_limit = 1024 * 1024 * 64;
+
+    foreach ($content_updates as $update) {
+      $identifier = $update->getRefNew();
+      try {
+        $info = $this->loadChangesetsForCommit($identifier);
+        list($changesets, $size) = $info;
+
+        if ($this->changesetsSize + $size <= $cache_limit) {
+          $this->changesets[$identifier] = $changesets;
+          $this->changesetsSize += $size;
+        }
+      } catch (Exception $ex) {
+        $this->changesets[$identifier] = $ex;
+
+        $message = pht(
+          'ENORMOUS CHANGE'.
+          "\n".
+          'Enormous change protection is enabled for this repository, but '.
+          'you are pushing an enormous change ("%s"). Edit the repository '.
+          'configuration before making enormous changes.'.
+          "\n\n".
+          "Content Exception: %s",
+          $identifier,
+          $ex->getMessage());
+
+        throw new DiffusionCommitHookRejectException($message);
+      }
+    }
+  }
+
+  private function loadChangesetsForCommit($identifier) {
     $byte_limit = HeraldCommitAdapter::getEnormousByteLimit();
     $time_limit = HeraldCommitAdapter::getEnormousTimeLimit();
 
@@ -1093,7 +1177,7 @@ final class DiffusionCommitHookEngine extends Phobject {
           ->setTimeout($time_limit)
           ->setByteLimit($byte_limit)
           ->setLinesOfContext(0)
-          ->loadRawDiff();
+          ->executeInline();
         break;
       case PhabricatorRepositoryType::REPOSITORY_TYPE_SVN:
         // TODO: This diff has 3 lines of context, which produces slightly
@@ -1120,9 +1204,10 @@ final class DiffusionCommitHookEngine extends Phobject {
     if (strlen($raw_diff) >= $byte_limit) {
       throw new Exception(
         pht(
-          'The raw text of this change is enormous (larger than %d '.
-          'bytes). Herald can not process it.',
-          $byte_limit));
+          'The raw text of this change ("%s") is enormous (larger than %s '.
+          'bytes).',
+          $identifier,
+          new PhutilNumber($byte_limit)));
     }
 
     if (!strlen($raw_diff)) {
@@ -1134,7 +1219,27 @@ final class DiffusionCommitHookEngine extends Phobject {
     $changes = $parser->parseDiff($raw_diff);
     $diff = DifferentialDiff::newEphemeralFromRawChanges(
       $changes);
-    return $diff->getChangesets();
+
+    $changesets = $diff->getChangesets();
+    $size = strlen($raw_diff);
+
+    return array($changesets, $size);
+  }
+
+  public function getChangesetsForCommit($identifier) {
+    if (isset($this->changesets[$identifier])) {
+      $cached = $this->changesets[$identifier];
+
+      if ($cached instanceof Exception) {
+        throw $cached;
+      }
+
+      return $cached;
+    }
+
+    $info = $this->loadChangesetsForCommit($identifier);
+    list($changesets, $size) = $info;
+    return $changesets;
   }
 
   public function loadCommitRefForCommit($identifier) {
@@ -1224,7 +1329,7 @@ final class DiffusionCommitHookEngine extends Phobject {
     // also look at author data (do the commits come from multiple different
     // authors?) and commit date data (is the oldest commit more than 48 hours
     // old), but we don't have immediate access to those and this simple
-    // heruistic might be good enough.
+    // heuristic might be good enough.
 
     $commit_count = 0;
     $type_commit = PhabricatorRepositoryPushLog::REFTYPE_COMMIT;
@@ -1235,7 +1340,7 @@ final class DiffusionCommitHookEngine extends Phobject {
       $commit_count++;
     }
 
-    if ($commit_count <= 7) {
+    if ($commit_count <= PhabricatorRepository::IMPORT_THRESHOLD) {
       // If this pushes a very small number of commits, assume it's an
       // initial commit or stack of a few initial commits.
       return false;

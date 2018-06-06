@@ -24,11 +24,12 @@ final class PasteEmbedView extends AphrontView {
 
   public function setLines($lines) {
     $this->lines = $lines;
+    return $this;
   }
 
   public function render() {
     if (!$this->paste) {
-      throw new Exception('Call setPaste() before render()!');
+      throw new PhutilInvalidStateException('setPaste');
     }
 
     $lines = phutil_split_lines($this->paste->getContent());

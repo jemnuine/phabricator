@@ -11,7 +11,7 @@ final class FeedQueryConduitAPIMethod extends FeedConduitAPIMethod {
   }
 
   public function getMethodDescription() {
-    return 'Query the feed for stories';
+    return pht('Query the feed for stories');
   }
 
   private function getDefaultLimit() {
@@ -30,10 +30,10 @@ final class FeedQueryConduitAPIMethod extends FeedConduitAPIMethod {
 
   private function getSupportedViewTypes() {
     return array(
-      'html' => 'Full HTML presentation of story',
-      'data' => 'Dictionary with various data of the story',
-      'html-summary' => 'Story contains only the title of the story',
-      'text' => 'Simple one-line plain text representation of story',
+      'html' => pht('Full HTML presentation of story'),
+      'data' => pht('Dictionary with various data of the story'),
+      'html-summary' => pht('Story contains only the title of the story'),
+      'text' => pht('Simple one-line plain text representation of story'),
     );
   }
 
@@ -44,7 +44,9 @@ final class FeedQueryConduitAPIMethod extends FeedConduitAPIMethod {
 
     return array(
       'ERR-UNKNOWN-TYPE' =>
-        'Unsupported view type, possibles are: '.$view_types,
+        pht(
+          'Unsupported view type, possibles are: %s',
+          $view_types),
     );
   }
 
@@ -65,15 +67,15 @@ final class FeedQueryConduitAPIMethod extends FeedConduitAPIMethod {
     if (!$limit) {
       $limit = $this->getDefaultLimit();
     }
-    $filter_phids = $request->getValue('filterPHIDs');
-    if (!$filter_phids) {
-      $filter_phids = array();
-    }
 
     $query = id(new PhabricatorFeedQuery())
       ->setLimit($limit)
-      ->setFilterPHIDs($filter_phids)
       ->setViewer($user);
+
+    $filter_phids = $request->getValue('filterPHIDs');
+    if ($filter_phids) {
+      $query->withFilterPHIDs($filter_phids);
+    }
 
     $after = $request->getValue('after');
     if (strlen($after)) {

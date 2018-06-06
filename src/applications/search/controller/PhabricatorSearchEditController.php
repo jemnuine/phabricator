@@ -3,38 +3,46 @@
 final class PhabricatorSearchEditController
   extends PhabricatorSearchBaseController {
 
-  private $queryKey;
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $this->getViewer();
 
-  public function willProcessRequest(array $data) {
-    $this->queryKey = idx($data, 'queryKey');
-  }
+    $id = $request->getURIData('id');
+    if ($id) {
+      $named_query = id(new PhabricatorNamedQueryQuery())
+        ->setViewer($viewer)
+        ->withIDs(array($id))
+        ->requireCapabilities(
+          array(
+            PhabricatorPolicyCapability::CAN_VIEW,
+            PhabricatorPolicyCapability::CAN_EDIT,
+          ))
+        ->executeOne();
+      if (!$named_query) {
+        return new Aphront404Response();
+      }
 
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $request->getUser();
+      $query_key = $named_query->getQueryKey();
+    } else {
+      $query_key = $request->getURIData('queryKey');
+      $named_query = null;
+    }
 
     $saved_query = id(new PhabricatorSavedQueryQuery())
-      ->setViewer($user)
-      ->withQueryKeys(array($this->queryKey))
+      ->setViewer($viewer)
+      ->withQueryKeys(array($query_key))
       ->executeOne();
-
     if (!$saved_query) {
       return new Aphront404Response();
     }
 
-    $engine = $saved_query->newEngine()->setViewer($user);
+    $engine = $saved_query->newEngine()->setViewer($viewer);
 
     $complete_uri = $engine->getQueryManagementURI();
     $cancel_uri = $complete_uri;
 
-    $named_query = id(new PhabricatorNamedQueryQuery())
-      ->setViewer($user)
-      ->withQueryKeys(array($saved_query->getQueryKey()))
-      ->withUserPHIDs(array($user->getPHID()))
-      ->executeOne();
     if (!$named_query) {
       $named_query = id(new PhabricatorNamedQuery())
-        ->setUserPHID($user->getPHID())
+        ->setUserPHID($viewer->getPHID())
         ->setQueryKey($saved_query->getQueryKey())
         ->setEngineClassName($saved_query->getEngineClassName());
 
@@ -43,12 +51,27 @@ final class PhabricatorSearchEditController
       // management interface.
       $cancel_uri = $engine->getQueryResultsPageURI(
         $saved_query->getQueryKey());
+
+      $is_new = true;
+    } else {
+      $is_new = false;
     }
+
+    $can_global = ($viewer->getIsAdmin() && $is_new);
+
+    $v_global = false;
 
     $e_name = true;
     $errors = array();
 
     if ($request->isFormPost()) {
+      if ($can_global) {
+        $v_global = $request->getBool('global');
+        if ($v_global) {
+          $named_query->setUserPHID(PhabricatorNamedQuery::SCOPE_GLOBAL);
+        }
+      }
+
       $named_query->setQueryName($request->getStr('name'));
       if (!strlen($named_query->getQueryName())) {
         $e_name = pht('Required');
@@ -58,13 +81,14 @@ final class PhabricatorSearchEditController
       }
 
       if (!$errors) {
+
         $named_query->save();
         return id(new AphrontRedirectResponse())->setURI($complete_uri);
       }
     }
 
     $form = id(new AphrontFormView())
-      ->setUser($user);
+      ->setUser($viewer);
 
     $form->appendChild(
       id(new AphrontFormTextControl())
@@ -73,6 +97,18 @@ final class PhabricatorSearchEditController
         ->setValue($named_query->getQueryName())
         ->setError($e_name));
 
+    if ($can_global) {
+      $form->appendChild(
+        id(new AphrontFormCheckboxControl())
+          ->addCheckbox(
+            'global',
+            '1',
+            pht(
+              'Save this query as a global query, making it visible to '.
+              'all users.'),
+            $v_global));
+    }
+
     $form->appendChild(
       id(new AphrontFormSubmitControl())
         ->setValue(pht('Save Query'))
@@ -80,26 +116,35 @@ final class PhabricatorSearchEditController
 
     if ($named_query->getID()) {
       $title = pht('Edit Saved Query');
+      $header_icon = 'fa-pencil';
     } else {
       $title = pht('Save Query');
+      $header_icon = 'fa-search';
     }
 
     $form_box = id(new PHUIObjectBoxView())
-      ->setHeaderText($title)
+      ->setHeaderText(pht('Query'))
       ->setFormErrors($errors)
+      ->setBackground(PHUIObjectBoxView::BLUE_PROPERTY)
       ->setForm($form);
 
     $crumbs = $this->buildApplicationCrumbs();
     $crumbs->addTextCrumb($title);
+    $crumbs->setBorder(true);
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
-        $form_box,
-      ),
-      array(
-        'title' => $title,
-      ));
+    $header = id(new PHUIHeaderView())
+      ->setHeader($title)
+      ->setHeaderIcon($header_icon);
+
+    $view = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->setFooter($form_box);
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($view);
+
   }
 
 }

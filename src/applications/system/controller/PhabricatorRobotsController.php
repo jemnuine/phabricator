@@ -20,6 +20,7 @@ final class PhabricatorRobotsController extends PhabricatorController {
 
     $out[] = 'User-Agent: *';
     $out[] = 'Disallow: /diffusion/';
+    $out[] = 'Disallow: /source/';
 
     // Add a small crawl delay (number of seconds between requests) for spiders
     // which respect it. The intent here is to prevent spiders from affecting
@@ -32,6 +33,7 @@ final class PhabricatorRobotsController extends PhabricatorController {
 
     return id(new AphrontPlainTextResponse())
       ->setContent($content)
-      ->setCacheDurationInSeconds(phutil_units('2 hours in seconds'));
+      ->setCacheDurationInSeconds(phutil_units('2 hours in seconds'))
+      ->setCanCDN(true);
   }
 }

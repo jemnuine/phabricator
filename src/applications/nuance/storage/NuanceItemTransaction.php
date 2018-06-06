@@ -3,9 +3,7 @@
 final class NuanceItemTransaction
   extends NuanceTransaction {
 
-  const TYPE_OWNER = 'item-owner';
-  const TYPE_REQUESTOR = 'item-requestor';
-  const TYPE_SOURCE = 'item-source';
+  const PROPERTY_KEY = 'property.key';
 
   public function getApplicationTransactionType() {
     return NuanceItemPHIDType::TYPECONST;
@@ -13,6 +11,10 @@ final class NuanceItemTransaction
 
   public function getApplicationTransactionCommentObject() {
     return new NuanceItemTransactionComment();
+  }
+
+  public function getBaseTransactionClass() {
+    return 'NuanceItemTransactionType';
   }
 
 }

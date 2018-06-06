@@ -4,6 +4,7 @@ final class DifferentialRevision extends DifferentialDAO
   implements
     PhabricatorTokenReceiverInterface,
     PhabricatorPolicyInterface,
+    PhabricatorExtendedPolicyInterface,
     PhabricatorFlaggableInterface,
     PhrequentTrackableInterface,
     HarbormasterBuildableInterface,
@@ -12,10 +13,13 @@ final class DifferentialRevision extends DifferentialDAO
     PhabricatorApplicationTransactionInterface,
     PhabricatorMentionableInterface,
     PhabricatorDestructibleInterface,
-    PhabricatorProjectInterface {
+    PhabricatorProjectInterface,
+    PhabricatorFulltextInterface,
+    PhabricatorFerretInterface,
+    PhabricatorConduitResultInterface,
+    PhabricatorDraftInterface {
 
   protected $title = '';
-  protected $originalTitle;
   protected $status;
 
   protected $summary = '';
@@ -29,12 +33,13 @@ final class DifferentialRevision extends DifferentialDAO
 
   protected $mailKey;
   protected $branchName;
-  protected $arcanistProjectPHID;
   protected $repositoryPHID;
+  protected $activeDiffPHID;
+
   protected $viewPolicy = PhabricatorPolicies::POLICY_USER;
   protected $editPolicy = PhabricatorPolicies::POLICY_USER;
+  protected $properties = array();
 
-  private $relationships = self::ATTACHABLE;
   private $commits = self::ATTACHABLE;
   private $activeDiff = self::ATTACHABLE;
   private $diffIDs = self::ATTACHABLE;
@@ -45,11 +50,19 @@ final class DifferentialRevision extends DifferentialDAO
   private $customFields = self::ATTACHABLE;
   private $drafts = array();
   private $flags = array();
+  private $forceMap = array();
 
   const TABLE_COMMIT          = 'differential_commit';
 
   const RELATION_REVIEWER     = 'revw';
   const RELATION_SUBSCRIBED   = 'subd';
+
+  const PROPERTY_CLOSED_FROM_ACCEPTED = 'wasAcceptedBeforeClose';
+  const PROPERTY_DRAFT_HOLD = 'draft.hold';
+  const PROPERTY_SHOULD_BROADCAST = 'draft.broadcast';
+  const PROPERTY_LINES_ADDED = 'lines.added';
+  const PROPERTY_LINES_REMOVED = 'lines.removed';
+  const PROPERTY_BUILDABLES = 'buildables';
 
   public static function initializeNewRevision(PhabricatorUser $actor) {
     $app = id(new PhabricatorApplicationQuery())
@@ -60,11 +73,22 @@ final class DifferentialRevision extends DifferentialDAO
     $view_policy = $app->getPolicy(
       DifferentialDefaultViewCapability::CAPABILITY);
 
+    if (PhabricatorEnv::getEnvConfig('phabricator.show-prototypes')) {
+      $initial_state = DifferentialRevisionStatus::DRAFT;
+      $should_broadcast = false;
+    } else {
+      $initial_state = DifferentialRevisionStatus::NEEDS_REVIEW;
+      $should_broadcast = true;
+    }
+
     return id(new DifferentialRevision())
       ->setViewPolicy($view_policy)
       ->setAuthorPHID($actor->getPHID())
-      ->attachRelationships(array())
-      ->setStatus(ArcanistDifferentialRevisionStatus::NEEDS_REVIEW);
+      ->attachRepository(null)
+      ->attachActiveDiff(null)
+      ->attachReviewers(array())
+      ->setModernRevisionStatus($initial_state)
+      ->setShouldBroadcast($should_broadcast);
   }
 
   protected function getConfiguration() {
@@ -73,10 +97,10 @@ final class DifferentialRevision extends DifferentialDAO
       self::CONFIG_SERIALIZATION => array(
         'attached'      => self::SERIALIZATION_JSON,
         'unsubscribed'  => self::SERIALIZATION_JSON,
+        'properties' => self::SERIALIZATION_JSON,
       ),
       self::CONFIG_COLUMN_SCHEMA => array(
         'title' => 'text255',
-        'originalTitle' => 'text255',
         'status' => 'text32',
         'summary' => 'text',
         'testPlan' => 'text',
@@ -85,7 +109,6 @@ final class DifferentialRevision extends DifferentialDAO
         'lineCount' => 'uint32?',
         'mailKey' => 'bytes40',
         'branchName' => 'text255?',
-        'arcanistProjectPHID' => 'phid?',
         'repositoryPHID' => 'phid?',
       ),
       self::CONFIG_KEY_SCHEMA => array(
@@ -100,8 +123,29 @@ final class DifferentialRevision extends DifferentialDAO
         'repositoryPHID' => array(
           'columns' => array('repositoryPHID'),
         ),
+        // If you (or a project you are a member of) is reviewing a significant
+        // fraction of the revisions on an install, the result set of open
+        // revisions may be smaller than the result set of revisions where you
+        // are a reviewer. In these cases, this key is better than keys on the
+        // edge table.
+        'key_status' => array(
+          'columns' => array('status', 'phid'),
+        ),
       ),
     ) + parent::getConfiguration();
+  }
+
+  public function setProperty($key, $value) {
+    $this->properties[$key] = $value;
+    return $this;
+  }
+
+  public function getProperty($key, $default = null) {
+    return idx($this->properties, $key, $default);
+  }
+
+  public function hasRevisionProperty($key) {
+    return array_key_exists($key, $this->properties);
   }
 
   public function getMonogram() {
@@ -109,12 +153,8 @@ final class DifferentialRevision extends DifferentialDAO
     return "D{$id}";
   }
 
-  public function setTitle($title) {
-    $this->title = $title;
-    if (!$this->getID()) {
-      $this->originalTitle = $title;
-    }
-    return $this;
+  public function getURI() {
+    return '/'.$this->getMonogram();
   }
 
   public function loadIDsByCommitPHIDs($phids) {
@@ -204,73 +244,6 @@ final class DifferentialRevision extends DifferentialDAO
     return parent::save();
   }
 
-  public function loadRelationships() {
-    if (!$this->getID()) {
-      $this->relationships = array();
-      return;
-    }
-
-    $data = array();
-
-    $subscriber_phids = PhabricatorEdgeQuery::loadDestinationPHIDs(
-      $this->getPHID(),
-      PhabricatorObjectHasSubscriberEdgeType::EDGECONST);
-    $subscriber_phids = array_reverse($subscriber_phids);
-    foreach ($subscriber_phids as $phid) {
-      $data[] = array(
-        'relation' => self::RELATION_SUBSCRIBED,
-        'objectPHID' => $phid,
-        'reasonPHID' => null,
-      );
-    }
-
-    $reviewer_phids = PhabricatorEdgeQuery::loadDestinationPHIDs(
-      $this->getPHID(),
-      DifferentialRevisionHasReviewerEdgeType::EDGECONST);
-    $reviewer_phids = array_reverse($reviewer_phids);
-    foreach ($reviewer_phids as $phid) {
-      $data[] = array(
-        'relation' => self::RELATION_REVIEWER,
-        'objectPHID' => $phid,
-        'reasonPHID' => null,
-      );
-    }
-
-    return $this->attachRelationships($data);
-  }
-
-  public function attachRelationships(array $relationships) {
-    $this->relationships = igroup($relationships, 'relation');
-    return $this;
-  }
-
-  public function getReviewers() {
-    return $this->getRelatedPHIDs(self::RELATION_REVIEWER);
-  }
-
-  public function getCCPHIDs() {
-    return $this->getRelatedPHIDs(self::RELATION_SUBSCRIBED);
-  }
-
-  private function getRelatedPHIDs($relation) {
-    $this->assertAttached($this->relationships);
-
-    return ipull($this->getRawRelations($relation), 'objectPHID');
-  }
-
-  public function getRawRelations($relation) {
-    return idx($this->relationships, $relation, array());
-  }
-
-  public function getPrimaryReviewer() {
-    $reviewers = $this->getReviewers();
-    $last = $this->lastReviewerPHID;
-    if (!$last || !in_array($last, $reviewers)) {
-      return head($this->getReviewers());
-    }
-    return $last;
-  }
-
   public function getHashes() {
     return $this->assertAttached($this->hashes);
   }
@@ -280,42 +253,245 @@ final class DifferentialRevision extends DifferentialDAO
     return $this;
   }
 
-  public function loadInlineComments(
-    array &$changesets) {
-    assert_instances_of($changesets, 'DifferentialChangeset');
+  public function canReviewerForceAccept(
+    PhabricatorUser $viewer,
+    DifferentialReviewer $reviewer) {
 
-    $inline_comments = array();
+    if (!$reviewer->isPackage()) {
+      return false;
+    }
 
-    $inline_comments = id(new DifferentialInlineCommentQuery())
-      ->withRevisionIDs(array($this->getID()))
-      ->withNotDraft(true)
-      ->execute();
+    $map = $this->getReviewerForceAcceptMap($viewer);
+    if (!$map) {
+      return false;
+    }
 
-    $load_changesets = array();
-    foreach ($inline_comments as $inline) {
-      $changeset_id = $inline->getChangesetID();
-      if (isset($changesets[$changeset_id])) {
+    if (isset($map[$reviewer->getReviewerPHID()])) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private function getReviewerForceAcceptMap(PhabricatorUser $viewer) {
+    $fragment = $viewer->getCacheFragment();
+
+    if (!array_key_exists($fragment, $this->forceMap)) {
+      $map = $this->newReviewerForceAcceptMap($viewer);
+      $this->forceMap[$fragment] = $map;
+    }
+
+    return $this->forceMap[$fragment];
+  }
+
+  private function newReviewerForceAcceptMap(PhabricatorUser $viewer) {
+    $diff = $this->getActiveDiff();
+    if (!$diff) {
+      return null;
+    }
+
+    $repository_phid = $diff->getRepositoryPHID();
+    if (!$repository_phid) {
+      return null;
+    }
+
+    $paths = array();
+
+    try {
+      $changesets = $diff->getChangesets();
+    } catch (Exception $ex) {
+      $changesets = id(new DifferentialChangesetQuery())
+        ->setViewer($viewer)
+        ->withDiffs(array($diff))
+        ->execute();
+    }
+
+    foreach ($changesets as $changeset) {
+      $paths[] = $changeset->getOwnersFilename();
+    }
+
+    if (!$paths) {
+      return null;
+    }
+
+    $reviewer_phids = array();
+    foreach ($this->getReviewers() as $reviewer) {
+      if (!$reviewer->isPackage()) {
         continue;
       }
-      $load_changesets[$changeset_id] = true;
+
+      $reviewer_phids[] = $reviewer->getReviewerPHID();
     }
 
-    $more_changesets = array();
-    if ($load_changesets) {
-      $changeset_ids = array_keys($load_changesets);
-      $more_changesets += id(new DifferentialChangeset())
-        ->loadAllWhere(
-          'id IN (%Ld)',
-          $changeset_ids);
+    if (!$reviewer_phids) {
+      return null;
     }
 
-    if ($more_changesets) {
-      $changesets += $more_changesets;
-      $changesets = msort($changesets, 'getSortKey');
+    // Load all the reviewing packages which have control over some of the
+    // paths in the change. These are packages which the actor may be able
+    // to force-accept on behalf of.
+    $control_query = id(new PhabricatorOwnersPackageQuery())
+      ->setViewer($viewer)
+      ->withStatuses(array(PhabricatorOwnersPackage::STATUS_ACTIVE))
+      ->withPHIDs($reviewer_phids)
+      ->withControl($repository_phid, $paths);
+    $control_packages = $control_query->execute();
+    if (!$control_packages) {
+      return null;
     }
 
-    return $inline_comments;
+    // Load all the packages which have potential control over some of the
+    // paths in the change and are owned by the actor. These are packages
+    // which the actor may be able to use their authority over to gain the
+    // ability to force-accept for other packages. This query doesn't apply
+    // dominion rules yet, and we'll bypass those rules later on.
+    $authority_query = id(new PhabricatorOwnersPackageQuery())
+      ->setViewer($viewer)
+      ->withStatuses(array(PhabricatorOwnersPackage::STATUS_ACTIVE))
+      ->withAuthorityPHIDs(array($viewer->getPHID()))
+      ->withControl($repository_phid, $paths);
+    $authority_packages = $authority_query->execute();
+    if (!$authority_packages) {
+      return null;
+    }
+    $authority_packages = mpull($authority_packages, null, 'getPHID');
+
+    // Build a map from each path in the revision to the reviewer packages
+    // which control it.
+    $control_map = array();
+    foreach ($paths as $path) {
+      $control_packages = $control_query->getControllingPackagesForPath(
+        $repository_phid,
+        $path);
+
+      // Remove packages which the viewer has authority over. We don't need
+      // to check these for force-accept because they can just accept them
+      // normally.
+      $control_packages = mpull($control_packages, null, 'getPHID');
+      foreach ($control_packages as $phid => $control_package) {
+        if (isset($authority_packages[$phid])) {
+          unset($control_packages[$phid]);
+        }
+      }
+
+      if (!$control_packages) {
+        continue;
+      }
+
+      $control_map[$path] = $control_packages;
+    }
+
+    if (!$control_map) {
+      return null;
+    }
+
+    // From here on out, we only care about paths which we have at least one
+    // controlling package for.
+    $paths = array_keys($control_map);
+
+    // Now, build a map from each path to the packages which would control it
+    // if there were no dominion rules.
+    $authority_map = array();
+    foreach ($paths as $path) {
+      $authority_packages = $authority_query->getControllingPackagesForPath(
+        $repository_phid,
+        $path,
+        $ignore_dominion = true);
+
+      $authority_map[$path] = mpull($authority_packages, null, 'getPHID');
+    }
+
+    // For each path, find the most general package that the viewer has
+    // authority over. For example, we'll prefer a package that owns "/" to a
+    // package that owns "/src/".
+    $force_map = array();
+    foreach ($authority_map as $path => $package_map) {
+      $path_fragments = PhabricatorOwnersPackage::splitPath($path);
+      $fragment_count = count($path_fragments);
+
+      // Find the package that we have authority over which has the most
+      // general match for this path.
+      $best_match = null;
+      $best_package = null;
+      foreach ($package_map as $package_phid => $package) {
+        $package_paths = $package->getPathsForRepository($repository_phid);
+        foreach ($package_paths as $package_path) {
+
+          // NOTE: A strength of 0 means "no match". A strength of 1 means
+          // that we matched "/", so we can not possibly find another stronger
+          // match.
+
+          $strength = $package_path->getPathMatchStrength(
+            $path_fragments,
+            $fragment_count);
+          if (!$strength) {
+            continue;
+          }
+
+          if ($strength < $best_match || !$best_package) {
+            $best_match = $strength;
+            $best_package = $package;
+            if ($strength == 1) {
+              break 2;
+            }
+          }
+        }
+      }
+
+      if ($best_package) {
+        $force_map[$path] = array(
+          'strength' => $best_match,
+          'package' => $best_package,
+        );
+      }
+    }
+
+    // For each path which the viewer owns a package for, find other packages
+    // which that authority can be used to force-accept. Once we find a way to
+    // force-accept a package, we don't need to keep looking.
+    $has_control = array();
+    foreach ($force_map as $path => $spec) {
+      $path_fragments = PhabricatorOwnersPackage::splitPath($path);
+      $fragment_count = count($path_fragments);
+
+      $authority_strength = $spec['strength'];
+
+      $control_packages = $control_map[$path];
+      foreach ($control_packages as $control_phid => $control_package) {
+        if (isset($has_control[$control_phid])) {
+          continue;
+        }
+
+        $control_paths = $control_package->getPathsForRepository(
+          $repository_phid);
+        foreach ($control_paths as $control_path) {
+          $strength = $control_path->getPathMatchStrength(
+            $path_fragments,
+            $fragment_count);
+
+          if (!$strength) {
+            continue;
+          }
+
+          if ($strength > $authority_strength) {
+            $authority = $spec['package'];
+            $has_control[$control_phid] = array(
+              'authority' => $authority,
+              'phid' => $authority->getPHID(),
+            );
+            break;
+          }
+        }
+      }
+    }
+
+    // Return a map from packages which may be force accepted to the packages
+    // which permit that forced acceptance.
+    return ipull($has_control, 'phid');
   }
+
+
+/* -(  PhabricatorPolicyInterface  )----------------------------------------- */
 
 
   public function getCapabilities() {
@@ -355,8 +531,6 @@ final class DifferentialRevision extends DifferentialDAO
     switch ($capability) {
       case PhabricatorPolicyCapability::CAN_VIEW:
         $description[] = pht(
-          "A revision's reviewers can always view it.");
-        $description[] = pht(
           'If a revision belongs to a repository, other users must be able '.
           'to view the repository in order to view the revision.');
         break;
@@ -365,21 +539,79 @@ final class DifferentialRevision extends DifferentialDAO
     return $description;
   }
 
+
+/* -(  PhabricatorExtendedPolicyInterface  )--------------------------------- */
+
+
+  public function getExtendedPolicy($capability, PhabricatorUser $viewer) {
+    $extended = array();
+
+    switch ($capability) {
+      case PhabricatorPolicyCapability::CAN_VIEW:
+        $repository_phid = $this->getRepositoryPHID();
+        $repository = $this->getRepository();
+
+        // Try to use the object if we have it, since it will save us some
+        // data fetching later on. In some cases, we might not have it.
+        $repository_ref = nonempty($repository, $repository_phid);
+        if ($repository_ref) {
+          $extended[] = array(
+            $repository_ref,
+            PhabricatorPolicyCapability::CAN_VIEW,
+          );
+        }
+        break;
+    }
+
+    return $extended;
+  }
+
+
+/* -(  PhabricatorTokenReceiverInterface  )---------------------------------- */
+
+
   public function getUsersToNotifyOfTokenGiven() {
     return array(
       $this->getAuthorPHID(),
     );
   }
 
-  public function getReviewerStatus() {
+  public function getReviewers() {
     return $this->assertAttached($this->reviewerStatus);
   }
 
-  public function attachReviewerStatus(array $reviewers) {
+  public function attachReviewers(array $reviewers) {
     assert_instances_of($reviewers, 'DifferentialReviewer');
-
+    $reviewers = mpull($reviewers, null, 'getReviewerPHID');
     $this->reviewerStatus = $reviewers;
     return $this;
+  }
+
+  public function hasAttachedReviewers() {
+    return ($this->reviewerStatus !== self::ATTACHABLE);
+  }
+
+  public function getReviewerPHIDs() {
+    $reviewers = $this->getReviewers();
+    return mpull($reviewers, 'getReviewerPHID');
+  }
+
+  public function getReviewerPHIDsForEdit() {
+    $reviewers = $this->getReviewers();
+
+    $status_blocking = DifferentialReviewerStatus::STATUS_BLOCKING;
+
+    $value = array();
+    foreach ($reviewers as $reviewer) {
+      $phid = $reviewer->getReviewerPHID();
+      if ($reviewer->getReviewerStatus() == $status_blocking) {
+        $value[] = 'blocking('.$phid.')';
+      } else {
+        $value[] = $phid;
+      }
+    }
+
+    return $value;
   }
 
   public function getRepository() {
@@ -391,8 +623,69 @@ final class DifferentialRevision extends DifferentialDAO
     return $this;
   }
 
+  public function setModernRevisionStatus($status) {
+    return $this->setStatus($status);
+  }
+
+  public function getModernRevisionStatus() {
+    return $this->getStatus();
+  }
+
+  public function getLegacyRevisionStatus() {
+    return $this->getStatusObject()->getLegacyKey();
+  }
+
   public function isClosed() {
-    return DifferentialRevisionStatus::isClosedStatus($this->getStatus());
+    return $this->getStatusObject()->isClosedStatus();
+  }
+
+  public function isAbandoned() {
+    return $this->getStatusObject()->isAbandoned();
+  }
+
+  public function isAccepted() {
+    return $this->getStatusObject()->isAccepted();
+  }
+
+  public function isNeedsReview() {
+    return $this->getStatusObject()->isNeedsReview();
+  }
+
+  public function isNeedsRevision() {
+    return $this->getStatusObject()->isNeedsRevision();
+  }
+
+  public function isChangePlanned() {
+    return $this->getStatusObject()->isChangePlanned();
+  }
+
+  public function isPublished() {
+    return $this->getStatusObject()->isPublished();
+  }
+
+  public function isDraft() {
+    return $this->getStatusObject()->isDraft();
+  }
+
+  public function getStatusIcon() {
+    return $this->getStatusObject()->getIcon();
+  }
+
+  public function getStatusDisplayName() {
+    return $this->getStatusObject()->getDisplayName();
+  }
+
+  public function getStatusIconColor() {
+    return $this->getStatusObject()->getIconColor();
+  }
+
+  public function getStatusTagColor() {
+    return $this->getStatusObject()->getTagColor();
+  }
+
+  public function getStatusObject() {
+    $status = $this->getStatus();
+    return DifferentialRevisionStatus::newForStatus($status);
   }
 
   public function getFlag(PhabricatorUser $viewer) {
@@ -406,18 +699,208 @@ final class DifferentialRevision extends DifferentialDAO
     return $this;
   }
 
-  public function getDrafts(PhabricatorUser $viewer) {
-    return $this->assertAttachedKey($this->drafts, $viewer->getPHID());
+  public function getHasDraft(PhabricatorUser $viewer) {
+    return $this->assertAttachedKey($this->drafts, $viewer->getCacheFragment());
   }
 
-  public function attachDrafts(PhabricatorUser $viewer, array $drafts) {
-    $this->drafts[$viewer->getPHID()] = $drafts;
+  public function attachHasDraft(PhabricatorUser $viewer, $has_draft) {
+    $this->drafts[$viewer->getCacheFragment()] = $has_draft;
     return $this;
+  }
+
+  public function getHoldAsDraft() {
+    return $this->getProperty(self::PROPERTY_DRAFT_HOLD, false);
+  }
+
+  public function setHoldAsDraft($hold) {
+    return $this->setProperty(self::PROPERTY_DRAFT_HOLD, $hold);
+  }
+
+  public function getShouldBroadcast() {
+    return $this->getProperty(self::PROPERTY_SHOULD_BROADCAST, true);
+  }
+
+  public function setShouldBroadcast($should_broadcast) {
+    return $this->setProperty(
+      self::PROPERTY_SHOULD_BROADCAST,
+      $should_broadcast);
+  }
+
+  public function setAddedLineCount($count) {
+    return $this->setProperty(self::PROPERTY_LINES_ADDED, $count);
+  }
+
+  public function getAddedLineCount() {
+    return $this->getProperty(self::PROPERTY_LINES_ADDED);
+  }
+
+  public function setRemovedLineCount($count) {
+    return $this->setProperty(self::PROPERTY_LINES_REMOVED, $count);
+  }
+
+  public function getRemovedLineCount() {
+    return $this->getProperty(self::PROPERTY_LINES_REMOVED);
+  }
+
+  public function hasLineCounts() {
+    // This data was not populated on older revisions, so it may not be
+    // present on all revisions.
+    return isset($this->properties[self::PROPERTY_LINES_ADDED]);
+  }
+
+  public function getRevisionScaleGlyphs() {
+    $add = $this->getAddedLineCount();
+    $rem = $this->getRemovedLineCount();
+    $all = ($add + $rem);
+
+    if (!$all) {
+      return '       ';
+    }
+
+    $map = array(
+      20 => 2,
+      50 => 3,
+      150 => 4,
+      375 => 5,
+      1000 => 6,
+      2500 => 7,
+    );
+
+    $n = 1;
+    foreach ($map as $size => $count) {
+      if ($size <= $all) {
+        $n = $count;
+      } else {
+        break;
+      }
+    }
+
+    $add_n = (int)ceil(($add / $all) * $n);
+    $rem_n = (int)ceil(($rem / $all) * $n);
+
+    while ($add_n + $rem_n > $n) {
+      if ($add_n > 1) {
+        $add_n--;
+      } else {
+        $rem_n--;
+      }
+    }
+
+    return
+      str_repeat('+', $add_n).
+      str_repeat('-', $rem_n).
+      str_repeat(' ', (7 - $n));
+  }
+
+  public function getBuildableStatus($phid) {
+    $buildables = $this->getProperty(self::PROPERTY_BUILDABLES);
+    if (!is_array($buildables)) {
+      $buildables = array();
+    }
+
+    $buildable = idx($buildables, $phid);
+    if (!is_array($buildable)) {
+      $buildable = array();
+    }
+
+    return idx($buildable, 'status');
+  }
+
+  public function setBuildableStatus($phid, $status) {
+    $buildables = $this->getProperty(self::PROPERTY_BUILDABLES);
+    if (!is_array($buildables)) {
+      $buildables = array();
+    }
+
+    $buildable = idx($buildables, $phid);
+    if (!is_array($buildable)) {
+      $buildable = array();
+    }
+
+    $buildable['status'] = $status;
+
+    $buildables[$phid] = $buildable;
+
+    return $this->setProperty(self::PROPERTY_BUILDABLES, $buildables);
+  }
+
+  public function newBuildableStatus(PhabricatorUser $viewer, $phid) {
+    // For Differential, we're ignoring autobuilds (local lint and unit)
+    // when computing build status. Differential only cares about remote
+    // builds when making publishing and undrafting decisions.
+
+    $builds = $this->loadImpactfulBuildsForBuildablePHIDs(
+      $viewer,
+      array($phid));
+
+    return $this->newBuildableStatusForBuilds($builds);
+  }
+
+  public function newBuildableStatusForBuilds(array $builds) {
+    // If we have nothing but passing builds, the buildable passes.
+    if (!$builds) {
+      return HarbormasterBuildableStatus::STATUS_PASSED;
+    }
+
+    // If we have any completed, non-passing builds, the buildable fails.
+    foreach ($builds as $build) {
+      if ($build->isComplete()) {
+        return HarbormasterBuildableStatus::STATUS_FAILED;
+      }
+    }
+
+    // Otherwise, we're still waiting for the build to pass or fail.
+    return null;
+  }
+
+  public function loadImpactfulBuilds(PhabricatorUser $viewer) {
+    $diff = $this->getActiveDiff();
+
+    // NOTE: We can't use `withContainerPHIDs()` here because the container
+    // update in Harbormaster is not synchronous.
+    $buildables = id(new HarbormasterBuildableQuery())
+      ->setViewer($viewer)
+      ->withBuildablePHIDs(array($diff->getPHID()))
+      ->withManualBuildables(false)
+      ->execute();
+    if (!$buildables) {
+      return array();
+    }
+
+    return $this->loadImpactfulBuildsForBuildablePHIDs(
+      $viewer,
+      mpull($buildables, 'getPHID'));
+  }
+
+  private function loadImpactfulBuildsForBuildablePHIDs(
+    PhabricatorUser $viewer,
+    array $phids) {
+
+    return id(new HarbormasterBuildQuery())
+      ->setViewer($viewer)
+      ->withBuildablePHIDs($phids)
+      ->withAutobuilds(false)
+      ->withBuildStatuses(
+        array(
+          HarbormasterBuildStatus::STATUS_INACTIVE,
+          HarbormasterBuildStatus::STATUS_PENDING,
+          HarbormasterBuildStatus::STATUS_BUILDING,
+          HarbormasterBuildStatus::STATUS_FAILED,
+          HarbormasterBuildStatus::STATUS_ABORTED,
+          HarbormasterBuildStatus::STATUS_ERROR,
+          HarbormasterBuildStatus::STATUS_PAUSED,
+          HarbormasterBuildStatus::STATUS_DEADLOCKED,
+        ))
+      ->execute();
   }
 
 
 /* -(  HarbormasterBuildableInterface  )------------------------------------- */
 
+
+  public function getHarbormasterBuildableDisplayPHID() {
+    return $this->getHarbormasterContainerPHID();
+  }
 
   public function getHarbormasterBuildablePHID() {
     return $this->loadActiveDiff()->getPHID();
@@ -433,6 +916,10 @@ final class DifferentialRevision extends DifferentialDAO
 
   public function getAvailableBuildVariables() {
     return array();
+  }
+
+  public function newBuildableEngine() {
+    return new DifferentialBuildableEngine();
   }
 
 
@@ -452,28 +939,26 @@ final class DifferentialRevision extends DifferentialDAO
       $reviewers = id(new DifferentialRevisionQuery())
         ->setViewer(PhabricatorUser::getOmnipotentUser())
         ->withPHIDs(array($this->getPHID()))
-        ->needReviewerStatus(true)
+        ->needReviewers(true)
         ->executeOne()
-        ->getReviewerStatus();
+        ->getReviewers();
     } else {
-      $reviewers = $this->getReviewerStatus();
+      $reviewers = $this->getReviewers();
     }
 
     foreach ($reviewers as $reviewer) {
-      if ($reviewer->getReviewerPHID() == $phid) {
-        return true;
+      if ($reviewer->getReviewerPHID() !== $phid) {
+        continue;
       }
+
+      if ($reviewer->isResigned()) {
+        continue;
+      }
+
+      return true;
     }
 
     return false;
-  }
-
-  public function shouldShowSubscribersProperty() {
-    return true;
-  }
-
-  public function shouldAllowSubscription($phid) {
-    return true;
   }
 
 
@@ -516,6 +1001,7 @@ final class DifferentialRevision extends DifferentialDAO
   public function willRenderTimeline(
     PhabricatorApplicationTransactionView $timeline,
     AphrontRequest $request) {
+    $viewer = $request->getViewer();
 
     $render_data = $timeline->getRenderData();
     $left = $request->getInt('left', idx($render_data, 'left'));
@@ -529,14 +1015,48 @@ final class DifferentialRevision extends DifferentialDAO
     $left_diff = $diffs[$left];
     $right_diff = $diffs[$right];
 
-    $changesets = id(new DifferentialChangesetQuery())
-      ->setViewer($request->getUser())
-      ->withDiffs(array($right_diff))
-      ->execute();
-    // NOTE: this mutates $changesets to include changesets for all inline
-    // comments...!
-    $inlines = $this->loadInlineComments($changesets);
-    $changesets = mpull($changesets, null, 'getID');
+    $old_ids = $request->getStr('old', idx($render_data, 'old'));
+    $new_ids = $request->getStr('new', idx($render_data, 'new'));
+    $old_ids = array_filter(explode(',', $old_ids));
+    $new_ids = array_filter(explode(',', $new_ids));
+
+    $type_inline = DifferentialTransaction::TYPE_INLINE;
+    $changeset_ids = array_merge($old_ids, $new_ids);
+    $inlines = array();
+    foreach ($timeline->getTransactions() as $xaction) {
+      if ($xaction->getTransactionType() == $type_inline) {
+        $inlines[] = $xaction->getComment();
+        $changeset_ids[] = $xaction->getComment()->getChangesetID();
+      }
+    }
+
+    if ($changeset_ids) {
+      $changesets = id(new DifferentialChangesetQuery())
+        ->setViewer($request->getUser())
+        ->withIDs($changeset_ids)
+        ->execute();
+      $changesets = mpull($changesets, null, 'getID');
+    } else {
+      $changesets = array();
+    }
+
+    foreach ($inlines as $key => $inline) {
+      $inlines[$key] = DifferentialInlineComment::newFromModernComment(
+        $inline);
+    }
+
+    $query = id(new DifferentialInlineCommentQuery())
+      ->needHidden(true)
+      ->setViewer($viewer);
+
+    // NOTE: This is a bit sketchy: this method adjusts the inlines as a
+    // side effect, which means it will ultimately adjust the transaction
+    // comments and affect timeline rendering.
+    $query->adjustInlinesForChangesets(
+      $inlines,
+      array_select_keys($changesets, $old_ids),
+      array_select_keys($changesets, $new_ids),
+      $this);
 
     return $timeline
       ->setChangesets($changesets)
@@ -554,7 +1074,7 @@ final class DifferentialRevision extends DifferentialDAO
 
     $this->openTransaction();
       $diffs = id(new DifferentialDiffQuery())
-        ->setViewer(PhabricatorUser::getOmnipotentUser())
+        ->setViewer($engine->getViewer())
         ->withRevisionIDs(array($this->getID()))
         ->execute();
       foreach ($diffs as $diff) {
@@ -569,19 +1089,7 @@ final class DifferentialRevision extends DifferentialDAO
         self::TABLE_COMMIT,
         $this->getID());
 
-      try {
-        $inlines = id(new DifferentialInlineCommentQuery())
-          ->withRevisionIDs(array($this->getID()))
-          ->execute();
-        foreach ($inlines as $inline) {
-          $inline->delete();
-        }
-      } catch (PhabricatorEmptyQueryException $ex) {
-        // TODO: There's still some funky legacy wrapping going on here, and
-        // we might catch a raw query exception.
-      }
-
-      // we have to do paths a little differentally as they do not have
+      // we have to do paths a little differently as they do not have
       // an id or phid column for delete() to act on
       $dummy_path = new DifferentialAffectedPath();
       queryfx(
@@ -592,6 +1100,89 @@ final class DifferentialRevision extends DifferentialDAO
 
       $this->delete();
     $this->saveTransaction();
+  }
+
+
+/* -(  PhabricatorFulltextInterface  )--------------------------------------- */
+
+
+  public function newFulltextEngine() {
+    return new DifferentialRevisionFulltextEngine();
+  }
+
+
+/* -(  PhabricatorFerretInterface  )----------------------------------------- */
+
+
+  public function newFerretEngine() {
+    return new DifferentialRevisionFerretEngine();
+  }
+
+
+/* -(  PhabricatorConduitResultInterface  )---------------------------------- */
+
+
+  public function getFieldSpecificationsForConduit() {
+    return array(
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('title')
+        ->setType('string')
+        ->setDescription(pht('The revision title.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('authorPHID')
+        ->setType('phid')
+        ->setDescription(pht('Revision author PHID.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('status')
+        ->setType('map<string, wild>')
+        ->setDescription(pht('Information about revision status.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('repositoryPHID')
+        ->setType('phid?')
+        ->setDescription(pht('Revision repository PHID.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('diffPHID')
+        ->setType('phid')
+        ->setDescription(pht('Active diff PHID.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('summary')
+        ->setType('string')
+        ->setDescription(pht('Revision summary.')),
+    );
+  }
+
+  public function getFieldValuesForConduit() {
+    $status = $this->getStatusObject();
+    $status_info = array(
+      'value' => $status->getKey(),
+      'name' => $status->getDisplayName(),
+      'closed' => $status->isClosedStatus(),
+      'color.ansi' => $status->getANSIColor(),
+    );
+
+    return array(
+      'title' => $this->getTitle(),
+      'authorPHID' => $this->getAuthorPHID(),
+      'status' => $status_info,
+      'repositoryPHID' => $this->getRepositoryPHID(),
+      'diffPHID' => $this->getActiveDiffPHID(),
+      'summary' => $this->getSummary(),
+    );
+  }
+
+  public function getConduitSearchAttachments() {
+    return array(
+      id(new DifferentialReviewersSearchEngineAttachment())
+        ->setAttachmentKey('reviewers'),
+    );
+  }
+
+
+/* -(  PhabricatorDraftInterface  )------------------------------------------ */
+
+
+  public function newDraftEngine() {
+    return new DifferentialRevisionDraftEngine();
   }
 
 }

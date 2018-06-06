@@ -4,15 +4,26 @@
 
 .phui-info-view {
   border-style: solid;
-  border-left-width: 4px;
-}
-
-.phui-info-view {
+  border-width: 1px;
+  background: {$page.content};
   margin: 16px;
   padding: 12px;
+  border-radius: 3px;
 }
 
-.device-phone .phui-info-view {
+div.phui-info-view.phui-info-severity-plain {
+  background: {$lightgreybackground};
+  color: {$bluetext};
+  border: none;
+  padding: 8px 12px;
+  margin-bottom: 4px !important;
+}
+
+.phui-info-view.phui-info-view-flush {
+  margin: 0 0 20px 0;
+}
+
+.device .phui-info-view {
   margin: 8px;
 }
 
@@ -20,8 +31,26 @@
   padding: 0;
 }
 
+.phui-info-view-icon {
+  width: 24px;
+  float: left;
+}
+
 .phui-info-view-body {
-  line-height: 1.45em;
+  line-height: 1.6em;
+  color: {$blacktext};
+}
+
+.phui-info-view.phui-info-has-icon .phui-info-view-body {
+  margin-left: 24px;
+}
+
+.phui-info-view-body tt {
+  color: {$blacktext};
+  background: rgba({$alphablue},0.1);
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: pre-wrap;
 }
 
 .phui-info-view-actions {
@@ -40,105 +69,63 @@
 
 h1.phui-info-view-head {
   font-weight: bold;
-  font-size: 15px;
+  font-size: {$biggerfontsize};
+  line-height: 1.3em;
 }
 
 .phui-info-view-list {
-  margin: 0 0 0 16px;
-  list-style: disc;
-  line-height: 1.5em;
+  margin: 0;
+  list-style: none;
+  line-height: 1.6em;
 }
 
-.phui-info-view .phui-info-view-actions .button:hover {
-  background: #fff;
-  box-shadow: none;
+.phui-info-view .phui-info-icon {
+  padding-top: 1px;
+  font-size: 16px;
 }
 
-.phui-info-severity-error,
-.phui-info-severity-error a.button {
+.phui-info-severity-error {
   border-color: {$red};
-  background: {$lightred};
+  border-left-width: 6px;
 }
 
-.phui-info-severity-error a.button {
+.phui-info-severity-error .phui-info-icon {
   color: {$red};
 }
 
-.phui-info-severity-warning,
-.phui-info-severity-warning a.button {
+.phui-info-severity-warning {
   border-color: {$yellow};
-  background: {$lightyellow};
+  border-left-width: 6px;
 }
 
-.phui-info-severity-warning a.button {
-  color: #bc7837;
+.phui-info-severity-warning .phui-info-icon {
+  color: {$yellow};
 }
 
-.phui-info-severity-notice,
-.phui-info-severity-notice a.button {
+.phui-info-severity-notice {
   border-color: {$blue};
-  background: {$lightblue};
+  border-left-width: 6px;
 }
 
-.phui-info-severity-notice a.button {
+.phui-info-severity-notice .phui-info-icon {
   color: {$blue};
 }
 
-.phui-info-severity-nodata,
-.phui-info-severity-nodata a.button {
+.phui-info-severity-nodata {
   border-color: {$lightgreyborder};
-  background: #fff;
 }
 
-.phui-info-severity-nodata a.button {
-  color: {$greytext};
-}
-
-.phui-info-severity-success,
-.phui-info-severity-success a.button {
+.phui-info-severity-success {
   border-color: {$green};
-  background: {$lightgreen};
+  border-left-width: 6px;
 }
 
-.phui-info-severity-success a.button {
+.phui-info-severity-success .phui-info-icon {
   color: {$green};
-}
-
-.legalpad .phui-info-view {
-  margin: 0;
-  border-width: 0 0 1px 0;
-  border-bottom: 1px solid {$lightblueborder};
 }
 
 .aphront-dialog-body .phui-info-view {
-  margin: -16px -16px 16px -16px;
-  border-width: 0 0 1px 0;
-  border-bottom: 1px solid {$lightblueborder};
-}
-
-.aphront-dialog-body .phui-info-view .phui-info-view-list {
-  margin: 0 0 0 16px;
-  list-style: disc;
-}
-
-.phui-object-box .phui-info-severity-error,
-.aphront-dialog-body .phui-info-severity-error {
-  color: {$red};
-}
-
-.phui-object-box .phui-info-severity-warning,
-.aphront-dialog-body .phui-info-severity-warning {
-  color: #bc7837;
-}
-
-.phui-object-box .phui-info-severity-notice,
-.aphront-dialog-body .phui-info-severity-notice {
-  color: {$blue};
-}
-
-.phui-object-box .phui-info-severity-success,
-.aphront-dialog-body .phui-info-severity-success {
-  color: {$green};
+  margin: 0 0 8px 0;
 }
 
 .phui-crumbs-view + .phui-info-view {
@@ -147,4 +134,12 @@ h1.phui-info-view-head {
 
 .phui-crumbs-view.phui-crumbs-border + .phui-info-view {
   margin-top: 16px;
+}
+
+div.phui-object-box .phui-header-shell + .phui-info-view {
+  margin: 16px 0 8px;
+}
+
+div.phui-object-box.phui-box-white-config .phui-header-shell + .phui-info-view {
+  margin: 20px 16px 8px;
 }

@@ -4,11 +4,15 @@ final class PhabricatorAuthInviteSearchEngine
   extends PhabricatorApplicationSearchEngine {
 
   public function getResultTypeDescription() {
-    return pht('Email Invites');
+    return pht('Auth Email Invites');
   }
 
   public function getApplicationClassName() {
     return 'PhabricatorAuthApplication';
+  }
+
+  public function canUseInPanelContext() {
+    return false;
   }
 
   public function buildSavedQueryFromRequest(AphrontRequest $request) {
@@ -102,8 +106,9 @@ final class PhabricatorAuthInviteSearchEngine
           'right',
         ));
 
-    return id(new PHUIObjectBoxView())
-      ->setHeaderText(pht('Email Invitations'))
-      ->appendChild($table);
+    $result = new PhabricatorApplicationSearchResultView();
+    $result->setTable($table);
+
+    return $result;
   }
 }

@@ -2,8 +2,11 @@
 
 final class PhabricatorFileUploadController extends PhabricatorFileController {
 
-  public function processRequest() {
-    $request = $this->getRequest();
+  public function isGlobalDragAndDropUploadEnabled() {
+    return true;
+  }
+
+  public function handleRequest(AphrontRequest $request) {
     $viewer = $request->getUser();
 
     $file = PhabricatorFile::initializeNewFile();
@@ -78,6 +81,7 @@ final class PhabricatorFileUploadController extends PhabricatorFileController {
 
     $crumbs = $this->buildApplicationCrumbs();
     $crumbs->addTextCrumb(pht('Upload'), $request->getRequestURI());
+    $crumbs->setBorder(true);
 
     $title = pht('Upload File');
 
@@ -88,17 +92,19 @@ final class PhabricatorFileUploadController extends PhabricatorFileController {
     $form_box = id(new PHUIObjectBoxView())
       ->setHeaderText($title)
       ->setFormErrors($errors)
+      ->setBackground(PHUIObjectBoxView::WHITE_CONFIG)
       ->setForm($form);
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
+    $view = id(new PHUITwoColumnView())
+      ->setFooter(array(
         $form_box,
         $global_upload,
-      ),
-      array(
-        'title' => $title,
       ));
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($view);
   }
 
 }

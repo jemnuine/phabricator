@@ -12,6 +12,10 @@ final class PhabricatorCountdownCountdownPHIDType extends PhabricatorPHIDType {
     return new PhabricatorCountdown();
   }
 
+  public function getPHIDTypeApplicationClass() {
+    return 'PhabricatorCountdownApplication';
+  }
+
   protected function buildQueryForObjects(
     PhabricatorObjectQuery $query,
     array $phids) {
@@ -31,9 +35,9 @@ final class PhabricatorCountdownCountdownPHIDType extends PhabricatorPHIDType {
       $name = $countdown->getTitle();
       $id = $countdown->getID();
 
-      $handle->setName("C{$id}");
-      $handle->setFullName("C{$id}: {$name}");
-      $handle->setURI("/countdown/{$id}/");
+      $handle->setName($countdown->getMonogram());
+      $handle->setFullName(pht('%s: %s', $countdown->getMonogram(), $name));
+      $handle->setURI($countdown->getURI());
     }
   }
 

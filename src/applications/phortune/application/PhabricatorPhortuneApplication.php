@@ -14,7 +14,7 @@ final class PhabricatorPhortuneApplication extends PhabricatorApplication {
     return pht('Accounts and Billing');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-diamond';
   }
 
@@ -52,7 +52,7 @@ final class PhabricatorPhortuneApplication extends PhabricatorApplication {
               => 'PhortuneCartListController',
           ),
           'charge/(?:query/(?P<queryKey>[^/]+)/)?'
-            => 'PhortuneChargeListController',
+            => 'PhortuneAccountChargeListController',
         ),
         'card/(?P<id>\d+)/' => array(
           'edit/' => 'PhortunePaymentMethodEditController',
@@ -61,12 +61,24 @@ final class PhabricatorPhortuneApplication extends PhabricatorApplication {
         'cart/(?P<id>\d+)/' => array(
           '' => 'PhortuneCartViewController',
           'checkout/' => 'PhortuneCartCheckoutController',
+          '(?P<action>print)/' => 'PhortuneCartViewController',
           '(?P<action>cancel|refund)/' => 'PhortuneCartCancelController',
           'update/' => 'PhortuneCartUpdateController',
         ),
         'account/' => array(
           '' => 'PhortuneAccountListController',
+          $this->getEditRoutePattern('edit/')
+            => 'PhortuneAccountEditController',
           'edit/(?:(?P<id>\d+)/)?' => 'PhortuneAccountEditController',
+          'add/manager/(?:(?P<id>\d+)/)?'
+            => 'PhortuneAccountAddManagerController',
+          'billing/(?:(?P<id>\d+)/)?' => 'PhortuneAccountBillingController',
+          'subscription/(?:(?P<id>\d+)/)?'
+            => 'PhortuneAccountSubscriptionController',
+          'manager/' => array(
+            '(?:(?P<id>\d+)/)?' => 'PhortuneAccountManagerController',
+            'add/(?:(?P<id>\d+)/)?' => 'PhortuneAccountAddManagerController',
+          ),
         ),
         'product/' => array(
           '' => 'PhortuneProductListController',
@@ -81,22 +93,33 @@ final class PhabricatorPhortuneApplication extends PhabricatorApplication {
         ),
         'merchant/' => array(
           '(?:query/(?P<queryKey>[^/]+)/)?' => 'PhortuneMerchantListController',
-          'edit/(?:(?P<id>\d+)/)?' => 'PhortuneMerchantEditController',
+          'picture/(?:(?P<id>\d+)/)?' => 'PhortuneMerchantPictureController',
+          $this->getEditRoutePattern('edit/')
+            => 'PhortuneMerchantEditController',
           'orders/(?P<merchantID>\d+)/(?:query/(?P<queryKey>[^/]+)/)?'
             => 'PhortuneCartListController',
-          '(?P<merchantID>\d+)/cart/(?P<id>\d+)/' => array(
-            '' => 'PhortuneCartViewController',
-            '(?P<action>cancel|refund)/' => 'PhortuneCartCancelController',
-            'update/' => 'PhortuneCartUpdateController',
-            'accept/' => 'PhortuneCartAcceptController',
+          'manager/' => array(
+            '(?:(?P<id>\d+)/)?' => 'PhortuneMerchantManagerController',
+            'add/(?:(?P<id>\d+)/)?' => 'PhortuneMerchantAddManagerController',
           ),
-          '(?P<merchantID>\d+)/subscription/' => array(
-            '(?:query/(?P<queryKey>[^/]+)/)?'
-              => 'PhortuneSubscriptionListController',
-            'view/(?P<id>\d+)/'
-              => 'PhortuneSubscriptionViewController',
-            'order/(?P<subscriptionID>\d+)/'
-              => 'PhortuneCartListController',
+          '(?P<merchantID>\d+)/' => array(
+            'cart/(?P<id>\d+)/' => array(
+              '' => 'PhortuneCartViewController',
+              '(?P<action>cancel|refund)/' => 'PhortuneCartCancelController',
+              'update/' => 'PhortuneCartUpdateController',
+              'accept/' => 'PhortuneCartAcceptController',
+            ),
+            'subscription/' => array(
+              '(?:query/(?P<queryKey>[^/]+)/)?'
+                => 'PhortuneSubscriptionListController',
+              'view/(?P<id>\d+)/'
+                => 'PhortuneSubscriptionViewController',
+              'order/(?P<subscriptionID>\d+)/'
+                => 'PhortuneCartListController',
+            ),
+            'invoice/' => array(
+              'new/' => 'PhortuneMerchantInvoiceCreateController',
+            ),
           ),
           '(?P<id>\d+)/' => 'PhortuneMerchantViewController',
         ),

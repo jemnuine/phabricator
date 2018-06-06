@@ -3,22 +3,12 @@
 final class LegalpadDocumentEditor
   extends PhabricatorApplicationTransactionEditor {
 
-  private $isContribution = false;
-
   public function getEditorApplicationClass() {
     return 'PhabricatorLegalpadApplication';
   }
 
   public function getEditorObjectsDescription() {
     return pht('Legalpad Documents');
-  }
-
-  private function setIsContribution($is_contribution) {
-    $this->isContribution = $is_contribution;
-  }
-
-  private function isContribution() {
-    return $this->isContribution;
   }
 
   public function getTransactionTypes() {
@@ -28,111 +18,50 @@ final class LegalpadDocumentEditor
     $types[] = PhabricatorTransactions::TYPE_VIEW_POLICY;
     $types[] = PhabricatorTransactions::TYPE_EDIT_POLICY;
 
-    $types[] = LegalpadTransactionType::TYPE_TITLE;
-    $types[] = LegalpadTransactionType::TYPE_TEXT;
-    $types[] = LegalpadTransactionType::TYPE_SIGNATURE_TYPE;
-    $types[] = LegalpadTransactionType::TYPE_PREAMBLE;
-    $types[] = LegalpadTransactionType::TYPE_REQUIRE_SIGNATURE;
-
     return $types;
   }
 
-  protected function getCustomTransactionOldValue(
-    PhabricatorLiskDAO $object,
-    PhabricatorApplicationTransaction $xaction) {
-
-    switch ($xaction->getTransactionType()) {
-      case LegalpadTransactionType::TYPE_TITLE:
-        return $object->getDocumentBody()->getTitle();
-      case LegalpadTransactionType::TYPE_TEXT:
-        return $object->getDocumentBody()->getText();
-      case LegalpadTransactionType::TYPE_SIGNATURE_TYPE:
-        return $object->getSignatureType();
-      case LegalpadTransactionType::TYPE_PREAMBLE:
-        return $object->getPreamble();
-      case LegalpadTransactionType::TYPE_REQUIRE_SIGNATURE:
-        return (bool)$object->getRequireSignature();
-    }
+  public function getCreateObjectTitle($author, $object) {
+    return pht('%s created this document.', $author);
   }
 
-  protected function getCustomTransactionNewValue(
-    PhabricatorLiskDAO $object,
-    PhabricatorApplicationTransaction $xaction) {
-
-    switch ($xaction->getTransactionType()) {
-      case LegalpadTransactionType::TYPE_TITLE:
-      case LegalpadTransactionType::TYPE_TEXT:
-      case LegalpadTransactionType::TYPE_SIGNATURE_TYPE:
-      case LegalpadTransactionType::TYPE_PREAMBLE:
-        return $xaction->getNewValue();
-      case LegalpadTransactionType::TYPE_REQUIRE_SIGNATURE:
-        return (bool)$xaction->getNewValue();
-    }
-  }
-
-  protected function applyCustomInternalTransaction(
-    PhabricatorLiskDAO $object,
-    PhabricatorApplicationTransaction $xaction) {
-
-    switch ($xaction->getTransactionType()) {
-      case LegalpadTransactionType::TYPE_TITLE:
-        $object->setTitle($xaction->getNewValue());
-        $body = $object->getDocumentBody();
-        $body->setTitle($xaction->getNewValue());
-        $this->setIsContribution(true);
-        break;
-      case LegalpadTransactionType::TYPE_TEXT:
-        $body = $object->getDocumentBody();
-        $body->setText($xaction->getNewValue());
-        $this->setIsContribution(true);
-        break;
-      case LegalpadTransactionType::TYPE_SIGNATURE_TYPE:
-        $object->setSignatureType($xaction->getNewValue());
-        break;
-      case LegalpadTransactionType::TYPE_PREAMBLE:
-        $object->setPreamble($xaction->getNewValue());
-        break;
-      case LegalpadTransactionType::TYPE_REQUIRE_SIGNATURE:
-        $object->setRequireSignature((int)$xaction->getNewValue());
-        break;
-    }
-  }
-
-  protected function applyCustomExternalTransaction(
-    PhabricatorLiskDAO $object,
-    PhabricatorApplicationTransaction $xaction) {
-
-    switch ($xaction->getTransactionType()) {
-      case LegalpadTransactionType::TYPE_REQUIRE_SIGNATURE:
-        if ($xaction->getNewValue()) {
-          $session = new PhabricatorAuthSession();
-          queryfx(
-            $session->establishConnection('w'),
-            'UPDATE %T SET signedLegalpadDocuments = 0',
-            $session->getTableName());
-        }
-        break;
-    }
-    return;
+  public function getCreateObjectTitleForFeed($author, $object) {
+    return pht('%s created %s.', $author, $object);
   }
 
   protected function applyFinalEffects(
     PhabricatorLiskDAO $object,
     array $xactions) {
 
-    if ($this->isContribution()) {
+    $is_contribution = false;
+
+    foreach ($xactions as $xaction) {
+      switch ($xaction->getTransactionType()) {
+        case LegalpadDocumentTitleTransaction::TRANSACTIONTYPE:
+        case LegalpadDocumentTextTransaction::TRANSACTIONTYPE:
+          $is_contribution = true;
+          break;
+      }
+    }
+
+    if ($is_contribution) {
+      $text = $object->getDocumentBody()->getText();
+      $title = $object->getDocumentBody()->getTitle();
       $object->setVersions($object->getVersions() + 1);
-      $body = $object->getDocumentBody();
+
+      $body = new LegalpadDocumentBody();
+      $body->setCreatorPHID($this->getActingAsPHID());
+      $body->setText($text);
+      $body->setTitle($title);
       $body->setVersion($object->getVersions());
       $body->setDocumentPHID($object->getPHID());
       $body->save();
 
       $object->setDocumentBodyPHID($body->getPHID());
 
-      $actor = $this->getActor();
       $type = PhabricatorContributedToObjectEdgeType::EDGECONST;
       id(new PhabricatorEdgeEditor())
-        ->addEdge($actor->getPHID(), $type, $object->getPHID())
+        ->addEdge($this->getActingAsPHID(), $type, $object->getPHID())
         ->save();
 
       $type = PhabricatorObjectHasContributorEdgeType::EDGECONST;
@@ -148,22 +77,37 @@ final class LegalpadDocumentEditor
     return $xactions;
   }
 
-  protected function mergeTransactions(
-    PhabricatorApplicationTransaction $u,
-    PhabricatorApplicationTransaction $v) {
+  protected function validateAllTransactions(PhabricatorLiskDAO $object,
+    array $xactions) {
+    $errors = array();
 
-    $type = $u->getTransactionType();
-    switch ($type) {
-      case LegalpadTransactionType::TYPE_TITLE:
-      case LegalpadTransactionType::TYPE_TEXT:
-      case LegalpadTransactionType::TYPE_SIGNATURE_TYPE:
-      case LegalpadTransactionType::TYPE_PREAMBLE:
-      case LegalpadTransactionType::TYPE_REQUIRE_SIGNATURE:
-        return $v;
+    $is_required = (bool)$object->getRequireSignature();
+    $document_type = $object->getSignatureType();
+    $individual = LegalpadDocument::SIGNATURE_TYPE_INDIVIDUAL;
+
+    foreach ($xactions as $xaction) {
+      switch ($xaction->getTransactionType()) {
+        case LegalpadDocumentRequireSignatureTransaction::TRANSACTIONTYPE:
+          $is_required = (bool)$xaction->getNewValue();
+          break;
+        case LegalpadDocumentSignatureTypeTransaction::TRANSACTIONTYPE:
+          $document_type = $xaction->getNewValue();
+          break;
+      }
     }
 
-    return parent::mergeTransactions($u, $v);
+    if ($is_required && ($document_type != $individual)) {
+      $errors[] = new PhabricatorApplicationTransactionValidationError(
+        LegalpadDocumentRequireSignatureTransaction::TRANSACTIONTYPE,
+        pht('Invalid'),
+        pht('Only documents with signature type "individual" may '.
+            'require signing to use Phabricator.'),
+        null);
+    }
+
+    return $errors;
   }
+
 
 /* -(  Sending Mail  )------------------------------------------------------- */
 
@@ -180,12 +124,10 @@ final class LegalpadDocumentEditor
 
   protected function buildMailTemplate(PhabricatorLiskDAO $object) {
     $id = $object->getID();
-    $phid = $object->getPHID();
     $title = $object->getDocumentBody()->getTitle();
 
     return id(new PhabricatorMetaMTAMail())
-      ->setSubject("L{$id}: {$title}")
-      ->addHeader('Thread-Topic', "L{$id}: {$phid}");
+      ->setSubject("L{$id}: {$title}");
   }
 
   protected function getMailTo(PhabricatorLiskDAO $object) {
@@ -200,10 +142,10 @@ final class LegalpadDocumentEditor
     PhabricatorApplicationTransaction $xaction) {
 
     switch ($xaction->getTransactionType()) {
-      case LegalpadTransactionType::TYPE_TEXT:
-      case LegalpadTransactionType::TYPE_TITLE:
-      case LegalpadTransactionType::TYPE_PREAMBLE:
-      case LegalpadTransactionType::TYPE_REQUIRE_SIGNATURE:
+      case LegalpadDocumentTextTransaction::TRANSACTIONTYPE:
+      case LegalpadDocumentTitleTransaction::TRANSACTIONTYPE:
+      case LegalpadDocumentPreambleTransaction::TRANSACTIONTYPE:
+      case LegalpadDocumentRequireSignatureTransaction::TRANSACTIONTYPE:
         return true;
     }
 

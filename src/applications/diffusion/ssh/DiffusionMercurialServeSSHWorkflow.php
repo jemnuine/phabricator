@@ -27,7 +27,9 @@ final class DiffusionMercurialServeSSHWorkflow
   protected function identifyRepository() {
     $args = $this->getArgs();
     $path = $args->getArg('repository');
-    return $this->loadRepositoryWithPath($path);
+    return $this->loadRepositoryWithPath(
+      $path,
+      PhabricatorRepositoryType::REPOSITORY_TYPE_MERCURIAL);
   }
 
   protected function executeRepositoryOperations() {
@@ -35,15 +37,18 @@ final class DiffusionMercurialServeSSHWorkflow
     $args = $this->getArgs();
 
     if (!$args->getArg('stdio')) {
-      throw new Exception('Expected `hg ... --stdio`!');
+      throw new Exception(pht('Expected `%s`!', 'hg ... --stdio'));
     }
 
     if ($args->getArg('command') !== array('serve')) {
-      throw new Exception('Expected `hg ... serve`!');
+      throw new Exception(pht('Expected `%s`!', 'hg ... serve'));
     }
 
     if ($this->shouldProxy()) {
-      $command = $this->getProxyCommand();
+      // NOTE: For now, we're always requesting a writable node. The request
+      // may not actually need one, but we can't currently determine whether
+      // it is read-only or not at this phase of evaluation.
+      $command = $this->getProxyCommand(true);
     } else {
       $command = csprintf(
         'hg -R %s serve --stdio',
@@ -63,17 +68,6 @@ final class DiffusionMercurialServeSSHWorkflow
       ->setCommandChannelFromExecFuture($future)
       ->setWillWriteCallback(array($this, 'willWriteMessageCallback'))
       ->execute();
-
-    // TODO: It's apparently technically possible to communicate errors to
-    // Mercurial over SSH by writing a special "\n<error>\n-\n" string. However,
-    // my attempt to implement that resulted in Mercurial closing the socket and
-    // then hanging, without showing the error. This might be an issue on our
-    // side (we need to close our half of the socket?), or maybe the code
-    // for this in Mercurial doesn't actually work, or maybe something else
-    // is afoot. At some point, we should look into doing this more cleanly.
-    // For now, when we, e.g., reject writes for policy reasons, the user will
-    // see "abort: unexpected response: empty string" after the diagnostically
-    // useful, e.g., "remote: This repository is read-only over SSH." message.
 
     if (!$err && $this->didSeeWrite) {
       $repository->writeStatusMessage(
@@ -107,8 +101,17 @@ final class DiffusionMercurialServeSSHWorkflow
       $this->didSeeWrite = true;
     }
 
-    // If we're good, return the raw message data.
     return $message['raw'];
+  }
+
+  protected function raiseWrongVCSException(
+    PhabricatorRepository $repository) {
+    throw new Exception(
+      pht(
+        'This repository ("%s") is not a Mercurial repository. Use "%s" to '.
+        'interact with this repository.',
+        $repository->getDisplayName(),
+        $repository->getVersionControlSystem()));
   }
 
 }

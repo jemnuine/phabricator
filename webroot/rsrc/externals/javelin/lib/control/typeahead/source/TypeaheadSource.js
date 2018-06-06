@@ -9,8 +9,7 @@
 
 JX.install('TypeaheadSource', {
   construct : function() {
-    this._raw = {};
-    this._lookup = {};
+    this.resetResults();
     this.setNormalizer(JX.TypeaheadNormalizer.normalize);
     this._excludeIDs = {};
   },
@@ -289,7 +288,7 @@ JX.install('TypeaheadSource', {
       this.filterAndSortHits(value, hits);
 
       var nodes = this.renderNodes(value, hits);
-      this.invoke('resultsready', nodes, value);
+      this.invoke('resultsready', nodes, value, partial);
       if (!partial) {
         this.invoke('complete');
       }
@@ -303,9 +302,9 @@ JX.install('TypeaheadSource', {
       }
 
       var default_comparator = function(u, v) {
-         var key_u = u.sort || u.name;
-         var key_v = v.sort || v.name;
-         return key_u.localeCompare(key_v);
+        var key_u = u.sort || u.name;
+        var key_v = v.sort || v.name;
+        return key_u.localeCompare(key_v);
       };
 
       var filter_handler = this.getFilterHandler() || function(value, list) {
@@ -357,8 +356,14 @@ JX.install('TypeaheadSource', {
       if (!str.length) {
         return [];
       }
-      return str.split(/\s/g);
+      return str.split(/\s+/g);
     },
+
+    resetResults: function() {
+      this._raw = {};
+      this._lookup = {};
+    },
+
     _defaultTransformer : function(object) {
       return {
         name : object[0],

@@ -41,7 +41,6 @@ final class ManiphestTaskListView extends ManiphestView {
     require_celerity_resource('maniphest-task-summary-css');
 
     $list = new PHUIObjectItemListView();
-    $list->setFlush(true);
 
     if ($this->noDataString) {
       $list->setNoDataString($this->noDataString);
@@ -51,16 +50,22 @@ final class ManiphestTaskListView extends ManiphestView {
 
     $status_map = ManiphestTaskStatus::getTaskStatusMap();
     $color_map = ManiphestTaskPriority::getColorMap();
+    $priority_map = ManiphestTaskPriority::getTaskPriorityMap();
 
     if ($this->showBatchControls) {
       Javelin::initBehavior('maniphest-list-editor');
     }
 
+    $subtype_map = id(new ManiphestTask())
+      ->newEditEngineSubtypeMap();
+
     foreach ($this->tasks as $task) {
-      $item = new PHUIObjectItemView();
-      $item->setObjectName('T'.$task->getID());
-      $item->setHeader($task->getTitle());
-      $item->setHref('/T'.$task->getID());
+      $item = id(new PHUIObjectItemView())
+        ->setUser($this->getUser())
+        ->setObject($task)
+        ->setObjectName('T'.$task->getID())
+        ->setHeader($task->getTitle())
+        ->setHref('/T'.$task->getID());
 
       if ($task->getOwnerPHID()) {
         $owner = $handles[$task->getOwnerPHID()];
@@ -68,15 +73,37 @@ final class ManiphestTaskListView extends ManiphestView {
       }
 
       $status = $task->getStatus();
+      $pri = idx($priority_map, $task->getPriority());
+      $status_name = idx($status_map, $task->getStatus());
+      $tooltip = pht('%s, %s', $status_name, $pri);
+
+      $icon = ManiphestTaskStatus::getStatusIcon($task->getStatus());
+      $color = idx($color_map, $task->getPriority(), 'grey');
       if ($task->isClosed()) {
         $item->setDisabled(true);
+        $color = 'grey';
       }
 
-      $item->setBarColor(idx($color_map, $task->getPriority(), 'grey'));
+      $item->setStatusIcon($icon.' '.$color, $tooltip);
 
-      $item->addIcon(
-        'none',
-        phabricator_datetime($task->getDateModified(), $this->getUser()));
+      if ($task->isClosed()) {
+        $closed_epoch = $task->getClosedEpoch();
+
+        // We don't expect a task to be closed without a closed epoch, but
+        // recover if we find one. This can happen with older objects or with
+        // lipsum test data.
+        if (!$closed_epoch) {
+          $closed_epoch = $task->getDateModified();
+        }
+
+        $item->addIcon(
+          'fa-check-square-o grey',
+          phabricator_datetime($closed_epoch, $this->getUser()));
+      } else {
+        $item->addIcon(
+          'none',
+          phabricator_datetime($task->getDateModified(), $this->getUser()));
+      }
 
       if ($this->showSubpriorityControls) {
         $item->setGrippable(true);
@@ -85,9 +112,16 @@ final class ManiphestTaskListView extends ManiphestView {
         $item->addSigil('maniphest-task');
       }
 
+      $subtype = $task->newSubtypeObject();
+      if ($subtype && $subtype->hasTagView()) {
+        $subtype_tag = $subtype->newTagView()
+          ->setSlimShady(true);
+        $item->addAttribute($subtype_tag);
+      }
+
       $project_handles = array_select_keys(
         $handles,
-        $task->getProjectPHIDs());
+        array_reverse($task->getProjectPHIDs()));
 
       $item->addAttribute(
         id(new PHUIHandleTagListView())

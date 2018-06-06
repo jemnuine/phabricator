@@ -7,8 +7,7 @@ final class PhabricatorEmailLoginController
     return false;
   }
 
-  public function processRequest() {
-    $request = $this->getRequest();
+  public function handleRequest(AphrontRequest $request) {
 
     if (!PhabricatorPasswordAuthProvider::getPasswordProvider()) {
       return new Aphront400Response();
@@ -72,8 +71,11 @@ final class PhabricatorEmailLoginController
             $target_email->getUserPHID());
           if ($verified_addresses) {
             $errors[] = pht(
-              'That email addess is not verified. You can only send '.
-              'password reset links to a verified address.');
+              'That email address is not verified, but the account it is '.
+              'connected to has at least one other verified address. When an '.
+              'account has at least one verified address, you can only send '.
+              'password reset links to one of the verified addresses. Try '.
+              'a verified address instead.');
             $e_email = pht('Unverified');
           }
         }
@@ -86,26 +88,22 @@ final class PhabricatorEmailLoginController
             PhabricatorAuthSessionEngine::ONETIME_RESET);
 
           if ($is_serious) {
-            $body = <<<EOBODY
-You can use this link to reset your Phabricator password:
-
-  {$uri}
-
-EOBODY;
+            $body = pht(
+              "You can use this link to reset your Phabricator password:".
+              "\n\n  %s\n",
+              $uri);
           } else {
-            $body = <<<EOBODY
-Condolences on forgetting your password. You can use this link to reset it:
+            $body = pht(
+              "Condolences on forgetting your password. You can use this ".
+              "link to reset it:\n\n".
+              "  %s\n\n".
+              "After you set a new password, consider writing it down on a ".
+              "sticky note and attaching it to your monitor so you don't ".
+              "forget again! Choosing a very short, easy-to-remember password ".
+              "like \"cat\" or \"1234\" might also help.\n\n".
+              "Best Wishes,\nPhabricator\n",
+              $uri);
 
-  {$uri}
-
-After you set a new password, consider writing it down on a sticky note and
-attaching it to your monitor so you don't forget again! Choosing a very short,
-easy-to-remember password like "cat" or "1234" might also help.
-
-Best Wishes,
-Phabricator
-
-EOBODY;
           }
 
           $mail = id(new PhabricatorMetaMTAMail())
@@ -119,11 +117,10 @@ EOBODY;
             ->setTitle(pht('Check Your Email'))
             ->setShortTitle(pht('Email Sent'))
             ->appendParagraph(
-              pht('An email has been sent with a link you can use to login.'))
+              pht('An email has been sent with a link you can use to log in.'))
             ->addCancelButton('/', pht('Done'));
         }
       }
-
     }
 
     $error_view = null;
@@ -150,23 +147,20 @@ EOBODY;
 
     $crumbs = $this->buildApplicationCrumbs();
     $crumbs->addTextCrumb(pht('Reset Password'));
+    $crumbs->setBorder(true);
 
     $dialog = new AphrontDialogView();
     $dialog->setUser($request->getUser());
-    $dialog->setTitle(pht(
-      'Forgot Password / Email Login'));
+    $dialog->setTitle(pht('Forgot Password / Email Login'));
     $dialog->appendChild($email_auth);
     $dialog->addSubmitButton(pht('Send Email'));
     $dialog->setSubmitURI('/login/email/');
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
-        $dialog,
-      ),
-      array(
-        'title' => pht('Forgot Password'),
-      ));
+    return $this->newPage()
+      ->setTitle(pht('Forgot Password'))
+      ->setCrumbs($crumbs)
+      ->appendChild($dialog);
+
   }
 
 }

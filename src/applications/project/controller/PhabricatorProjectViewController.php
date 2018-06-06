@@ -9,45 +9,37 @@ final class PhabricatorProjectViewController
 
   public function handleRequest(AphrontRequest $request) {
     $request = $this->getRequest();
-    $user = $request->getUser();
+    $viewer = $request->getViewer();
 
-    $query = id(new PhabricatorProjectQuery())
-      ->setViewer($user)
-      ->needMembers(true)
-      ->needWatchers(true)
-      ->needImages(true)
-      ->needSlugs(true);
-    $id = $request->getURIData('id');
-    $slug = $request->getURIData('slug');
-    if ($slug) {
-      $query->withSlugs(array($slug));
+    $response = $this->loadProject();
+    if ($response) {
+      return $response;
+    }
+    $project = $this->getProject();
+
+    $engine = $this->getProfileMenuEngine();
+    $default = $engine->getDefaultItem();
+
+    // If defaults are broken somehow, serve the manage page. See T13033 for
+    // discussion.
+    if ($default) {
+      $default_key = $default->getBuiltinKey();
     } else {
-      $query->withIDs(array($id));
-    }
-    $project = $query->executeOne();
-    if (!$project) {
-      return new Aphront404Response();
+      $default_key = PhabricatorProject::ITEM_MANAGE;
     }
 
-
-    $columns = id(new PhabricatorProjectColumnQuery())
-      ->setViewer($user)
-      ->withProjectPHIDs(array($project->getPHID()))
-      ->execute();
-    if ($columns) {
-      $controller = 'board';
-    } else {
-      $controller = 'profile';
-    }
-
-    switch ($controller) {
-      case 'board':
+    switch ($default->getBuiltinKey()) {
+      case PhabricatorProject::ITEM_WORKBOARD:
         $controller_object = new PhabricatorProjectBoardViewController();
         break;
-      case 'profile':
-      default:
+      case PhabricatorProject::ITEM_PROFILE:
         $controller_object = new PhabricatorProjectProfileController();
         break;
+      case PhabricatorProject::ITEM_MANAGE:
+        $controller_object = new PhabricatorProjectManageController();
+        break;
+      default:
+        return $engine->buildResponse();
     }
 
     return $this->delegateToController($controller_object);

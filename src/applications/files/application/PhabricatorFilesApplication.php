@@ -14,7 +14,7 @@ final class PhabricatorFilesApplication extends PhabricatorApplication {
     return pht('Store and Share Files');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-file';
   }
 
@@ -37,6 +37,7 @@ final class PhabricatorFilesApplication extends PhabricatorApplication {
   public function getRemarkupRules() {
     return array(
       new PhabricatorEmbedFileRemarkupRule(),
+      new PhabricatorImageRemarkupRule(),
     );
   }
 
@@ -59,41 +60,67 @@ final class PhabricatorFilesApplication extends PhabricatorApplication {
   protected function getCustomCapabilities() {
     return array(
       FilesDefaultViewCapability::CAPABILITY => array(
-        'caption' => pht(
-          'Default view policy for newly created files.'),
+        'caption' => pht('Default view policy for newly created files.'),
+        'template' => PhabricatorFileFilePHIDType::TYPECONST,
+        'capability' => PhabricatorPolicyCapability::CAN_VIEW,
       ),
     );
   }
 
   public function getRoutes() {
     return array(
-      '/F(?P<id>[1-9]\d*)' => 'PhabricatorFileInfoController',
+      '/F(?P<id>[1-9]\d*)(?:\$(?P<lines>\d+(?:-\d+)?))?'
+        => 'PhabricatorFileViewController',
       '/file/' => array(
-        '(query/(?P<key>[^/]+)/)?' => 'PhabricatorFileListController',
+        '(query/(?P<queryKey>[^/]+)/)?' => 'PhabricatorFileListController',
+        'view/(?P<id>[1-9]\d*)/'.
+          '(?:(?P<engineKey>[^/]+)/)?'.
+          '(?:\$(?P<lines>\d+(?:-\d+)?))?'
+          => 'PhabricatorFileViewController',
+        'info/(?P<phid>[^/]+)/' => 'PhabricatorFileViewController',
         'upload/' => 'PhabricatorFileUploadController',
         'dropupload/' => 'PhabricatorFileDropUploadController',
         'compose/' => 'PhabricatorFileComposeController',
         'comment/(?P<id>[1-9]\d*)/' => 'PhabricatorFileCommentController',
+        'thread/(?P<phid>[^/]+)/' => 'PhabricatorFileLightboxController',
         'delete/(?P<id>[1-9]\d*)/' => 'PhabricatorFileDeleteController',
-        'edit/(?P<id>[1-9]\d*)/' => 'PhabricatorFileEditController',
-        'info/(?P<phid>[^/]+)/' => 'PhabricatorFileInfoController',
-        'data/'.
-          '(?:@(?P<instance>[^/]+)/)?'.
-          '(?P<key>[^/]+)/'.
-          '(?P<phid>[^/]+)/'.
-          '(?:(?P<token>[^/]+)/)?'.
-          '.*'
-          => 'PhabricatorFileDataController',
-        'proxy/' => 'PhabricatorFileProxyController',
-        'xform/'.
-          '(?:@(?P<instance>[^/]+)/)?'.
-          '(?P<transform>[^/]+)/'.
-          '(?P<phid>[^/]+)/'.
-          '(?P<key>[^/]+)/'
-          => 'PhabricatorFileTransformController',
-        'uploaddialog/' => 'PhabricatorFileUploadDialogController',
-        'download/(?P<phid>[^/]+)/' => 'PhabricatorFileDialogController',
-      ),
+        $this->getEditRoutePattern('edit/')
+          => 'PhabricatorFileEditController',
+        'imageproxy/' => 'PhabricatorFileImageProxyController',
+        'transforms/(?P<id>[1-9]\d*)/' =>
+          'PhabricatorFileTransformListController',
+        'uploaddialog/(?P<single>single/)?'
+          => 'PhabricatorFileUploadDialogController',
+        'iconset/(?P<key>[^/]+)/' => array(
+          'select/' => 'PhabricatorFileIconSetSelectController',
+        ),
+        'document/(?P<engineKey>[^/]+)/(?P<phid>[^/]+)/'
+          => 'PhabricatorFileDocumentController',
+      ) + $this->getResourceSubroutes(),
+    );
+  }
+
+  public function getResourceRoutes() {
+    return array(
+      '/file/' => $this->getResourceSubroutes(),
+    );
+  }
+
+  private function getResourceSubroutes() {
+    return array(
+      '(?P<kind>data|download)/'.
+        '(?:@(?P<instance>[^/]+)/)?'.
+        '(?P<key>[^/]+)/'.
+        '(?P<phid>[^/]+)/'.
+        '(?:(?P<token>[^/]+)/)?'.
+        '.*'
+        => 'PhabricatorFileDataController',
+      'xform/'.
+        '(?:@(?P<instance>[^/]+)/)?'.
+        '(?P<transform>[^/]+)/'.
+        '(?P<phid>[^/]+)/'.
+        '(?P<key>[^/]+)/'
+        => 'PhabricatorFileTransformController',
     );
   }
 
@@ -107,6 +134,12 @@ final class PhabricatorFilesApplication extends PhabricatorApplication {
           'This page documents the commands you can use to interact with '.
           'files.'),
       ),
+    );
+  }
+
+  public function getQuicksandURIPatternBlacklist() {
+    return array(
+      '/file/(data|download)/.*',
     );
   }
 

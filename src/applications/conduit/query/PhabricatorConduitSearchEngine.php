@@ -11,6 +11,10 @@ final class PhabricatorConduitSearchEngine
     return 'PhabricatorConduitApplication';
   }
 
+  public function canUseInPanelContext() {
+    return false;
+  }
+
   public function getPageSize(PhabricatorSavedQuery $saved) {
     return PHP_INT_MAX - 1;
   }
@@ -21,11 +25,6 @@ final class PhabricatorConduitSearchEngine
     $saved->setParameter('isStable', $request->getStr('isStable'));
     $saved->setParameter('isUnstable', $request->getStr('isUnstable'));
     $saved->setParameter('isDeprecated', $request->getStr('isDeprecated'));
-
-    $saved->setParameter(
-      'applicationNames',
-      $request->getStrList('applicationNames'));
-
     $saved->setParameter('nameContains', $request->getStr('nameContains'));
 
     return $saved;
@@ -37,11 +36,7 @@ final class PhabricatorConduitSearchEngine
     $query->withIsStable($saved->getParameter('isStable'));
     $query->withIsUnstable($saved->getParameter('isUnstable'));
     $query->withIsDeprecated($saved->getParameter('isDeprecated'));
-
-    $names = $saved->getParameter('applicationNames', array());
-    if ($names) {
-      $query->withApplicationNames($names);
-    }
+    $query->withIsInternal(false);
 
     $contains = $saved->getParameter('nameContains');
     if (strlen($contains)) {
@@ -58,20 +53,9 @@ final class PhabricatorConduitSearchEngine
     $form
       ->appendChild(
         id(new AphrontFormTextControl())
-          ->setLabel('Name Contains')
+          ->setLabel(pht('Name Contains'))
           ->setName('nameContains')
           ->setValue($saved->getParameter('nameContains')));
-
-    $names = $saved->getParameter('applicationNames', array());
-    $form
-      ->appendChild(
-        id(new AphrontFormTextControl())
-          ->setLabel('Applications')
-          ->setName('applicationNames')
-          ->setValue(implode(', ', $names))
-          ->setCaption(pht(
-            'Example: %s',
-            phutil_tag('tt', array(), 'differential, paste'))));
 
     $is_stable = $saved->getParameter('isStable');
     $is_unstable = $saved->getParameter('isUnstable');
@@ -158,6 +142,7 @@ final class PhabricatorConduitSearchEngine
           $out[] = $list;
         }
         $list = id(new PHUIObjectItemListView());
+        $list->setHeader($app);
 
         $app_object = $method->getApplication();
         if ($app_object) {
@@ -172,18 +157,22 @@ final class PhabricatorConduitSearchEngine
       $item = id(new PHUIObjectItemView())
         ->setHeader($method_name)
         ->setHref($this->getApplicationURI('method/'.$method_name.'/'))
-        ->addAttribute($method->getMethodDescription());
+        ->addAttribute($method->getMethodSummary());
 
       switch ($method->getMethodStatus()) {
         case ConduitAPIMethod::METHOD_STATUS_STABLE:
           break;
         case ConduitAPIMethod::METHOD_STATUS_UNSTABLE:
-          $item->addIcon('warning-grey', pht('Unstable'));
-          $item->setBarColor('yellow');
+          $item->addIcon('fa-warning', pht('Unstable'));
+          $item->setStatusIcon('fa-warning yellow');
           break;
         case ConduitAPIMethod::METHOD_STATUS_DEPRECATED:
-          $item->addIcon('warning', pht('Deprecated'));
-          $item->setBarColor('red');
+          $item->addIcon('fa-warning', pht('Deprecated'));
+          $item->setStatusIcon('fa-warning red');
+          break;
+        case ConduitAPIMethod::METHOD_STATUS_FROZEN:
+          $item->addIcon('fa-archive', pht('Frozen'));
+          $item->setStatusIcon('fa-archive grey');
           break;
       }
 
@@ -194,7 +183,10 @@ final class PhabricatorConduitSearchEngine
       $out[] = $list;
     }
 
-    return $out;
+    $result = new PhabricatorApplicationSearchResultView();
+    $result->setContent($out);
+
+    return $result;
   }
 
 }

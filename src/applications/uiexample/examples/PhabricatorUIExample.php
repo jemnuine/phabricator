@@ -1,6 +1,6 @@
 <?php
 
-abstract class PhabricatorUIExample {
+abstract class PhabricatorUIExample extends Phobject {
 
   private $request;
 
@@ -17,6 +17,10 @@ abstract class PhabricatorUIExample {
   abstract public function getDescription();
   abstract public function renderExample();
 
+  public function getCategory() {
+    return pht('General');
+  }
+
   protected function createBasicDummyHandle($name, $type, $fullname = null,
     $uri = null) {
 
@@ -29,10 +33,11 @@ abstract class PhabricatorUIExample {
     if ($fullname) {
       $handle->setFullName($fullname);
     } else {
-      $handle->setFullName(sprintf('%s%d: %s',
-        substr($type, 0, 1),
-        $id,
-        $name));
+      $handle->setFullName(
+        sprintf('%s%d: %s',
+          substr($type, 0, 1),
+          $id,
+          $name));
     }
 
     if ($uri) {

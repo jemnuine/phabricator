@@ -2,11 +2,7 @@
 
 final class DiffusionMercurialRawDiffQuery extends DiffusionRawDiffQuery {
 
-  protected function executeQuery() {
-    return $this->executeRawDiffCommand();
-  }
-
-  protected function executeRawDiffCommand() {
+  protected function newQueryFuture() {
     $drequest = $this->getRequest();
     $repository = $drequest->getRepository();
 
@@ -20,21 +16,17 @@ final class DiffusionMercurialRawDiffQuery extends DiffusionRawDiffQuery {
       // If `$commit` has no parents (usually because it's the first commit
       // in the repository), we want to diff against `null`. This revset will
       // do that for us automatically.
-      $against = '('.$commit.'^ or null)';
+      $against = hgsprintf('(%s^ or null)', $commit);
     }
 
     $future = $repository->getLocalCommandFuture(
       'diff -U %d --git --rev %s --rev %s -- %s',
       $this->getLinesOfContext(),
       $against,
-      $commit,
+      hgsprintf('%s', $commit),
       $path);
 
-    $this->configureFuture($future);
-
-    list($raw_diff) = $future->resolvex();
-
-    return $raw_diff;
+    return $future;
   }
 
 }

@@ -34,7 +34,7 @@ JX.install('Scrollbar', {
     // width. If it doesn't, we're already in an environment with an aesthetic
     // scrollbar (like Safari on OSX with no mouse connected, or an iPhone)
     // and we don't need to do anything.
-    if (JX.Scrollbar._getScrollbarControlWidth() === 0) {
+    if (JX.Scrollbar.getScrollbarControlWidth() === 0) {
       return;
     }
 
@@ -100,10 +100,11 @@ JX.install('Scrollbar', {
   statics: {
     _controlWidth: null,
 
+
     /**
      * Compute the width of the browser's scrollbar control, in pixels.
      */
-    _getScrollbarControlWidth: function() {
+    getScrollbarControlWidth: function() {
       var self = JX.Scrollbar;
 
       if (self._controlWidth === null) {
@@ -118,7 +119,34 @@ JX.install('Scrollbar', {
       }
 
       return self._controlWidth;
+    },
+
+
+    /**
+     * Get the margin width required to avoid double scrollbars.
+     *
+     * For most browsers which render a real scrollbar control, this is 0.
+     * Adjacent elements may touch the edge of the content directly without
+     * overlapping.
+     *
+     * On OSX with a trackpad, scrollbars are only drawn when content is
+     * scrolled. Content panes with internal scrollbars may overlap adjacent
+     * scrollbars if they are not laid out with a margin.
+     *
+     * @return int Control margin width in pixels.
+     */
+    getScrollbarControlMargin: function() {
+      var self = JX.Scrollbar;
+
+      // If this browser and OS don't render a real scrollbar control, we
+      // need to leave a margin. Generally, this is OSX with no mouse attached.
+      if (self.getScrollbarControlWidth() === 0) {
+        return 12;
+      }
+
+      return 0;
     }
+
 
   },
 
@@ -329,7 +357,7 @@ JX.install('Scrollbar', {
      */
     _resizeViewport: function() {
       var fdim = JX.Vector.getDim(this._frame);
-      fdim.x += JX.Scrollbar._getScrollbarControlWidth();
+      fdim.x += JX.Scrollbar.getScrollbarControlWidth();
       fdim.setDim(this._viewport);
     },
 

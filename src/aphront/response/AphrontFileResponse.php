@@ -5,13 +5,13 @@ final class AphrontFileResponse extends AphrontResponse {
   private $content;
   private $contentIterator;
   private $contentLength;
+  private $compressResponse;
 
   private $mimeType;
   private $download;
   private $rangeMin;
   private $rangeMax;
   private $allowOrigins = array();
-  private $fileToken;
 
   public function addAllowOrigin($origin) {
     $this->allowOrigins[] = $origin;
@@ -70,19 +70,19 @@ final class AphrontFileResponse extends AphrontResponse {
     return $this->contentLength;
   }
 
+  public function setCompressResponse($compress_response) {
+    $this->compressResponse = $compress_response;
+    return $this;
+  }
+
+  public function getCompressResponse() {
+    return $this->compressResponse;
+  }
+
   public function setRange($min, $max) {
     $this->rangeMin = $min;
     $this->rangeMax = $max;
     return $this;
-  }
-
-  public function setTemporaryFileToken(PhabricatorAuthTemporaryToken $token) {
-    $this->fileToken = $token;
-    return $this;
-  }
-
-  public function getTemporaryFileToken() {
-    return $this->fileToken;
   }
 
   public function getHeaders() {
@@ -94,17 +94,24 @@ final class AphrontFileResponse extends AphrontResponse {
       array('Accept-Ranges', 'bytes'),
     );
 
-    if ($this->rangeMin || $this->rangeMax) {
+    if ($this->rangeMin !== null || $this->rangeMax !== null) {
       $len = $this->getContentLength();
       $min = $this->rangeMin;
+
       $max = $this->rangeMax;
+      if ($max === null) {
+        $max = ($len - 1);
+      }
+
       $headers[] = array('Content-Range', "bytes {$min}-{$max}/{$len}");
       $content_len = ($max - $min) + 1;
     } else {
       $content_len = $this->getContentLength();
     }
 
-    $headers[] = array('Content-Length', $this->getContentLength());
+    if (!$this->shouldCompressResponse()) {
+      $headers[] = array('Content-Length', $content_len);
+    }
 
     if (strlen($this->getDownload())) {
       $headers[] = array('X-Download-Options', 'noopen');
@@ -128,15 +135,33 @@ final class AphrontFileResponse extends AphrontResponse {
     return $headers;
   }
 
-  public function didCompleteWrite($aborted) {
-    if (!$aborted) {
-      $token = $this->getTemporaryFileToken();
-      if ($token) {
-        $unguarded = AphrontWriteGuard::beginScopedUnguardedWrites();
-          $token->delete();
-        unset($unguarded);
+  protected function shouldCompressResponse() {
+    return $this->getCompressResponse();
+  }
+
+  public function parseHTTPRange($range) {
+    $begin = null;
+    $end = null;
+
+    $matches = null;
+    if (preg_match('/^bytes=(\d+)-(\d*)$/', $range, $matches)) {
+      // Note that the "Range" header specifies bytes differently than
+      // we do internally: the range 0-1 has 2 bytes (byte 0 and byte 1).
+      $begin = (int)$matches[1];
+
+      // The "Range" may be "200-299" or "200-", meaning "until end of file".
+      if (strlen($matches[2])) {
+        $range_end = (int)$matches[2];
+        $end = $range_end + 1;
+      } else {
+        $range_end = null;
       }
+
+      $this->setHTTPResponseCode(206);
+      $this->setRange($begin, $range_end);
     }
+
+    return array($begin, $end);
   }
 
 }

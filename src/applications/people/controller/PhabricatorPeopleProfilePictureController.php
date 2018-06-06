@@ -1,25 +1,15 @@
 <?php
 
 final class PhabricatorPeopleProfilePictureController
-  extends PhabricatorPeopleController {
+  extends PhabricatorPeopleProfileController {
 
-  private $id;
-
-  public function shouldRequireAdmin() {
-    return false;
-  }
-
-  public function willProcessRequest(array $data) {
-    $this->id = $data['id'];
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $viewer = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $this->getViewer();
+    $id = $request->getURIData('id');
 
     $user = id(new PhabricatorPeopleQuery())
       ->setViewer($viewer)
-      ->withIDs(array($this->id))
+      ->withIDs(array($id))
       ->needProfileImage(true)
       ->requireCapabilities(
         array(
@@ -31,7 +21,10 @@ final class PhabricatorPeopleProfilePictureController
       return new Aphront404Response();
     }
 
-    $profile_uri = '/p/'.$user->getUsername().'/';
+    $this->setUser($user);
+    $name = $user->getUserName();
+
+    $done_uri = '/p/'.$name.'/';
 
     $supported_formats = PhabricatorFile::getTransformableImageFormats();
     $e_file = true;
@@ -70,12 +63,9 @@ final class PhabricatorPeopleProfilePictureController
             'This server only supports these image formats: %s.',
             implode(', ', $supported_formats));
         } else {
-          $xformer = new PhabricatorImageTransformer();
-          $xformed = $xformer->executeProfileTransform(
-            $file,
-            $width = 50,
-            $min_height = 50,
-            $max_height = 50);
+          $xform = PhabricatorFileTransform::getTransformByKey(
+            PhabricatorFileThumbnailTransform::TRANSFORM_PROFILE);
+          $xformed = $xform->executeTransform($file);
         }
       }
 
@@ -87,7 +77,7 @@ final class PhabricatorPeopleProfilePictureController
           $xformed->attachToObject($user->getPHID());
         }
         $user->save();
-        return id(new AphrontRedirectResponse())->setURI($profile_uri);
+        return id(new AphrontRedirectResponse())->setURI($done_uri);
       }
     }
 
@@ -96,7 +86,17 @@ final class PhabricatorPeopleProfilePictureController
     $form = id(new PHUIFormLayoutView())
       ->setUser($viewer);
 
-    $default_image = PhabricatorFile::loadBuiltin($viewer, 'profile.png');
+    $default_image = $user->getDefaultProfileImagePHID();
+    if ($default_image) {
+      $default_image = id(new PhabricatorFileQuery())
+        ->setViewer($viewer)
+        ->withPHIDs(array($default_image))
+        ->executeOne();
+    }
+
+    if (!$default_image) {
+      $default_image = PhabricatorFile::loadBuiltin($viewer, 'profile.png');
+    }
 
     $images = array();
 
@@ -117,6 +117,25 @@ final class PhabricatorPeopleProfilePictureController
           );
         }
       }
+    }
+
+    $builtins = array(
+      'user1.png',
+      'user2.png',
+      'user3.png',
+      'user4.png',
+      'user5.png',
+      'user6.png',
+      'user7.png',
+      'user8.png',
+      'user9.png',
+    );
+    foreach ($builtins as $builtin) {
+      $file = PhabricatorFile::loadBuiltin($viewer, $builtin);
+      $images[$file->getPHID()] = array(
+        'uri' => $file->getBestURI(),
+        'tip' => pht('Builtin Image'),
+      );
     }
 
     // Try to add external account images for any associated external accounts.
@@ -164,10 +183,14 @@ final class PhabricatorPeopleProfilePictureController
 
     $buttons = array();
     foreach ($images as $phid => $spec) {
+      $style = null;
+      if (isset($spec['style'])) {
+        $style = $spec['style'];
+      }
       $button = javelin_tag(
         'button',
         array(
-          'class' => 'grey profile-image-button',
+          'class' => 'button-grey profile-image-button',
           'sigil' => 'has-tooltip',
           'meta' => array(
             'tip' => $spec['tip'],
@@ -219,6 +242,7 @@ final class PhabricatorPeopleProfilePictureController
     $form_box = id(new PHUIObjectBoxView())
       ->setHeaderText($title)
       ->setFormErrors($errors)
+      ->setBackground(PHUIObjectBoxView::BLUE_PROPERTY)
       ->setForm($form);
 
     $upload_form = id(new AphrontFormView())
@@ -233,22 +257,36 @@ final class PhabricatorPeopleProfilePictureController
             pht('Supported formats: %s', implode(', ', $supported_formats))))
       ->appendChild(
         id(new AphrontFormSubmitControl())
-          ->addCancelButton($profile_uri)
+          ->addCancelButton($done_uri)
           ->setValue(pht('Upload Picture')));
 
     $upload_box = id(new PHUIObjectBoxView())
       ->setHeaderText(pht('Upload New Picture'))
+      ->setBackground(PHUIObjectBoxView::BLUE_PROPERTY)
       ->setForm($upload_form);
 
-    $nav = $this->buildIconNavView($user);
-    $nav->selectFilter('/');
-    $nav->appendChild($form_box);
-    $nav->appendChild($upload_box);
+    $crumbs = $this->buildApplicationCrumbs();
+    $crumbs->addTextCrumb(pht('Edit Profile Picture'));
+    $crumbs->setBorder(true);
 
-    return $this->buildApplicationPage(
-      $nav,
-      array(
-        'title' => $title,
+    $nav = $this->getProfileMenu();
+    $nav->selectFilter(PhabricatorPeopleProfileMenuEngine::ITEM_MANAGE);
+
+    $header = $this->buildProfileHeader();
+
+    $view = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->addClass('project-view-home')
+      ->addClass('project-view-people-home')
+      ->setFooter(array(
+        $form_box,
+        $upload_box,
       ));
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->setNavigation($nav)
+      ->appendChild($view);
   }
 }

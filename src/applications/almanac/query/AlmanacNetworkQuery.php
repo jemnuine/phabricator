@@ -1,10 +1,11 @@
 <?php
 
 final class AlmanacNetworkQuery
-  extends PhabricatorCursorPagedPolicyAwareQuery {
+  extends AlmanacQuery {
 
   private $ids;
   private $phids;
+  private $names;
 
   public function withIDs(array $ids) {
     $this->ids = $ids;
@@ -16,41 +17,54 @@ final class AlmanacNetworkQuery
     return $this;
   }
 
-  protected function loadPage() {
-    $table = new AlmanacNetwork();
-    $conn_r = $table->establishConnection('r');
-
-    $data = queryfx_all(
-      $conn_r,
-      'SELECT * FROM %T %Q %Q %Q',
-      $table->getTableName(),
-      $this->buildWhereClause($conn_r),
-      $this->buildOrderClause($conn_r),
-      $this->buildLimitClause($conn_r));
-
-    return $table->loadAllFromArray($data);
+  public function newResultObject() {
+    return new AlmanacNetwork();
   }
 
-  protected function buildWhereClause($conn_r) {
-    $where = array();
+  public function withNames(array $names) {
+    $this->names = $names;
+    return $this;
+  }
+
+  public function withNameNgrams($ngrams) {
+    return $this->withNgramsConstraint(
+      new AlmanacNetworkNameNgrams(),
+      $ngrams);
+  }
+
+  protected function loadPage() {
+    return $this->loadStandardPage($this->newResultObject());
+  }
+
+  protected function buildWhereClauseParts(AphrontDatabaseConnection $conn) {
+    $where = parent::buildWhereClauseParts($conn);
 
     if ($this->ids !== null) {
       $where[] = qsprintf(
-        $conn_r,
-        'id IN (%Ld)',
+        $conn,
+        'network.id IN (%Ld)',
         $this->ids);
     }
 
     if ($this->phids !== null) {
       $where[] = qsprintf(
-        $conn_r,
-        'phid IN (%Ls)',
+        $conn,
+        'network.phid IN (%Ls)',
         $this->phids);
     }
 
-    $where[] = $this->buildPagingClause($conn_r);
+    if ($this->names !== null) {
+      $where[] = qsprintf(
+        $conn,
+        'network.name IN (%Ls)',
+        $this->names);
+    }
 
-    return $this->formatWhereClause($where);
+    return $where;
+  }
+
+  protected function getPrimaryTableAlias() {
+    return 'network';
   }
 
   public function getQueryApplicationClass() {

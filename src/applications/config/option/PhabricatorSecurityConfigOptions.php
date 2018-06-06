@@ -11,7 +11,7 @@ final class PhabricatorSecurityConfigOptions
     return pht('Security options.');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-lock';
   }
 
@@ -20,13 +20,11 @@ final class PhabricatorSecurityConfigOptions
   }
 
   public function getOptions() {
-    $support_href = PhabricatorEnv::getDoclink('Give Feedback! Get Support!');
-
     $doc_href = PhabricatorEnv::getDoclink('Configuring a File Domain');
     $doc_name = pht('Configuration Guide: Configuring a File Domain');
 
-    // This is all of the IANA special/reserved blocks in IPv4 space.
     $default_address_blacklist = array(
+      // This is all of the IANA special/reserved blocks in IPv4 space.
       '0.0.0.0/8',
       '10.0.0.0/8',
       '100.64.0.0/10',
@@ -43,7 +41,45 @@ final class PhabricatorSecurityConfigOptions
       '224.0.0.0/4',
       '240.0.0.0/4',
       '255.255.255.255/32',
+
+      // And these are the IANA special/reserved blocks in IPv6 space.
+      '::/128',
+      '::1/128',
+      '::ffff:0:0/96',
+      '100::/64',
+      '64:ff9b::/96',
+      '2001::/32',
+      '2001:10::/28',
+      '2001:20::/28',
+      '2001:db8::/32',
+      '2002::/16',
+      'fc00::/7',
+      'fe80::/10',
+      'ff00::/8',
     );
+
+    $keyring_type = 'custom:PhabricatorKeyringConfigOptionType';
+    $keyring_description = $this->deformat(pht(<<<EOTEXT
+The keyring stores master encryption keys. For help with configuring a keyring
+and encryption, see **[[ %s | Configuring Encryption ]]**.
+EOTEXT
+      ,
+      PhabricatorEnv::getDoclink('Configuring Encryption')));
+
+    $require_mfa_description = $this->deformat(pht(<<<EOTEXT
+By default, Phabricator allows users to add multi-factor authentication to
+their accounts, but does not require it. By enabling this option, you can
+force all users to add at least one authentication factor before they can use
+their accounts.
+
+Administrators can query a list of users who do not have MFA configured in
+{nav People}:
+
+  - **[[ %s | %s ]]**
+EOTEXT
+      ,
+      '/people/?mfa=false',
+      pht('List of Users Without MFA')));
 
     return array(
       $this->newOption('security.alternate-file-domain', 'string', null)
@@ -73,7 +109,8 @@ final class PhabricatorSecurityConfigOptions
             'Default key for HMAC digests where the key is not important '.
             '(i.e., the hash itself is secret). You can change this if you '.
             'want (to any other string), but doing so will break existing '.
-            'sessions and CSRF tokens.')),
+            'sessions and CSRF tokens. This option is deprecated. Newer '.
+            'code automatically manages HMAC keys.')),
       $this->newOption('security.require-https', 'bool', false)
         ->setLocked(true)
         ->setSummary(
@@ -82,22 +119,26 @@ final class PhabricatorSecurityConfigOptions
           pht(
             "If the web server responds to both HTTP and HTTPS requests but ".
             "you want users to connect with only HTTPS, you can set this ".
-            "to true to make Phabricator redirect HTTP requests to HTTPS.\n\n".
-
+            "to `true` to make Phabricator redirect HTTP requests to HTTPS.".
+            "\n\n".
             "Normally, you should just configure your server not to accept ".
             "HTTP traffic, but this setting may be useful if you originally ".
             "used HTTP and have now switched to HTTPS but don't want to ".
             "break old links, or if your webserver sits behind a load ".
             "balancer which terminates HTTPS connections and you can not ".
-            "reasonably configure more granular behavior there.\n\n".
-
+            "reasonably configure more granular behavior there.".
+            "\n\n".
             "IMPORTANT: Phabricator determines if a request is HTTPS or not ".
-            "by examining the PHP \$_SERVER['HTTPS'] variable. If you run ".
+            "by examining the PHP `%s` variable. If you run ".
             "Apache/mod_php this will probably be set correctly for you ".
             "automatically, but if you run Phabricator as CGI/FCGI (e.g., ".
             "through nginx or lighttpd), you need to configure your web ".
             "server so that it passes the value correctly based on the ".
-            "connection type."))
+            "connection type.".
+            "\n\n".
+            "If you configure Phabricator in cluster mode, note that this ".
+            "setting is ignored by intracluster requests.",
+            "\$_SERVER['HTTPS']"))
         ->setBoolOptions(
           array(
             pht('Force HTTPS'),
@@ -107,13 +148,7 @@ final class PhabricatorSecurityConfigOptions
         ->setLocked(true)
         ->setSummary(
           pht('Require all users to configure multi-factor authentication.'))
-        ->setDescription(
-          pht(
-            'By default, Phabricator allows users to add multi-factor '.
-            'authentication to their accounts, but does not require it. '.
-            'By enabling this option, you can force all users to add '.
-            'at least one authentication factor before they can use their '.
-            'accounts.'))
+        ->setDescription($require_mfa_description)
         ->setBoolOptions(
           array(
             pht('Multi-Factor Required'),
@@ -163,7 +198,8 @@ final class PhabricatorSecurityConfigOptions
             "When users write comments which have URIs, they'll be ".
             "automatically linked if the protocol appears in this set. This ".
             "whitelist is primarily to prevent security issues like ".
-            "javascript:// URIs."))
+            "%s URIs.",
+            'javascript://'))
         ->addExample("http\nhttps", pht('Valid Setting'))
         ->setLocked(true),
       $this->newOption(
@@ -195,11 +231,8 @@ final class PhabricatorSecurityConfigOptions
         ->setSummary(pht('Whitelists editor protocols for "Open in Editor".'))
         ->setDescription(
           pht(
-            "Users can configure a URI pattern to open files in a text ".
-            "editor. The URI must use a protocol on this whitelist.\n\n".
-            "(If you use an editor which defines a protocol not on this ".
-            "list, [[ %s | let us know ]] and we'll update the defaults.)",
-            $support_href))
+            'Users can configure a URI pattern to open files in a text '.
+            'editor. The URI must use a protocol on this whitelist.'))
         ->setLocked(true),
        $this->newOption(
          'celerity.resource-hash',
@@ -226,7 +259,7 @@ final class PhabricatorSecurityConfigOptions
           pht('Determines whether or not YouTube videos get embedded.'))
         ->setDescription(
           pht(
-            "If you enable this, linked YouTube videos will be embeded ".
+            "If you enable this, linked YouTube videos will be embedded ".
             "inline. This has mild security implications (you'll leak ".
             "referrers to YouTube) and is pretty silly (but sort of ".
             "awesome).")),
@@ -276,22 +309,10 @@ final class PhabricatorSecurityConfigOptions
               'unsecured content over plain HTTP. It is very difficult to '.
               'undo this change once users\' browsers have accepted the '.
               'setting.')),
-        $this->newOption('security.allow-conduit-act-as-user', 'bool', false)
-          ->setBoolOptions(
-            array(
-              pht('Allow'),
-              pht('Disallow'),
-            ))
-          ->setLocked(true)
-          ->setSummary(
-            pht('Allow administrators to use the Conduit API as other users.'))
-          ->setDescription(
-            pht(
-              'DEPRECATED - if you enable this, you are allowing '.
-              'administrators to act as any user via the Conduit API. '.
-              'Enabling this is not advised as it introduces a huge policy '.
-              'violation and has been obsoleted in functionality.')),
-
+        $this->newOption('keyring', $keyring_type, array())
+          ->setHidden(true)
+          ->setSummary(pht('Configure master encryption keys.'))
+          ->setDescription($keyring_description),
     );
   }
 
@@ -308,8 +329,10 @@ final class PhabricatorSecurityConfigOptions
         throw new PhabricatorConfigValidationException(
           pht(
             "Config option '%s' is invalid. The URI must start with ".
-            "'http://' or 'https://'.",
-            $key));
+            "'%s' or '%s'.",
+            $key,
+            'http://',
+            'https://'));
       }
 
       $domain = $uri->getDomain();
@@ -317,10 +340,11 @@ final class PhabricatorSecurityConfigOptions
         throw new PhabricatorConfigValidationException(
           pht(
             "Config option '%s' is invalid. The URI must contain a dot ('.'), ".
-            "like 'http://example.com/', not just a bare name like ".
-            "'http://example/'. Some web browsers will not set cookies on ".
-            "domains with no TLD.",
-            $key));
+            "like '%s', not just a bare name like '%s'. ".
+            "Some web browsers will not set cookies on domains with no TLD.",
+            $key,
+            'http://example.com/',
+            'http://example/'));
       }
 
       $path = $uri->getPath();
@@ -328,11 +352,11 @@ final class PhabricatorSecurityConfigOptions
         throw new PhabricatorConfigValidationException(
           pht(
             "Config option '%s' is invalid. The URI must NOT have a path, ".
-            "e.g. 'http://phabricator.example.com/' is OK, but ".
-            "'http://example.com/phabricator/' is not. Phabricator must be ".
-            "installed on an entire domain; it can not be installed on a ".
-            "path.",
-            $key));
+            "e.g. '%s' is OK, but '%s' is not. Phabricator must be installed ".
+            "on an entire domain; it can not be installed on a path.",
+            $key,
+            'http://phabricator.example.com/',
+            'http://example.com/phabricator/'));
       }
     }
   }

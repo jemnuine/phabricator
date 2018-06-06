@@ -6,42 +6,29 @@ final class DiffusionRepositoryListController extends DiffusionController {
     return true;
   }
 
-  protected function processDiffusionRequest(AphrontRequest $request) {
-    $controller = id(new PhabricatorApplicationSearchController())
-      ->setQueryKey($request->getURIData('queryKey'))
-      ->setSearchEngine(new PhabricatorRepositorySearchEngine())
-      ->setNavigation($this->buildSideNavView());
+  public function handleRequest(AphrontRequest $request) {
+    $items = array();
 
-    return $this->delegateToController($controller);
-  }
+    $items[] = id(new PHUIListItemView())
+      ->setType(PHUIListItemView::TYPE_LABEL)
+      ->setName(pht('Commits'));
 
-  public function buildSideNavView($for_app = false) {
-    $viewer = $this->getRequest()->getUser();
+    $items[] = id(new PHUIListItemView())
+      ->setName(pht('Browse Commits'))
+      ->setHref($this->getApplicationURI('commit/'));
 
-    $nav = new AphrontSideNavFilterView();
-    $nav->setBaseURI(new PhutilURI($this->getApplicationURI()));
-
-    id(new PhabricatorRepositorySearchEngine())
-      ->setViewer($viewer)
-      ->addNavigationItems($nav->getMenu());
-
-    $nav->selectFilter(null);
-
-    return $nav;
+    return id(new PhabricatorRepositorySearchEngine())
+      ->setController($this)
+      ->setNavigationItems($items)
+      ->buildResponse();
   }
 
   protected function buildApplicationCrumbs() {
     $crumbs = parent::buildApplicationCrumbs();
 
-    $can_create = $this->hasApplicationCapability(
-      DiffusionCreateRepositoriesCapability::CAPABILITY);
-
-    $crumbs->addAction(
-      id(new PHUIListItemView())
-        ->setName(pht('New Repository'))
-        ->setHref($this->getApplicationURI('new/'))
-        ->setDisabled(!$can_create)
-        ->setIcon('fa-plus-square'));
+    id(new DiffusionRepositoryEditEngine())
+      ->setViewer($this->getViewer())
+      ->addActionToCrumbs($crumbs);
 
     return $crumbs;
   }

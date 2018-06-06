@@ -5,8 +5,12 @@ final class PhabricatorDashboardQuery
 
   private $ids;
   private $phids;
+  private $statuses;
+  private $authorPHIDs;
+  private $canEdit;
 
   private $needPanels;
+  private $needProjects;
 
   public function withIDs(array $ids) {
     $this->ids = $ids;
@@ -18,30 +22,61 @@ final class PhabricatorDashboardQuery
     return $this;
   }
 
+  public function withStatuses(array $statuses) {
+    $this->statuses = $statuses;
+    return $this;
+  }
+
+  public function withAuthorPHIDs(array $authors) {
+    $this->authorPHIDs = $authors;
+    return $this;
+  }
+
   public function needPanels($need_panels) {
     $this->needPanels = $need_panels;
     return $this;
   }
 
+  public function needProjects($need_projects) {
+    $this->needProjects = $need_projects;
+    return $this;
+  }
+
+  public function withCanEdit($can_edit) {
+    $this->canEdit = $can_edit;
+    return $this;
+  }
+
+  public function withNameNgrams($ngrams) {
+    return $this->withNgramsConstraint(
+      id(new PhabricatorDashboardNgrams()),
+      $ngrams);
+  }
+
   protected function loadPage() {
-    $table = new PhabricatorDashboard();
-    $conn_r = $table->establishConnection('r');
+    return $this->loadStandardPage($this->newResultObject());
+  }
 
-    $data = queryfx_all(
-      $conn_r,
-      'SELECT * FROM %T %Q %Q %Q',
-      $table->getTableName(),
-      $this->buildWhereClause($conn_r),
-      $this->buildOrderClause($conn_r),
-      $this->buildLimitClause($conn_r));
-
-    return $table->loadAllFromArray($data);
+  public function newResultObject() {
+    return new PhabricatorDashboard();
   }
 
   protected function didFilterPage(array $dashboards) {
+
+    $phids = mpull($dashboards, 'getPHID');
+
+    if ($this->canEdit) {
+      $dashboards = id(new PhabricatorPolicyFilter())
+        ->setViewer($this->getViewer())
+        ->requireCapabilities(array(
+          PhabricatorPolicyCapability::CAN_EDIT,
+        ))
+        ->apply($dashboards);
+    }
+
     if ($this->needPanels) {
       $edge_query = id(new PhabricatorEdgeQuery())
-        ->withSourcePHIDs(mpull($dashboards, 'getPHID'))
+        ->withSourcePHIDs($phids)
         ->withEdgeTypes(
           array(
             PhabricatorDashboardDashboardHasPanelEdgeType::EDGECONST,
@@ -50,8 +85,13 @@ final class PhabricatorDashboardQuery
 
       $panel_phids = $edge_query->getDestinationPHIDs();
       if ($panel_phids) {
+        // NOTE: We explicitly disable policy exceptions when loading panels.
+        // If a particular panel is invalid or not visible to the viewer,
+        // we'll still render the dashboard, just not that panel.
+
         $panels = id(new PhabricatorDashboardPanelQuery())
           ->setParentQuery($this)
+          ->setRaisePolicyExceptions(false)
           ->setViewer($this->getViewer())
           ->withPHIDs($panel_phids)
           ->execute();
@@ -70,33 +110,65 @@ final class PhabricatorDashboardQuery
       }
     }
 
+    if ($this->needProjects) {
+      $edge_query = id(new PhabricatorEdgeQuery())
+        ->withSourcePHIDs($phids)
+        ->withEdgeTypes(
+          array(
+            PhabricatorProjectObjectHasProjectEdgeType::EDGECONST,
+          ));
+      $edge_query->execute();
+
+      foreach ($dashboards as $dashboard) {
+        $project_phids = $edge_query->getDestinationPHIDs(
+          array($dashboard->getPHID()));
+        $dashboard->attachProjectPHIDs($project_phids);
+      }
+    }
+
     return $dashboards;
   }
 
-  protected function buildWhereClause($conn_r) {
-    $where = array();
+  protected function buildWhereClauseParts(AphrontDatabaseConnection $conn) {
+    $where = parent::buildWhereClauseParts($conn);
 
-    if ($this->ids) {
+    if ($this->ids !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'id IN (%Ld)',
         $this->ids);
     }
 
-    if ($this->phids) {
+    if ($this->phids !== null) {
       $where[] = qsprintf(
-        $conn_r,
+        $conn,
         'phid IN (%Ls)',
         $this->phids);
     }
 
-    $where[] = $this->buildPagingClause($conn_r);
+    if ($this->statuses !== null) {
+      $where[] = qsprintf(
+        $conn,
+        'status IN (%Ls)',
+        $this->statuses);
+    }
 
-    return $this->formatWhereClause($where);
+    if ($this->authorPHIDs !== null) {
+      $where[] = qsprintf(
+        $conn,
+        'authorPHID IN (%Ls)',
+        $this->authorPHIDs);
+    }
+
+    return $where;
   }
 
   public function getQueryApplicationClass() {
     return 'PhabricatorDashboardApplication';
+  }
+
+  protected function getPrimaryTableAlias() {
+    return 'dashboard';
   }
 
 }

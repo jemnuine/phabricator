@@ -1,7 +1,6 @@
 <?php
 
-final class PhabricatorConfigLocalSource
-  extends PhabricatorConfigProxySource {
+final class PhabricatorConfigLocalSource extends PhabricatorConfigProxySource {
 
   public function __construct() {
     $config = $this->loadConfig();
@@ -22,17 +21,35 @@ final class PhabricatorConfigLocalSource
 
   private function loadConfig() {
     $path = $this->getConfigPath();
-    if (@file_exists($path)) {
-      $data = @file_get_contents($path);
-      if ($data) {
-        $data = json_decode($data, true);
-        if (is_array($data)) {
-          return $data;
-        }
-      }
+
+    if (!Filesystem::pathExists($path)) {
+      return array();
     }
 
-    return array();
+    try {
+      $data = Filesystem::readFile($path);
+    } catch (FilesystemException $ex) {
+      throw new PhutilProxyException(
+        pht(
+          'Configuration file "%s" exists, but could not be read.',
+          $path),
+        $ex);
+    }
+
+    try {
+      $result = phutil_json_decode($data);
+    } catch (PhutilJSONParserException $ex) {
+      throw new PhutilProxyException(
+        pht(
+          'Configuration file "%s" exists and is readable, but the content '.
+          'is not valid JSON. You may have edited this file manually and '.
+          'introduced a syntax error by mistake. Correct the file syntax '.
+          'to continue.',
+          $path),
+        $ex);
+    }
+
+    return $result;
   }
 
   private function saveConfig() {

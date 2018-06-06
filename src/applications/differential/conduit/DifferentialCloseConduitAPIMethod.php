@@ -11,6 +11,16 @@ final class DifferentialCloseConduitAPIMethod
     return pht('Close a Differential revision.');
   }
 
+  public function getMethodStatus() {
+    return self::METHOD_STATUS_FROZEN;
+  }
+
+  public function getMethodStatusDescription() {
+    return pht(
+      'This method is frozen and will eventually be deprecated. New code '.
+      'should use "differential.revision.edit" instead.');
+  }
+
   protected function defineParamTypes() {
     return array(
       'revisionID' => 'required int',
@@ -23,7 +33,7 @@ final class DifferentialCloseConduitAPIMethod
 
   protected function defineErrorTypes() {
     return array(
-      'ERR_NOT_FOUND' => 'Revision was not found.',
+      'ERR_NOT_FOUND' => pht('Revision was not found.'),
     );
   }
 
@@ -34,7 +44,7 @@ final class DifferentialCloseConduitAPIMethod
     $revision = id(new DifferentialRevisionQuery())
       ->withIDs(array($id))
       ->setViewer($viewer)
-      ->needReviewerStatus(true)
+      ->needReviewers(true)
       ->executeOne();
     if (!$revision) {
       throw new ConduitException('ERR_NOT_FOUND');
@@ -42,16 +52,15 @@ final class DifferentialCloseConduitAPIMethod
 
     $xactions = array();
     $xactions[] = id(new DifferentialTransaction())
-      ->setTransactionType(DifferentialTransaction::TYPE_ACTION)
-      ->setNewValue(DifferentialAction::ACTION_CLOSE);
+      ->setTransactionType(
+        DifferentialRevisionCloseTransaction::TRANSACTIONTYPE)
+      ->setNewValue(true);
 
-    $content_source = PhabricatorContentSource::newForSource(
-      PhabricatorContentSource::SOURCE_CONDUIT,
-      array());
+    $content_source = $request->newContentSource();
 
     $editor = id(new DifferentialTransactionEditor())
       ->setActor($viewer)
-      ->setContentSourceFromConduitRequest($request)
+      ->setContentSource($request->newContentSource())
       ->setContinueOnMissingFields(true)
       ->setContinueOnNoEffect(true);
 

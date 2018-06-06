@@ -11,7 +11,7 @@ final class PhabricatorUIConfigOptions
     return pht('Configure the Phabricator UI, including colors.');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-magnet';
   }
 
@@ -20,16 +20,14 @@ final class PhabricatorUIConfigOptions
   }
 
   public function getOptions() {
-    $manifest = PHUIIconView::getSheetManifest('main-header');
-    $custom_header_example =
-      PhabricatorCustomHeaderConfigType::getExampleConfig();
-    $experimental_link = 'https://secure.phabricator.com/T4214';
-
-    $options = array();
-    foreach (array_keys($manifest) as $sprite_name) {
-      $key = substr($sprite_name, strlen('main-header-'));
-      $options[$key] = $key;
-    }
+    $options = array(
+      'blindigo' => pht('Blindigo'),
+      'red' => pht('Red'),
+      'blue' => pht('Blue'),
+      'green' => pht('Green'),
+      'indigo' => pht('Indigo'),
+      'dark' => pht('Dark'),
+    );
 
     $example = <<<EOJSON
 [
@@ -47,13 +45,30 @@ final class PhabricatorUIConfigOptions
 ]
 EOJSON;
 
+    $logo_type = 'custom:PhabricatorCustomLogoConfigType';
+    $footer_type = 'custom:PhabricatorCustomUIFooterConfigType';
+
     return array(
-      $this->newOption('ui.header-color', 'enum', 'dark')
+      $this->newOption('ui.header-color', 'enum', 'blindigo')
+        ->setDescription(
+          pht('Sets the default color scheme of Phabricator.'))
+        ->setEnumOptions($options),
+      $this->newOption('ui.logo', $logo_type, array())
+        ->setSummary(
+          pht('Customize the logo and wordmark text in the header.'))
         ->setDescription(
           pht(
-            'Sets the color of the main header.'))
-        ->setEnumOptions($options),
-      $this->newOption('ui.footer-items', 'list<wild>', array())
+            "Customize the logo image and text which appears in the main ".
+            "site header:\n\n".
+            "  - **Logo Image**: Upload a new 80 x 80px image to replace the ".
+            "Phabricator logo in the site header.\n\n".
+            "  - **Wordmark**: Choose new text to display next to the logo. ".
+            "By default, the header displays //Phabricator//.\n\n")),
+      $this->newOption('ui.favicons', 'wild', array())
+        ->setSummary(pht('Customize favicons.'))
+        ->setDescription(pht('Customize favicons.'))
+        ->setLocked(true),
+      $this->newOption('ui.footer-items', $footer_type, array())
         ->setSummary(
           pht(
             'Allows you to add footer links on most pages.'))
@@ -69,31 +84,6 @@ EOJSON;
             "    omit this if you just want a piece of text, like a copyright ".
             "    notice."))
         ->addExample($example, pht('Basic Example')),
-      $this->newOption(
-        'ui.custom-header',
-        'custom:PhabricatorCustomHeaderConfigType',
-        null)
-        ->setSummary(
-          pht('Customize the Phabricator logo.'))
-        ->setDescription(
-          pht('You can customize the Phabricator logo by specifying the '.
-              'phid for a viewable image you have uploaded to Phabricator '.
-              'via the [[ /file/ | Files application]]. This image should '.
-              'be:'."\n".
-              ' - 192px X 80px; while not enforced, images with these '.
-              'dimensions will look best across devices.'."\n".
-              ' - have view policy public if [[ '.
-              '/config/edit/policy.allow-public | `policy.allow-public`]] '.
-              'is true and otherwise view policy user; mismatches in these '.
-              'policy settings will result in a broken logo for some users.'.
-              "\n\n".
-              'You should restart your webserver after updating this value '.
-              'to see this change take effect.'.
-              "\n\n".
-              'As this feature is experimental, please read [[ %s | T4214 ]] '.
-              'for up to date information.',
-              $experimental_link))
-        ->addExample($custom_header_example, pht('Valid Config')),
     );
   }
 

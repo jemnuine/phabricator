@@ -14,7 +14,7 @@ final class PhabricatorLegalpadApplication extends PhabricatorApplication {
     return pht('Agreements and Signatures');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-gavel';
   }
 
@@ -53,10 +53,10 @@ final class PhabricatorLegalpadApplication extends PhabricatorApplication {
       '/L(?P<id>\d+)' => 'LegalpadDocumentSignController',
       '/legalpad/' => array(
         '' => 'LegalpadDocumentListController',
-        '(?:query/(?P<queryKey>[^/]+)/)?' => 'LegalpadDocumentListController',
-        'create/' => 'LegalpadDocumentEditController',
-        'edit/(?P<id>\d+)/' => 'LegalpadDocumentEditController',
-        'comment/(?P<id>\d+)/' => 'LegalpadDocumentCommentController',
+        '(?:query/(?P<queryKey>[^/]+)/)?'
+          => 'LegalpadDocumentListController',
+        $this->getEditRoutePattern('edit/')
+          => 'LegalpadDocumentEditController',
         'view/(?P<id>\d+)/' => 'LegalpadDocumentManageController',
         'done/' => 'LegalpadDocumentDoneController',
         'verify/(?P<code>[^/]+)/'
@@ -75,8 +75,14 @@ final class PhabricatorLegalpadApplication extends PhabricatorApplication {
   protected function getCustomCapabilities() {
     return array(
       LegalpadCreateDocumentsCapability::CAPABILITY => array(),
-      LegalpadDefaultViewCapability::CAPABILITY => array(),
-      LegalpadDefaultEditCapability::CAPABILITY => array(),
+      LegalpadDefaultViewCapability::CAPABILITY => array(
+        'template' => PhabricatorLegalpadDocumentPHIDType::TYPECONST,
+        'capability' => PhabricatorPolicyCapability::CAN_VIEW,
+      ),
+      LegalpadDefaultEditCapability::CAPABILITY => array(
+        'template' => PhabricatorLegalpadDocumentPHIDType::TYPECONST,
+        'capability' => PhabricatorPolicyCapability::CAN_EDIT,
+      ),
     );
   }
 

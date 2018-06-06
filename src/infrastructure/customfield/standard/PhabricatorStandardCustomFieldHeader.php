@@ -30,4 +30,12 @@ final class PhabricatorStandardCustomFieldHeader
     return $this->getFieldName();
   }
 
+  public function shouldAppearInApplicationSearch() {
+    return false;
+  }
+
+  public function shouldAppearInConduitTransactions() {
+    return false;
+  }
+
 }

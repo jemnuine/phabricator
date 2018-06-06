@@ -9,6 +9,14 @@ final class PonderQuestionEditor
     return pht('Ponder Questions');
   }
 
+  public function getCreateObjectTitle($author, $object) {
+    return pht('%s asked this question.', $author);
+  }
+
+  public function getCreateObjectTitleForFeed($author, $object) {
+    return pht('%s asked %s.', $author, $object);
+  }
+
   /**
    * This is used internally on @{method:applyInitialEffects} if a transaction
    * of type PonderQuestionTransaction::TYPE_ANSWERS is in the mix. The value
@@ -32,7 +40,7 @@ final class PonderQuestionEditor
 
     foreach ($xactions as $xaction) {
       switch ($xaction->getTransactionType()) {
-        case PonderQuestionTransaction::TYPE_ANSWERS:
+        case PonderQuestionAnswerTransaction::TRANSACTIONTYPE:
           return true;
       }
     }
@@ -46,7 +54,7 @@ final class PonderQuestionEditor
 
     foreach ($xactions as $xaction) {
       switch ($xaction->getTransactionType()) {
-        case PonderQuestionTransaction::TYPE_ANSWERS:
+        case PonderQuestionAnswerTransaction::TRANSACTIONTYPE:
           $new_value = $xaction->getNewValue();
           $new = idx($new_value, '+', array());
           foreach ($new as $new_answer) {
@@ -64,141 +72,23 @@ final class PonderQuestionEditor
 
   public function getTransactionTypes() {
     $types = parent::getTransactionTypes();
-
     $types[] = PhabricatorTransactions::TYPE_COMMENT;
-    $types[] = PonderQuestionTransaction::TYPE_TITLE;
-    $types[] = PonderQuestionTransaction::TYPE_CONTENT;
-    $types[] = PonderQuestionTransaction::TYPE_ANSWERS;
-    $types[] = PonderQuestionTransaction::TYPE_STATUS;
+    $types[] = PhabricatorTransactions::TYPE_VIEW_POLICY;
 
     return $types;
-  }
-
-  protected function getCustomTransactionOldValue(
-    PhabricatorLiskDAO $object,
-    PhabricatorApplicationTransaction $xaction) {
-
-    switch ($xaction->getTransactionType()) {
-      case PonderQuestionTransaction::TYPE_TITLE:
-        return $object->getTitle();
-      case PonderQuestionTransaction::TYPE_CONTENT:
-        return $object->getContent();
-      case PonderQuestionTransaction::TYPE_ANSWERS:
-        return mpull($object->getAnswers(), 'getPHID');
-      case PonderQuestionTransaction::TYPE_STATUS:
-        return $object->getStatus();
-    }
-  }
-
-  protected function getCustomTransactionNewValue(
-    PhabricatorLiskDAO $object,
-    PhabricatorApplicationTransaction $xaction) {
-
-    switch ($xaction->getTransactionType()) {
-      case PonderQuestionTransaction::TYPE_TITLE:
-      case PonderQuestionTransaction::TYPE_CONTENT:
-      case PonderQuestionTransaction::TYPE_STATUS:
-        return $xaction->getNewValue();
-      case PonderQuestionTransaction::TYPE_ANSWERS:
-        $raw_new_value = $xaction->getNewValue();
-        $new_value = array();
-        foreach ($raw_new_value as $key => $answers) {
-          $phids = array();
-          foreach ($answers as $answer) {
-            $obj = idx($answer, 'answer');
-            if (!$answer) {
-              continue;
-            }
-            $phids[] = $obj->getPHID();
-          }
-          $new_value[$key] = $phids;
-        }
-        $xaction->setNewValue($new_value);
-        return $this->getPHIDTransactionNewValue($xaction);
-    }
-  }
-
-  protected function applyCustomInternalTransaction(
-    PhabricatorLiskDAO $object,
-    PhabricatorApplicationTransaction $xaction) {
-
-    switch ($xaction->getTransactionType()) {
-      case PonderQuestionTransaction::TYPE_TITLE:
-        $object->setTitle($xaction->getNewValue());
-        break;
-      case PonderQuestionTransaction::TYPE_CONTENT:
-        $object->setContent($xaction->getNewValue());
-        break;
-      case PonderQuestionTransaction::TYPE_STATUS:
-        $object->setStatus($xaction->getNewValue());
-        break;
-      case PonderQuestionTransaction::TYPE_ANSWERS:
-        $old = $xaction->getOldValue();
-        $new = $xaction->getNewValue();
-
-        $add = array_diff_key($new, $old);
-        $rem = array_diff_key($old, $new);
-
-        $count = $object->getAnswerCount();
-        $count += count($add);
-        $count -= count($rem);
-
-        $object->setAnswerCount($count);
-        break;
-      case PhabricatorTransactions::TYPE_EDGE:
-        return;
-    }
-  }
-
-  protected function applyCustomExternalTransaction(
-    PhabricatorLiskDAO $object,
-    PhabricatorApplicationTransaction $xaction) {
-    return;
-  }
-
-  protected function mergeTransactions(
-    PhabricatorApplicationTransaction $u,
-    PhabricatorApplicationTransaction $v) {
-
-    $type = $u->getTransactionType();
-    switch ($type) {
-      case PonderQuestionTransaction::TYPE_TITLE:
-      case PonderQuestionTransaction::TYPE_CONTENT:
-      case PonderQuestionTransaction::TYPE_STATUS:
-        return $v;
-    }
-
-    return parent::mergeTransactions($u, $v);
   }
 
   protected function supportsSearch() {
     return true;
   }
 
-  protected function getFeedStoryType() {
-    return 'PonderTransactionFeedStory';
-  }
-
-  protected function getFeedStoryData(
-    PhabricatorLiskDAO $object,
-    array $xactions) {
-
-    $data = parent::getFeedStoryData($object, $xactions);
-    $answer = $this->getAnswer();
-    if ($answer) {
-      $data['answerPHID'] = $answer->getPHID();
-    }
-
-    return $data;
- }
-
   protected function shouldImplyCC(
     PhabricatorLiskDAO $object,
     PhabricatorApplicationTransaction $xaction) {
 
     switch ($xaction->getTransactionType()) {
-      case PonderQuestionTransaction::TYPE_ANSWERS:
-        return true;
+      case PonderQuestionAnswerTransaction::TRANSACTIONTYPE:
+        return false;
     }
 
     return parent::shouldImplyCC($object, $xaction);
@@ -207,12 +97,58 @@ final class PonderQuestionEditor
   protected function shouldSendMail(
     PhabricatorLiskDAO $object,
     array $xactions) {
-    return true;
+      foreach ($xactions as $xaction) {
+        switch ($xaction->getTransactionType()) {
+          case PonderQuestionAnswerTransaction::TRANSACTIONTYPE:
+            return false;
+        }
+      }
+      return true;
+  }
+
+  protected function getMailTo(PhabricatorLiskDAO $object) {
+    return array(
+      $object->getAuthorPHID(),
+      $this->requireActor()->getPHID(),
+    );
+  }
+
+  protected function shouldPublishFeedStory(
+    PhabricatorLiskDAO $object,
+    array $xactions) {
+      foreach ($xactions as $xaction) {
+        switch ($xaction->getTransactionType()) {
+          case PonderQuestionAnswerTransaction::TRANSACTIONTYPE:
+            return false;
+        }
+      }
+      return true;
+  }
+
+  public function getMailTagsMap() {
+    return array(
+      PonderQuestionTransaction::MAILTAG_DETAILS =>
+        pht('Someone changes the questions details.'),
+      PonderQuestionTransaction::MAILTAG_ANSWERS =>
+        pht('Someone adds a new answer.'),
+      PonderQuestionTransaction::MAILTAG_COMMENT =>
+        pht('Someone comments on the question.'),
+      PonderQuestionTransaction::MAILTAG_OTHER =>
+        pht('Other question activity not listed above occurs.'),
+    );
   }
 
   protected function buildReplyHandler(PhabricatorLiskDAO $object) {
     return id(new PonderQuestionReplyHandler())
       ->setMailReceiver($object);
+  }
+
+  protected function buildMailTemplate(PhabricatorLiskDAO $object) {
+    $id = $object->getID();
+    $title = $object->getTitle();
+
+    return id(new PhabricatorMetaMTAMail())
+      ->setSubject("Q{$id}: {$title}");
   }
 
   protected function buildMailBody(
@@ -228,18 +164,10 @@ final class PonderQuestionEditor
       $old = $xaction->getOldValue();
       $new = $xaction->getNewValue();
       // If the user just asked the question, add the question text.
-      if ($type == PonderQuestionTransaction::TYPE_CONTENT) {
+      if ($type == PonderQuestionContentTransaction::TRANSACTIONTYPE) {
         if ($old === null) {
           $body->addRawSection($new);
         }
-      }
-      // If the user gave an answer, add the answer text. Also update
-      // the header and uri to be more answer-specific.
-      if ($type == PonderQuestionTransaction::TYPE_ANSWERS) {
-        $answer = $this->getAnswer();
-        $body->addRawSection($answer->getContent());
-        $header = pht('ANSWER DETAIL');
-        $uri = $answer->getURI();
       }
     }
 
@@ -248,6 +176,20 @@ final class PonderQuestionEditor
       PhabricatorEnv::getProductionURI($uri));
 
     return $body;
+  }
+
+  protected function shouldApplyHeraldRules(
+    PhabricatorLiskDAO $object,
+    array $xactions) {
+    return true;
+  }
+
+  protected function buildHeraldAdapter(
+    PhabricatorLiskDAO $object,
+    array $xactions) {
+
+    return id(new HeraldPonderQuestionAdapter())
+      ->setQuestion($object);
   }
 
 }

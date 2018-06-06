@@ -84,6 +84,8 @@ final class PhabricatorExtraConfigSetupCheck extends PhabricatorSetupCheck {
         $issue->addPhabricatorConfig($key);
       }
     }
+
+    $this->executeManiphestFieldChecks();
   }
 
   /**
@@ -147,8 +149,9 @@ final class PhabricatorExtraConfigSetupCheck extends PhabricatorSetupCheck {
 
     $markup_reason = pht(
       'Custom remarkup rules are now added by subclassing '.
-      'PhabricatorRemarkupCustomInlineRule or '.
-      'PhabricatorRemarkupCustomBlockRule.');
+      '%s or %s.',
+      'PhabricatorRemarkupCustomInlineRule',
+      'PhabricatorRemarkupCustomBlockRule');
 
     $session_reason = pht(
       'Sessions now expire and are garbage collected rather than having an '.
@@ -171,27 +174,57 @@ final class PhabricatorExtraConfigSetupCheck extends PhabricatorSetupCheck {
       'Phabricator no longer supports global customization of monospaced '.
       'fonts.');
 
+    $public_mail_reason = pht(
+      'Inbound mail addresses are now configured for each application '.
+      'in the Applications tool.');
+
+    $gc_reason = pht(
+      'Garbage collectors are now configured with "%s".',
+      'bin/garbage set-policy');
+
+    $aphlict_reason = pht(
+      'Configuration of the notification server has changed substantially. '.
+      'For discussion, see T10794.');
+
+    $stale_reason = pht(
+      'The Differential revision list view age UI elements have been removed '.
+      'to simplify the interface.');
+
+    $global_settings_reason = pht(
+      'The "Re: Prefix" and "Vary Subjects" settings are now configured '.
+      'in global settings.');
+
+    $dashboard_reason = pht(
+        'This option has been removed, you can use Dashboards to provide '.
+        'homepage customization. See T11533 for more details.');
+
+    $elastic_reason = pht(
+        'Elasticsearch is now configured with "%s".',
+        'cluster.search');
+
     $ancient_config += array(
       'phid.external-loaders' =>
         pht(
-          'External loaders have been replaced. Extend `PhabricatorPHIDType` '.
-          'to implement new PHID and handle types.'),
+          'External loaders have been replaced. Extend `%s` '.
+          'to implement new PHID and handle types.',
+          'PhabricatorPHIDType'),
       'maniphest.custom-task-extensions-class' =>
         pht(
-          'Maniphest fields are now loaded automatically. You can configure '.
-          'them with `maniphest.fields`.'),
+          'Maniphest fields are now loaded automatically. '.
+          'You can configure them with `%s`.',
+          'maniphest.fields'),
       'maniphest.custom-fields' =>
         pht(
-          'Maniphest fields are now defined in '.
-          '`maniphest.custom-field-definitions`. Existing definitions have '.
-          'been migrated.'),
+          'Maniphest fields are now defined in `%s`. '.
+          'Existing definitions have been migrated.',
+          'maniphest.custom-field-definitions'),
       'differential.custom-remarkup-rules' => $markup_reason,
       'differential.custom-remarkup-block-rules' => $markup_reason,
       'auth.sshkeys.enabled' => pht(
         'SSH keys are now actually useful, so they are always enabled.'),
       'differential.anonymous-access' => pht(
-        'Phabricator now has meaningful global access controls. See '.
-        '`policy.allow-public`.'),
+        'Phabricator now has meaningful global access controls. See `%s`.',
+        'policy.allow-public'),
       'celerity.resource-path' => pht(
         'An alternate resource map is no longer supported. Instead, use '.
         'multiple maps. See T4222.'),
@@ -207,9 +240,10 @@ final class PhabricatorExtraConfigSetupCheck extends PhabricatorSetupCheck {
       'differential.show-test-plan-field' => $differential_field_reason,
       'differential.field-selector' => $differential_field_reason,
       'phabricator.show-beta-applications' => pht(
-        'This option has been renamed to `phabricator.show-prototypes` '.
-        'to emphasize the unfinished nature of many prototype applications. '.
-        'Your existing setting has been migrated.'),
+        'This option has been renamed to `%s` to emphasize the '.
+        'unfinished nature of many prototype applications. '.
+        'Your existing setting has been migrated.',
+        'phabricator.show-prototypes'),
       'notification.user' => pht(
         'The notification server no longer requires root permissions. Start '.
         'the server as the user you want it to run under.'),
@@ -219,10 +253,12 @@ final class PhabricatorExtraConfigSetupCheck extends PhabricatorSetupCheck {
         'The translation implementation has changed and providers are no '.
         'longer used or supported.'),
       'config.mask' => pht(
-        'Use `config.hide` instead of this option.'),
+        'Use `%s` instead of this option.',
+        'config.hide'),
       'phd.start-taskmasters' => pht(
         'Taskmasters now use an autoscaling pool. You can configure the '.
-        'pool size with `phd.taskmasters`.'),
+        'pool size with `%s`.',
+        'phd.taskmasters'),
       'storage.engine-selector' => pht(
         'Phabricator now automatically discovers available storage engines '.
         'at runtime.'),
@@ -230,8 +266,8 @@ final class PhabricatorExtraConfigSetupCheck extends PhabricatorSetupCheck {
         'Phabricator now supports arbitrarily large files. Consult the '.
         'documentation for configuration details.'),
       'security.allow-outbound-http' => pht(
-        'This option has been replaced with the more granular option '.
-        '`security.outbound-blacklist`.'),
+        'This option has been replaced with the more granular option `%s`.',
+        'security.outbound-blacklist'),
       'metamta.reply.show-hints' => pht(
         'Phabricator no longer shows reply hints in mail.'),
 
@@ -252,8 +288,142 @@ final class PhabricatorExtraConfigSetupCheck extends PhabricatorSetupCheck {
 
       'style.monospace' => $monospace_reason,
       'style.monospace.windows' => $monospace_reason,
+
+      'search.engine-selector' => pht(
+        'Phabricator now automatically discovers available search engines '.
+        'at runtime.'),
+
+      'metamta.files.public-create-email' => $public_mail_reason,
+      'metamta.maniphest.public-create-email' => $public_mail_reason,
+      'metamta.maniphest.default-public-author' => $public_mail_reason,
+      'metamta.paste.public-create-email' => $public_mail_reason,
+
+      'security.allow-conduit-act-as-user' => pht(
+        'Impersonating users over the API is no longer supported.'),
+
+      'feed.public' => pht('The framable public feed is no longer supported.'),
+
+      'auth.login-message' => pht(
+        'This configuration option has been replaced with a modular '.
+        'handler. See T9346.'),
+
+      'gcdaemon.ttl.herald-transcripts' => $gc_reason,
+      'gcdaemon.ttl.daemon-logs' => $gc_reason,
+      'gcdaemon.ttl.differential-parse-cache' => $gc_reason,
+      'gcdaemon.ttl.markup-cache' => $gc_reason,
+      'gcdaemon.ttl.task-archive' => $gc_reason,
+      'gcdaemon.ttl.general-cache' => $gc_reason,
+      'gcdaemon.ttl.conduit-logs' => $gc_reason,
+
+      'phd.variant-config' => pht(
+        'This configuration is no longer relevant because daemons '.
+        'restart automatically on configuration changes.'),
+
+      'notification.ssl-cert' => $aphlict_reason,
+      'notification.ssl-key' => $aphlict_reason,
+      'notification.pidfile' => $aphlict_reason,
+      'notification.log' => $aphlict_reason,
+      'notification.enabled' => $aphlict_reason,
+      'notification.client-uri' => $aphlict_reason,
+      'notification.server-uri' => $aphlict_reason,
+
+      'metamta.differential.unified-comment-context' => pht(
+        'Inline comments are now always rendered with a limited amount '.
+        'of context.'),
+
+      'differential.days-fresh' => $stale_reason,
+      'differential.days-stale' => $stale_reason,
+
+      'metamta.re-prefix' => $global_settings_reason,
+      'metamta.vary-subjects' => $global_settings_reason,
+
+      'ui.custom-header' => pht(
+        'This option has been replaced with `ui.logo`, which provides more '.
+        'flexible configuration options.'),
+
+      'welcome.html' => $dashboard_reason,
+      'maniphest.priorities.unbreak-now' => $dashboard_reason,
+      'maniphest.priorities.needs-triage' => $dashboard_reason,
+
+      'mysql.implementation' => pht(
+        'Phabricator now automatically selects the best available '.
+        'MySQL implementation.'),
+
+      'mysql.configuration-provider' => pht(
+        'Phabricator now has application-level management of partitioning '.
+        'and replicas.'),
+
+      'search.elastic.host' => $elastic_reason,
+      'search.elastic.namespace' => $elastic_reason,
+
     );
 
     return $ancient_config;
   }
+
+  private function executeManiphestFieldChecks() {
+    $maniphest_appclass = 'PhabricatorManiphestApplication';
+    if (!PhabricatorApplication::isClassInstalled($maniphest_appclass)) {
+      return;
+    }
+
+    $capabilities = array(
+      ManiphestEditAssignCapability::CAPABILITY,
+      ManiphestEditPoliciesCapability::CAPABILITY,
+      ManiphestEditPriorityCapability::CAPABILITY,
+      ManiphestEditProjectsCapability::CAPABILITY,
+      ManiphestEditStatusCapability::CAPABILITY,
+    );
+
+    // Check for any of these capabilities set to anything other than
+    // "All Users".
+
+    $any_set = false;
+    $app = new PhabricatorManiphestApplication();
+    foreach ($capabilities as $capability) {
+      $setting = $app->getPolicy($capability);
+      if ($setting != PhabricatorPolicies::POLICY_USER) {
+        $any_set = true;
+        break;
+      }
+    }
+
+    if (!$any_set) {
+      return;
+    }
+
+    $issue_summary = pht(
+      'Maniphest is currently configured with deprecated policy settings '.
+      'which will be removed in a future version of Phabricator.');
+
+
+    $message = pht(
+      'Some policy settings in Maniphest are now deprecated and will be '.
+      'removed in a future version of Phabricator. You are currently using '.
+      'at least one of these settings.'.
+      "\n\n".
+      'The deprecated settings are "Can Assign Tasks", '.
+      '"Can Edit Task Policies", "Can Prioritize Tasks", '.
+      '"Can Edit Task Projects", and "Can Edit Task Status". You can '.
+      'find these settings in Applications, or follow the link below.'.
+      "\n\n".
+      'You can find discussion of this change (including rationale and '.
+      'recommendations on how to configure similar features) in the upstream, '.
+      'at the link below.'.
+      "\n\n".
+      'To resolve this issue, set all of these policies to "All Users" after '.
+      'making any necessary form customization changes.');
+
+    $more_href = 'https://secure.phabricator.com/T10003';
+    $edit_href = '/applications/view/PhabricatorManiphestApplication/';
+
+    $issue = $this->newIssue('maniphest.T10003-per-field-policies')
+      ->setShortName(pht('Deprecated Policies'))
+      ->setName(pht('Deprecated Maniphest Field Policies'))
+      ->setSummary($issue_summary)
+      ->setMessage($message)
+      ->addLink($more_href, pht('Learn More: Upstream Discussion'))
+      ->addLink($edit_href, pht('Edit These Settings'));
+  }
+
 }

@@ -5,7 +5,9 @@ final class PhabricatorProjectColumn
   implements
     PhabricatorApplicationTransactionInterface,
     PhabricatorPolicyInterface,
-    PhabricatorDestructibleInterface {
+    PhabricatorDestructibleInterface,
+    PhabricatorExtendedPolicyInterface,
+    PhabricatorConduitResultInterface {
 
   const STATUS_ACTIVE = 0;
   const STATUS_HIDDEN = 1;
@@ -17,15 +19,18 @@ final class PhabricatorProjectColumn
   protected $name;
   protected $status;
   protected $projectPHID;
+  protected $proxyPHID;
   protected $sequence;
   protected $properties = array();
 
   private $project = self::ATTACHABLE;
+  private $proxy = self::ATTACHABLE;
 
   public static function initializeNewColumn(PhabricatorUser $user) {
     return id(new PhabricatorProjectColumn())
       ->setName('')
-      ->setStatus(self::STATUS_ACTIVE);
+      ->setStatus(self::STATUS_ACTIVE)
+      ->attachProxy(null);
   }
 
   protected function getConfiguration() {
@@ -38,6 +43,7 @@ final class PhabricatorProjectColumn
         'name' => 'text255',
         'status' => 'uint32',
         'sequence' => 'uint32',
+        'proxyPHID' => 'phid?',
       ),
       self::CONFIG_KEY_SCHEMA => array(
         'key_status' => array(
@@ -45,6 +51,10 @@ final class PhabricatorProjectColumn
         ),
         'key_sequence' => array(
           'columns' => array('projectPHID', 'sequence'),
+        ),
+        'key_proxy' => array(
+          'columns' => array('projectPHID', 'proxyPHID'),
+          'unique' => true,
         ),
       ),
     ) + parent::getConfiguration();
@@ -64,15 +74,34 @@ final class PhabricatorProjectColumn
     return $this->assertAttached($this->project);
   }
 
+  public function attachProxy($proxy) {
+    $this->proxy = $proxy;
+    return $this;
+  }
+
+  public function getProxy() {
+    return $this->assertAttached($this->proxy);
+  }
+
   public function isDefaultColumn() {
     return (bool)$this->getProperty('isDefault');
   }
 
   public function isHidden() {
+    $proxy = $this->getProxy();
+    if ($proxy) {
+      return $proxy->isArchived();
+    }
+
     return ($this->getStatus() == self::STATUS_HIDDEN);
   }
 
   public function getDisplayName() {
+    $proxy = $this->getProxy();
+    if ($proxy) {
+      return $proxy->getProxyColumnName();
+    }
+
     $name = $this->getName();
     if (strlen($name)) {
       return $name;
@@ -96,22 +125,23 @@ final class PhabricatorProjectColumn
     return null;
   }
 
-  public function getHeaderIcon() {
-    $icon = null;
-
-    if ($this->isHidden()) {
-      $icon = 'fa-eye-slash';
-      $text = pht('Hidden');
+  public function getDisplayClass() {
+    $proxy = $this->getProxy();
+    if ($proxy) {
+      return $proxy->getProxyColumnClass();
     }
 
-    if ($icon) {
-      return id(new PHUIIconView())
-        ->setIconFont($icon)
-        ->addSigil('has-tooltip')
-        ->setMetadata(
-          array(
-            'tip' => $text,
-          ));;
+    return null;
+  }
+
+  public function getHeaderIcon() {
+    $proxy = $this->getProxy();
+    if ($proxy) {
+      return $proxy->getProxyColumnIcon();
+    }
+
+    if ($this->isHidden()) {
+      return 'fa-eye-slash';
     }
 
     return null;
@@ -133,6 +163,67 @@ final class PhabricatorProjectColumn
   public function setPointLimit($limit) {
     $this->setProperty('pointLimit', $limit);
     return $this;
+  }
+
+  public function getOrderingKey() {
+    $proxy = $this->getProxy();
+
+    // Normal columns and subproject columns go first, in a user-controlled
+    // order.
+
+    // All the milestone columns go last, in their sequential order.
+
+    if (!$proxy || !$proxy->isMilestone()) {
+      $group = 'A';
+      $sequence = $this->getSequence();
+    } else {
+      $group = 'B';
+      $sequence = $proxy->getMilestoneNumber();
+    }
+
+    return sprintf('%s%012d', $group, $sequence);
+  }
+
+/* -(  PhabricatorConduitResultInterface  )---------------------------------- */
+
+  public function getFieldSpecificationsForConduit() {
+    return array(
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('name')
+        ->setType('string')
+        ->setDescription(pht('The display name of the column.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('project')
+        ->setType('map<string, wild>')
+        ->setDescription(pht('The project the column belongs to.')),
+      id(new PhabricatorConduitSearchFieldSpecification())
+        ->setKey('proxyPHID')
+        ->setType('phid?')
+        ->setDescription(
+          pht(
+            'For columns that proxy another object (like a subproject or '.
+            'milestone), the PHID of the object they proxy.')),
+    );
+  }
+
+  public function getFieldValuesForConduit() {
+    return array(
+      'name' => $this->getDisplayName(),
+      'proxyPHID' => $this->getProxyPHID(),
+      'project' => $this->getProject()->getRefForConduit(),
+    );
+  }
+
+  public function getConduitSearchAttachments() {
+    return array();
+  }
+
+  public function getRefForConduit() {
+    return array(
+      'id' => (int)$this->getID(),
+      'phid' => $this->getPHID(),
+      'name' => $this->getDisplayName(),
+    );
   }
 
 
@@ -170,7 +261,14 @@ final class PhabricatorProjectColumn
   }
 
   public function getPolicy($capability) {
-    return $this->getProject()->getPolicy($capability);
+    // NOTE: Column policies are enforced as an extended policy which makes
+    // them the same as the project's policies.
+    switch ($capability) {
+      case PhabricatorPolicyCapability::CAN_VIEW:
+        return PhabricatorPolicies::getMostOpenPolicy();
+      case PhabricatorPolicyCapability::CAN_EDIT:
+        return PhabricatorPolicies::POLICY_USER;
+    }
   }
 
   public function hasAutomaticCapability($capability, PhabricatorUser $viewer) {
@@ -181,6 +279,16 @@ final class PhabricatorProjectColumn
 
   public function describeAutomaticCapability($capability) {
     return pht('Users must be able to see a project to see its board.');
+  }
+
+
+/* -(  PhabricatorExtendedPolicyInterface  )--------------------------------- */
+
+
+  public function getExtendedPolicy($capability, PhabricatorUser $viewer) {
+    return array(
+      array($this->getProject(), $capability),
+    );
   }
 
 

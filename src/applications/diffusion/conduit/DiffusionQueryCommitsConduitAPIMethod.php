@@ -11,6 +11,16 @@ final class DiffusionQueryCommitsConduitAPIMethod
     return pht('Retrieve information about commits.');
   }
 
+  public function getMethodStatus() {
+    return self::METHOD_STATUS_FROZEN;
+  }
+
+  public function getMethodStatusDescription() {
+    return pht(
+      'This method is frozen and will eventually be deprecated. New code '.
+      'should use "diffusion.commit.search" instead.');
+  }
+
   protected function defineReturnType() {
     return 'map<string, dict>';
   }
@@ -29,19 +39,26 @@ final class DiffusionQueryCommitsConduitAPIMethod
   protected function execute(ConduitAPIRequest $request) {
     $need_messages = $request->getValue('needMessages');
     $bypass_cache = $request->getValue('bypassCache');
+    $viewer = $request->getUser();
 
     $query = id(new DiffusionCommitQuery())
-      ->setViewer($request->getUser())
+      ->setViewer($viewer)
       ->needCommitData(true);
 
     $repository_phid = $request->getValue('repositoryPHID');
     if ($repository_phid) {
       $repository = id(new PhabricatorRepositoryQuery())
-        ->setViewer($request->getUser())
+        ->setViewer($viewer)
         ->withPHIDs(array($repository_phid))
         ->executeOne();
       if ($repository) {
         $query->withRepository($repository);
+        if ($bypass_cache) {
+          id(new DiffusionRepositoryClusterEngine())
+            ->setViewer($viewer)
+            ->setRepository($repository)
+            ->synchronizeWorkingCopyBeforeRead();
+        }
       }
     }
 
@@ -70,17 +87,16 @@ final class DiffusionQueryCommitsConduitAPIMethod
     foreach ($commits as $commit) {
       $commit_data = $commit->getCommitData();
 
-      $callsign = $commit->getRepository()->getCallsign();
-      $identifier = $commit->getCommitIdentifier();
-      $uri = '/r'.$callsign.$identifier;
+      $uri = $commit->getURI();
       $uri = PhabricatorEnv::getProductionURI($uri);
 
       $dict = array(
         'id' => $commit->getID(),
         'phid' => $commit->getPHID(),
         'repositoryPHID' => $commit->getRepository()->getPHID(),
-        'identifier' => $identifier,
+        'identifier' => $commit->getCommitIdentifier(),
         'epoch' => $commit->getEpoch(),
+        'authorEpoch' => $commit_data->getCommitDetail('authorEpoch'),
         'uri' => $uri,
         'isImporting' => !$commit->isImported(),
         'summary' => $commit->getSummary(),
@@ -101,6 +117,7 @@ final class DiffusionQueryCommitsConduitAPIMethod
           ->withIdentifier($commit->getCommitIdentifier())
           ->execute();
 
+        $dict['authorEpoch'] = $lowlevel_commitref->getAuthorEpoch();
         $dict['author'] = $lowlevel_commitref->getAuthor();
         $dict['authorName'] = $lowlevel_commitref->getAuthorName();
         $dict['authorEmail'] = $lowlevel_commitref->getAuthorEmail();

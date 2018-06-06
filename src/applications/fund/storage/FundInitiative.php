@@ -9,7 +9,9 @@ final class FundInitiative extends FundDAO
     PhabricatorMentionableInterface,
     PhabricatorFlaggableInterface,
     PhabricatorTokenReceiverInterface,
-    PhabricatorDestructibleInterface {
+    PhabricatorDestructibleInterface,
+    PhabricatorFulltextInterface,
+    PhabricatorFerretInterface {
 
   protected $name;
   protected $ownerPHID;
@@ -84,6 +86,10 @@ final class FundInitiative extends FundDAO
     return 'I'.$this->getID();
   }
 
+  public function getViewURI() {
+    return '/'.$this->getMonogram();
+  }
+
   public function getProjectPHIDs() {
     return $this->assertAttached($this->projectPHIDs);
   }
@@ -143,8 +149,7 @@ final class FundInitiative extends FundDAO
   }
 
   public function describeAutomaticCapability($capability) {
-    return pht(
-      'The owner of an initiative can always view and edit it.');
+    return pht('The owner of an initiative can always view and edit it.');
   }
 
 
@@ -178,14 +183,6 @@ final class FundInitiative extends FundDAO
     return ($phid == $this->getOwnerPHID());
   }
 
-  public function shouldShowSubscribersProperty() {
-    return true;
-  }
-
-  public function shouldAllowSubscription($phid) {
-    return true;
-  }
-
 
 /* -(  PhabricatorTokenRecevierInterface  )---------------------------------- */
 
@@ -206,6 +203,22 @@ final class FundInitiative extends FundDAO
     $this->openTransaction();
       $this->delete();
     $this->saveTransaction();
+  }
+
+
+/* -(  PhabricatorFulltextInterface  )--------------------------------------- */
+
+
+  public function newFulltextEngine() {
+    return new FundInitiativeFulltextEngine();
+  }
+
+
+/* -(  PhabricatorFerretInterface  )----------------------------------------- */
+
+
+  public function newFerretEngine() {
+    return new FundInitiativeFerretEngine();
   }
 
 }

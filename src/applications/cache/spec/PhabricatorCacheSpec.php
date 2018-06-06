@@ -5,6 +5,7 @@ abstract class PhabricatorCacheSpec extends Phobject {
   private $name;
   private $isEnabled = false;
   private $version;
+  private $clearCacheCallback = null;
   private $issues = array();
 
   private $usedMemory = 0;
@@ -96,8 +97,8 @@ abstract class PhabricatorCacheSpec extends Phobject {
     $message = pht(
       'The APC or APCu PHP extensions are installed, but not enabled in your '.
       'PHP configuration. Enabling these extensions will improve Phabricator '.
-      'performance. Edit the "apc.enabled" setting to enable these '.
-      'extensions.');
+      'performance. Edit the "%s" setting to enable these extensions.',
+      'apc.enabled');
 
     return $this
       ->newIssue('extension.apc.enabled')
@@ -108,4 +109,12 @@ abstract class PhabricatorCacheSpec extends Phobject {
       ->addPHPConfig('apc.enabled');
   }
 
+  public function setClearCacheCallback($callback) {
+    $this->clearCacheCallback = $callback;
+    return $this;
+  }
+
+  public function getClearCacheCallback() {
+    return $this->clearCacheCallback;
+  }
 }

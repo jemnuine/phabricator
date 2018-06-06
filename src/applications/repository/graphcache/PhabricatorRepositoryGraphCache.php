@@ -53,7 +53,7 @@
  * @task query Querying the Graph Cache
  * @task cache Cache Internals
  */
-final class PhabricatorRepositoryGraphCache {
+final class PhabricatorRepositoryGraphCache extends Phobject {
 
   private $rebuiltKeys = array();
 
@@ -102,11 +102,15 @@ final class PhabricatorRepositoryGraphCache {
         }
 
         // Otherwise, the rebuild gave us the data, so we can keep going.
+
+        $did_fill = true;
+      } else {
+        $did_fill = false;
       }
 
       // Sanity check so we can survive and recover from bad data.
       if (isset($seen[$commit_id])) {
-        phlog(pht('Unexpected infinite loop in RepositoryGraphCache!'));
+        phlog(pht('Unexpected infinite loop in %s!', __CLASS__));
         return false;
       } else {
         $seen[$commit_id] = true;
@@ -147,12 +151,17 @@ final class PhabricatorRepositoryGraphCache {
         $commit_id = $parent_id;
 
         // Periodically check if we've spent too long looking for a result
-        // in the cache, and return so we can fall back to a VCS operation. This
-        // keeps us from having a degenerate worst case if, e.g., the cache
-        // is cold and we need to inspect a very large number of blocks
+        // in the cache, and return so we can fall back to a VCS operation.
+        // This keeps us from having a degenerate worst case if, e.g., the
+        // cache is cold and we need to inspect a very large number of blocks
         // to satisfy the query.
 
-        if (((++$iterations) % 64) === 0) {
+        ++$iterations;
+
+        // If we performed a cache fill in this cycle, always check the time
+        // limit, since cache fills may take a significant amount of time.
+
+        if ($did_fill || ($iterations % 64 === 0)) {
           $t_end = microtime(true);
           if (($t_end - $t_start) > $time) {
             return false;
@@ -313,7 +322,7 @@ final class PhabricatorRepositoryGraphCache {
     // Find all the Git and Mercurial commits in the block which have completed
     // change import. We can't fill the cache accurately for commits which have
     // not completed change import, so just pretend we don't know about them.
-    // In these cases, we will will ultimately fall back to VCS queries.
+    // In these cases, we will ultimately fall back to VCS queries.
 
     $commit_rows = queryfx_all(
       $conn_r,

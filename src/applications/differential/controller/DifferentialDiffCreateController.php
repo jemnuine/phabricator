@@ -89,7 +89,7 @@ final class DifferentialDiffCreateController extends DifferentialController {
         'href' => $arcanist_href,
         'target' => '_blank',
       ),
-      'Learn More');
+      pht('Learn More'));
 
     $cancel_uri = $this->getApplicationURI();
 
@@ -124,10 +124,12 @@ final class DifferentialDiffCreateController extends DifferentialController {
       $title = pht('Update Diff');
       $header = pht('Update Diff');
       $button = pht('Continue');
+      $header_icon = 'fa-upload';
     } else {
       $title = pht('Create Diff');
       $header = pht('Create New Diff');
       $button = pht('Create Diff');
+      $header_icon = 'fa-plus-square';
     }
 
     $form
@@ -180,14 +182,11 @@ final class DifferentialDiffCreateController extends DifferentialController {
           ->setValue($button));
 
     $form_box = id(new PHUIObjectBoxView())
-      ->setHeaderText($header)
+      ->setHeaderText($title)
       ->setValidationException($validation_exception)
       ->setForm($form)
+      ->setBackground(PHUIObjectBoxView::WHITE_CONFIG)
       ->setFormErrors($errors);
-
-    if ($info_view) {
-      $form_box->setInfoView($info_view);
-    }
 
     $crumbs = $this->buildApplicationCrumbs();
     if ($revision) {
@@ -196,15 +195,18 @@ final class DifferentialDiffCreateController extends DifferentialController {
         '/'.$revision->getMonogram());
     }
     $crumbs->addTextCrumb($title);
+    $crumbs->setBorder(true);
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
+    $view = id(new PHUITwoColumnView())
+      ->setFooter(array(
         $form_box,
-      ),
-      array(
-        'title' => $title,
+        $info_view,
       ));
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($view);
   }
 
 }

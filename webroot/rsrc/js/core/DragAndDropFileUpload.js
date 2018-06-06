@@ -11,8 +11,12 @@
 
 JX.install('PhabricatorDragAndDropFileUpload', {
 
-  construct : function(node) {
-    this._node = node;
+  construct : function(target) {
+    if (JX.DOM.isNode(target)) {
+      this._node = target;
+    } else {
+      this._sigil = target;
+    }
   },
 
   events : [
@@ -39,17 +43,33 @@ JX.install('PhabricatorDragAndDropFileUpload', {
 
   members : {
     _node : null,
+    _sigil: null,
     _depth : 0,
+    _isEnabled: false,
+
+    setIsEnabled: function(bool) {
+      this._isEnabled = bool;
+      return this;
+    },
+
+    getIsEnabled: function() {
+      return this._isEnabled;
+    },
+
     _updateDepth : function(delta) {
       if (this._depth === 0 && delta > 0) {
-        this.invoke('didBeginDrag');
+        this.invoke('didBeginDrag', this._getTarget());
       }
 
       this._depth += delta;
 
       if (this._depth === 0 && delta < 0) {
-        this.invoke('didEndDrag');
+        this.invoke('didEndDrag', this._getTarget());
       }
+    },
+
+    _getTarget: function() {
+      return this._target || this._node;
     },
 
     start : function() {
@@ -68,73 +88,105 @@ JX.install('PhabricatorDragAndDropFileUpload', {
 
       // Firefox has some issues sometimes; implement this click handler so
       // the user can recover. See T5188.
-      JX.DOM.listen(
-        this._node,
-        'click',
-        null,
-        JX.bind(this, function (e) {
-          if (this._depth) {
-            e.kill();
-            // Force depth to 0.
-            this._updateDepth(-this._depth);
-          }
-        }));
+      var on_click = JX.bind(this, function (e) {
+        if (!this.getIsEnabled()) {
+          return;
+        }
+
+        if (this._depth) {
+          e.kill();
+          // Force depth to 0.
+          this._updateDepth(-this._depth);
+        }
+      });
 
       // We track depth so that the _node may have children inside of it and
       // not become unselected when they are dragged over.
-      JX.DOM.listen(
-        this._node,
-        'dragenter',
-        null,
-        JX.bind(this, function(e) {
-          if (contains(this._node, e.getTarget())) {
-            this._updateDepth(1);
+      var on_dragenter = JX.bind(this, function(e) {
+        if (!this.getIsEnabled()) {
+          return;
+        }
+
+        if (!this._node) {
+          var target = e.getNode(this._sigil);
+          if (target !== this._target) {
+            this._updateDepth(-this._depth);
+            this._target = target;
           }
-        }));
+        }
 
-      JX.DOM.listen(
-        this._node,
-        'dragleave',
-        null,
-        JX.bind(this, function(e) {
-          if (contains(this._node, e.getTarget())) {
-            this._updateDepth(-1);
-          }
-        }));
+        if (contains(this._getTarget(), e.getTarget())) {
+          this._updateDepth(1);
+        }
 
-      JX.DOM.listen(
-        this._node,
-        'dragover',
-        null,
-        function(e) {
-          // NOTE: We must set this, or Chrome refuses to drop files from the
-          // download shelf.
-          e.getRawEvent().dataTransfer.dropEffect = 'copy';
-          e.kill();
-        });
+      });
 
-      JX.DOM.listen(
-        this._node,
-        'drop',
-        null,
-        JX.bind(this, function(e) {
-          e.kill();
+      var on_dragleave = JX.bind(this, function(e) {
+        if (!this.getIsEnabled()) {
+          return;
+        }
 
-          var files = e.getRawEvent().dataTransfer.files;
-          for (var ii = 0; ii < files.length; ii++) {
-            this._sendRequest(files[ii]);
-          }
+        if (!this._getTarget()) {
+          return;
+        }
 
-          // Force depth to 0.
-          this._updateDepth(-this._depth);
-        }));
+        if (contains(this._getTarget(), e.getTarget())) {
+          this._updateDepth(-1);
+        }
+      });
 
-      if (JX.PhabricatorDragAndDropFileUpload.isPasteSupported()) {
+      var on_dragover = JX.bind(this, function(e) {
+        if (!this.getIsEnabled()) {
+          return;
+        }
+
+        // NOTE: We must set this, or Chrome refuses to drop files from the
+        // download shelf.
+        e.getRawEvent().dataTransfer.dropEffect = 'copy';
+        e.kill();
+      });
+
+      var on_drop = JX.bind(this, function(e) {
+        if (!this.getIsEnabled()) {
+          return;
+        }
+
+        e.kill();
+
+        var files = e.getRawEvent().dataTransfer.files;
+        for (var ii = 0; ii < files.length; ii++) {
+          this.sendRequest(files[ii]);
+        }
+
+        // Force depth to 0.
+        this._updateDepth(-this._depth);
+      });
+
+      if (this._node) {
+        JX.DOM.listen(this._node, 'click', null, on_click);
+        JX.DOM.listen(this._node, 'dragenter', null, on_dragenter);
+        JX.DOM.listen(this._node, 'dragleave', null, on_dragleave);
+        JX.DOM.listen(this._node, 'dragover', null, on_dragover);
+        JX.DOM.listen(this._node, 'drop', null, on_drop);
+      } else {
+        JX.Stratcom.listen('click', this._sigil, on_click);
+        JX.Stratcom.listen('dragenter', this._sigil, on_dragenter);
+        JX.Stratcom.listen('dragleave', this._sigil, on_dragleave);
+        JX.Stratcom.listen('dragover', this._sigil, on_dragover);
+        JX.Stratcom.listen('drop', this._sigil, on_drop);
+      }
+
+      if (JX.PhabricatorDragAndDropFileUpload.isPasteSupported() &&
+          this._node) {
         JX.DOM.listen(
           this._node,
           'paste',
           null,
           JX.bind(this, function(e) {
+            if (!this.getIsEnabled()) {
+              return;
+            }
+
             var clipboard = e.getRawEvent().clipboardData;
             if (!clipboard) {
               return;
@@ -164,13 +216,15 @@ JX.install('PhabricatorDragAndDropFileUpload', {
               if (!spec.name) {
                 spec.name = 'pasted_file';
               }
-              this._sendRequest(spec);
+              this.sendRequest(spec);
             }
           }));
       }
+
+      this.setIsEnabled(true);
     },
 
-    _sendRequest : function(spec) {
+    sendRequest : function(spec) {
       var file = new JX.PhabricatorFileUpload()
         .setRawFileObject(spec)
         .setName(spec.name)
@@ -192,6 +246,8 @@ JX.install('PhabricatorDragAndDropFileUpload', {
       file
         .setStatus('allocate')
         .update();
+
+      this.invoke('willUpload', file);
 
       var alloc_uri = this._getUploadURI(file)
         .setQueryParam('allocate', 1);
@@ -360,6 +416,7 @@ JX.install('PhabricatorDragAndDropFileUpload', {
         .setURI(r.uri)
         .setMarkup(r.html)
         .setStatus('done')
+        .setTargetNode(this._getTarget())
         .update();
 
       this.invoke('didUpload', file);

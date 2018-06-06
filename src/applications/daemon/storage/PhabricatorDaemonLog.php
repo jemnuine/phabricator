@@ -17,8 +17,6 @@ final class PhabricatorDaemonLog extends PhabricatorDaemonDAO
   protected $runningAsUser;
   protected $argv;
   protected $explicitArgv = array();
-  protected $envHash;
-  protected $envInfo;
   protected $status;
 
   protected function getConfiguration() {
@@ -26,14 +24,12 @@ final class PhabricatorDaemonLog extends PhabricatorDaemonDAO
       self::CONFIG_SERIALIZATION => array(
         'argv' => self::SERIALIZATION_JSON,
         'explicitArgv' => self::SERIALIZATION_JSON,
-        'envInfo' => self::SERIALIZATION_JSON,
       ),
       self::CONFIG_COLUMN_SCHEMA => array(
         'daemon' => 'text255',
         'host' => 'text255',
         'pid' => 'uint32',
         'runningAsUser' => 'text255?',
-        'envHash' => 'bytes40',
         'status' => 'text8',
         'daemonID' => 'text64',
       ),
@@ -41,12 +37,12 @@ final class PhabricatorDaemonLog extends PhabricatorDaemonDAO
         'status' => array(
           'columns' => array('status'),
         ),
-        'dateCreated' => array(
-          'columns' => array('dateCreated'),
-        ),
         'key_daemonID' => array(
           'columns' => array('daemonID'),
           'unique' => true,
+        ),
+        'key_modified' => array(
+          'columns' => array('dateModified'),
         ),
       ),
     ) + parent::getConfiguration();
@@ -79,10 +75,6 @@ final class PhabricatorDaemonLog extends PhabricatorDaemonDAO
 
   public function hasAutomaticCapability($capability, PhabricatorUser $viewer) {
     return false;
-  }
-
-  public function describeAutomaticCapability($capability) {
-    return null;
   }
 
 }

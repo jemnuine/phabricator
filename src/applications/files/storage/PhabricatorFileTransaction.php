@@ -1,7 +1,7 @@
 <?php
 
 final class PhabricatorFileTransaction
-  extends PhabricatorApplicationTransaction {
+  extends PhabricatorModularTransaction {
 
   public function getApplicationName() {
     return 'file';
@@ -13,6 +13,10 @@ final class PhabricatorFileTransaction
 
   public function getApplicationTransactionCommentObject() {
     return new PhabricatorFileTransactionComment();
+  }
+
+  public function getBaseTransactionClass() {
+    return 'PhabricatorFileTransactionType';
   }
 
 }

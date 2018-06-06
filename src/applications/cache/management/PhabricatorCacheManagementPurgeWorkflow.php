@@ -6,94 +6,79 @@ final class PhabricatorCacheManagementPurgeWorkflow
   protected function didConstruct() {
     $this
       ->setName('purge')
-      ->setSynopsis('Drop data from caches.')
+      ->setSynopsis(pht('Drop data from readthrough caches.'))
       ->setArguments(
         array(
           array(
-            'name'    => 'purge-all',
-            'help'    => 'Purge all caches.',
+            'name' => 'all',
+            'help' => pht('Purge all caches.'),
           ),
           array(
-            'name'    => 'purge-remarkup',
-            'help'    => 'Purge the remarkup cache.',
-          ),
-          array(
-            'name'    => 'purge-changeset',
-            'help'    => 'Purge the Differential changeset cache.',
-          ),
-          array(
-            'name'    => 'purge-general',
-            'help'    => 'Purge the general cache.',
+            'name' => 'caches',
+            'param' => 'keys',
+            'help' => pht('Purge a specific set of caches.'),
           ),
         ));
   }
 
   public function execute(PhutilArgumentParser $args) {
-    $console = PhutilConsole::getConsole();
+    $all_purgers = PhabricatorCachePurger::getAllPurgers();
 
-    $purge_all = $args->getArg('purge-all');
+    $is_all = $args->getArg('all');
+    $key_list = $args->getArg('caches');
 
-    $purge = array(
-      'remarkup'  => $purge_all || $args->getArg('purge-remarkup'),
-      'changeset' => $purge_all || $args->getArg('purge-changeset'),
-      'general'   => $purge_all || $args->getArg('purge-general'),
-    );
-
-    if (!array_filter($purge)) {
-      $list = array();
-      foreach ($purge as $key => $ignored) {
-        $list[] = "'--purge-".$key."'";
-      }
-
+    if ($is_all && strlen($key_list)) {
       throw new PhutilArgumentUsageException(
-        "Specify which cache or caches to purge, or use '--purge-all'. ".
-        "Available caches are: ".implode(', ', $list).". Use '--help' ".
-        "for more information.");
+        pht(
+          'Specify either "--all" or "--caches", not both.'));
+    } else if (!$is_all && !strlen($key_list)) {
+      throw new PhutilArgumentUsageException(
+        pht(
+          'Select caches to purge with "--all" or "--caches". Available '.
+          'caches are: %s.',
+          implode(', ', array_keys($all_purgers))));
     }
 
-    if ($purge['remarkup']) {
-      $console->writeOut('Purging remarkup cache...');
-      $this->purgeRemarkupCache();
-      $console->writeOut("done.\n");
+    if ($is_all) {
+      $purgers = $all_purgers;
+    } else {
+      $key_list = preg_split('/[\s,]+/', $key_list);
+      $purgers = array();
+      foreach ($key_list as $key) {
+        if (isset($all_purgers[$key])) {
+          $purgers[$key] = $all_purgers[$key];
+        } else {
+          throw new PhutilArgumentUsageException(
+            pht(
+              'Cache purger "%s" is not recognized. Available caches '.
+              'are: %s.',
+              $key,
+              implode(', ', array_keys($all_purgers))));
+        }
+      }
+      if (!$purgers) {
+        throw new PhutilArgumentUsageException(
+          pht(
+            'When using "--caches", you must select at least one valid '.
+            'cache to purge.'));
+      }
     }
 
-    if ($purge['changeset']) {
-      $console->writeOut('Purging changeset cache...');
-      $this->purgeChangesetCache();
-      $console->writeOut("done.\n");
+    $viewer = $this->getViewer();
+
+    foreach ($purgers as $key => $purger) {
+      $purger->setViewer($viewer);
+
+      echo tsprintf(
+        "%s\n",
+        pht(
+          'Purging "%s" cache...',
+          $key));
+
+      $purger->purgeCache();
     }
 
-    if ($purge['general']) {
-      $console->writeOut('Purging general cache...');
-      $this->purgeGeneralCache();
-      $console->writeOut("done.\n");
-    }
-  }
-
-  private function purgeRemarkupCache() {
-    $conn_w = id(new PhabricatorMarkupCache())->establishConnection('w');
-
-    queryfx(
-      $conn_w,
-      'TRUNCATE TABLE %T',
-      id(new PhabricatorMarkupCache())->getTableName());
-  }
-
-  private function purgeChangesetCache() {
-    $conn_w = id(new DifferentialChangeset())->establishConnection('w');
-    queryfx(
-      $conn_w,
-      'TRUNCATE TABLE %T',
-      DifferentialChangeset::TABLE_CACHE);
-  }
-
-  private function purgeGeneralCache() {
-    $conn_w = id(new PhabricatorMarkupCache())->establishConnection('w');
-
-    queryfx(
-      $conn_w,
-      'TRUNCATE TABLE %T',
-      'cache_general');
+    return 0;
   }
 
 }

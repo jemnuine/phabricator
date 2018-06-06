@@ -24,25 +24,31 @@ final class PhabricatorStorageManagementAdjustWorkflow
         ));
   }
 
-  public function execute(PhutilArgumentParser $args) {
-    $force = $args->getArg('force');
+  public function didExecute(PhutilArgumentParser $args) {
     $unsafe = $args->getArg('unsafe');
-    $dry_run = $args->getArg('dryrun');
 
-    $this->requireAllPatchesApplied();
-    return $this->adjustSchemata($force, $unsafe, $dry_run);
+    foreach ($this->getMasterAPIs() as $api) {
+      $this->requireAllPatchesApplied($api);
+      $err = $this->adjustSchemata($api, $unsafe);
+      if ($err) {
+        return $err;
+      }
+    }
+
+    return 0;
   }
 
-  private function requireAllPatchesApplied() {
-    $api = $this->getAPI();
+  private function requireAllPatchesApplied(
+    PhabricatorStorageManagementAPI $api) {
     $applied = $api->getAppliedPatches();
 
     if ($applied === null) {
       throw new PhutilArgumentUsageException(
         pht(
           'You have not initialized the database yet. You must initialize '.
-          'the database before you can adjust schemata. Run `storage upgrade` '.
-          'to initialize the database.'));
+          'the database before you can adjust schemata. Run `%s` '.
+          'to initialize the database.',
+          'storage upgrade'));
     }
 
     $applied = array_fuse($applied);
@@ -56,8 +62,9 @@ final class PhabricatorStorageManagementAdjustWorkflow
         pht(
           'You have not applied all available storage patches yet. You must '.
           'apply all available patches before you can adjust schemata. '.
-          'Run `storage status` to show patch status, and `storage upgrade` '.
-          'to apply missing patches.'));
+          'Run `%s` to show patch status, and `%s` to apply missing patches.',
+          'storage status',
+          'storage upgrade'));
     }
   }
 

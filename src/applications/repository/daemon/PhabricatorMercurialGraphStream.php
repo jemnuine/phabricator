@@ -100,7 +100,10 @@ final class PhabricatorMercurialGraphStream
     }
 
     throw new Exception(
-      "No such {$until_type} '{$until_name}' in repository!");
+      pht(
+        "No such %s '%s' in repository!",
+        $until_type,
+        $until_name));
   }
 
 
@@ -110,7 +113,7 @@ final class PhabricatorMercurialGraphStream
   private function parseParents($parents, $target_rev) {
 
     // The hg '{parents}' token is empty if there is one "natural" parent
-    // (predecessor local commit ID). Othwerwise, it may have one or two
+    // (predecessor local commit ID). Otherwise, it may have one or two
     // parents. The string looks like this:
     //
     //  151:1f6c61a60586 154:1d5f799ebe1e

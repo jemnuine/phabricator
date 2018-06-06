@@ -39,10 +39,13 @@ final class DarkConsoleErrorLogPlugin extends DarkConsolePlugin {
       $file = $row['file'];
       $line = $row['line'];
 
-      $tag = phutil_tag(
+      $tag = javelin_tag(
         'a',
         array(
-          'onclick' => jsprintf('show_details(%d)', $index),
+          'sigil' => 'darkconsole-expand',
+          'meta' => array(
+            'expandID' => 'row-details-'.$index,
+          ),
         ),
         $row['str'].' at ['.basename($file).':'.$line.']');
       $rows[] = array($tag);
@@ -64,7 +67,7 @@ final class DarkConsoleErrorLogPlugin extends DarkConsolePlugin {
           $line .= ' called at ['.$entry['file'].':'.$entry['line'].']';
           try {
             $user = $this->getRequest()->getUser();
-            $href = $user->loadEditorLink($entry['file'], $entry['line'], '');
+            $href = $user->loadEditorLink($entry['file'], $entry['line'], null);
           } catch (Exception $ex) {
             // The database can be inaccessible.
           }
@@ -84,8 +87,8 @@ final class DarkConsoleErrorLogPlugin extends DarkConsolePlugin {
 
     $table = new AphrontTableView($rows);
     $table->setClassName('error-log');
-    $table->setHeaders(array('Error'));
-    $table->setNoDataString('No errors.');
+    $table->setHeaders(array(pht('Error')));
+    $table->setNoDataString(pht('No errors.'));
 
     return phutil_tag(
       'div',

@@ -9,16 +9,22 @@
  * low-level query can.
  *
  * This class can resolve the most common refs (commits, branches, tags) and
- * can do so cheapy (by examining the database, without needing to make calls
+ * can do so cheaply (by examining the database, without needing to make calls
  * to the VCS or the service host).
  */
 final class DiffusionCachedResolveRefsQuery
   extends DiffusionLowLevelQuery {
 
   private $refs;
+  private $types;
 
   public function withRefs(array $refs) {
     $this->refs = $refs;
+    return $this;
+  }
+
+  public function withTypes(array $types) {
+    $this->types = $types;
     return $this;
   }
 
@@ -36,7 +42,11 @@ final class DiffusionCachedResolveRefsQuery
         $result = $this->resolveSubversionRefs();
         break;
       default:
-        throw new Exception('Unsupported repository type!');
+        throw new Exception(pht('Unsupported repository type!'));
+    }
+
+    if ($this->types !== null) {
+      $result = $this->filterRefsByType($result, $this->types);
     }
 
     return $result;
@@ -96,9 +106,11 @@ final class DiffusionCachedResolveRefsQuery
 
     $cursors = queryfx_all(
       $conn_r,
-      'SELECT refNameHash, refType, commitIdentifier FROM %T
-        WHERE repositoryPHID = %s AND refNameHash IN (%Ls)',
+      'SELECT c.refNameHash, c.refType, p.commitIdentifier, p.isClosed
+        FROM %T c JOIN %T p ON p.cursorID = c.id
+        WHERE c.repositoryPHID = %s AND c.refNameHash IN (%Ls)',
       id(new PhabricatorRepositoryRefCursor())->getTableName(),
+      id(new PhabricatorRepositoryRefPosition())->getTableName(),
       $repository->getPHID(),
       array_keys($name_hashes));
 
@@ -107,6 +119,7 @@ final class DiffusionCachedResolveRefsQuery
         $results[$name_hashes[$cursor['refNameHash']]][] = array(
           'type' => $cursor['refType'],
           'identifier' => $cursor['commitIdentifier'],
+          'closed' => (bool)$cursor['isClosed'],
         );
 
         // TODO: In Git, we don't store (and thus don't return) the hash

@@ -31,21 +31,16 @@ final class PhabricatorHelpDocumentationController
       $list->addItem(
         id(new PHUIObjectItemView())
           ->setHeader($item->getName())
-          ->setWorkflow($item->getWorkflow())
           ->setHref($item->getHref()));
     }
 
     $crumbs = $this->buildApplicationCrumbs();
     $crumbs->addTextCrumb($title);
 
-    return $this->buildApplicationPage(
-      array(
-        $crumbs,
-        $list,
-      ),
-      array(
-        'title' => $title,
-      ));
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($list);
   }
 
 

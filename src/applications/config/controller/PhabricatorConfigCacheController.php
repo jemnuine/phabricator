@@ -9,39 +9,45 @@ final class PhabricatorConfigCacheController
     $nav = $this->buildSideNavView();
     $nav->selectFilter('cache/');
 
-    $title = pht('Cache Status');
+    $purge_button = id(new PHUIButtonView())
+      ->setText(pht('Purge Caches'))
+      ->setHref('/config/cache/purge/')
+      ->setTag('a')
+      ->setWorkflow(true)
+      ->setIcon('fa-exclamation-triangle');
 
-    $crumbs = $this
-      ->buildApplicationCrumbs()
-      ->addTextCrumb(pht('Cache Status'));
+    $title = pht('Cache Status');
+    $header = $this->buildHeaderView($title, $purge_button);
 
     $code_box = $this->renderCodeBox();
     $data_box = $this->renderDataBox();
 
-    $nav->appendChild(
-      array(
-        $crumbs,
-        $code_box,
-        $data_box,
-      ));
+    $page = array(
+      $code_box,
+      $data_box,
+    );
 
-    return $this->buildApplicationPage(
-      $nav,
-      array(
-        'title' => $title,
-      ));
+    $crumbs = $this->buildApplicationCrumbs()
+      ->addTextCrumb($title)
+      ->setBorder(true);
+
+    $content = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->setNavigation($nav)
+      ->setFixed(true)
+      ->setMainColumn($page);
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($content);
   }
 
   private function renderCodeBox() {
     $cache = PhabricatorOpcodeCacheSpec::getActiveCacheSpec();
-
     $properties = id(new PHUIPropertyListView());
-
     $this->renderCommonProperties($properties, $cache);
-
-    return id(new PHUIObjectBoxView())
-      ->setHeaderText(pht('Opcode Cache'))
-      ->addPropertyList($properties);
+    return $this->buildConfigBoxView(pht('Opcode Cache'), $properties);
   }
 
   private function renderDataBox() {
@@ -89,10 +95,9 @@ final class PhabricatorConfigCacheController
           ));
     }
 
-    return id(new PHUIObjectBoxView())
-      ->setHeaderText(pht('Data Cache'))
-      ->addPropertyList($properties)
-      ->appendChild($table);
+    $properties = $this->buildConfigBoxView(pht('Data Cache'), $properties);
+    $table = $this->buildConfigBoxView(pht('Cache Storage'), $table);
+    return array($properties, $table);
   }
 
   private function renderCommonProperties(
@@ -147,7 +152,7 @@ final class PhabricatorConfigCacheController
 
   private function renderYes($info) {
     return array(
-      id(new PHUIIconView())->setIconFont('fa-check', 'green'),
+      id(new PHUIIconView())->setIcon('fa-check', 'green'),
       ' ',
       $info,
     );
@@ -155,7 +160,7 @@ final class PhabricatorConfigCacheController
 
   private function renderNo($info) {
     return array(
-      id(new PHUIIconView())->setIconFont('fa-times-circle', 'red'),
+      id(new PHUIIconView())->setIcon('fa-times-circle', 'red'),
       ' ',
       $info,
     );
@@ -163,7 +168,7 @@ final class PhabricatorConfigCacheController
 
   private function renderInfo($info) {
     return array(
-      id(new PHUIIconView())->setIconFont('fa-info-circle', 'grey'),
+      id(new PHUIIconView())->setIcon('fa-info-circle', 'grey'),
       ' ',
       $info,
     );

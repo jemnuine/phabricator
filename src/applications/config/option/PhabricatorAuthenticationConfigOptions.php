@@ -11,7 +11,7 @@ final class PhabricatorAuthenticationConfigOptions
     return pht('Options relating to authentication.');
   }
 
-  public function getFontIcon() {
+  public function getIcon() {
     return 'fa-key';
   }
 
@@ -55,8 +55,8 @@ final class PhabricatorAuthenticationConfigOptions
             "registration, you can disable the queue to reduce administrative ".
             "overhead.\n\n".
             "NOTE: Before you disable the queue, make sure ".
-            "{{auth.email-domains}} is configured correctly for your ".
-            "install!")),
+            "{{auth.email-domains}} is configured correctly ".
+            "for your install!")),
       $this->newOption('auth.email-domains', 'list<string>', array())
         ->setSummary(pht('Only allow registration from particular domains.'))
         ->setDescription(
@@ -73,14 +73,6 @@ final class PhabricatorAuthenticationConfigOptions
         ->addExample(
           "yourcompany.com\nmail.yourcompany.com",
           pht('Valid Setting')),
-      $this->newOption('auth.login-message', 'string', null)
-        ->setLocked(true)
-        ->setSummary(pht('A block of HTML displayed on the login screen.'))
-        ->setDescription(
-          pht(
-            "You can provide an arbitrary block of HTML here, which will ".
-            "appear on the login screen. Normally, you'd use this to provide ".
-            "login or registration instructions to users.")),
       $this->newOption('account.editable', 'bool', true)
         ->setBoolOptions(
           array(
@@ -89,15 +81,16 @@ final class PhabricatorAuthenticationConfigOptions
           ))
         ->setSummary(
           pht(
-            'Determines whether or not basic account information is '.
-            'editable.'))
+            'Determines whether or not basic account information is editable.'))
         ->setDescription(
           pht(
-            'Is basic account information (email, real name, profile '.
-            'picture) editable? If you set up Phabricator to automatically '.
-            'synchronize account information from some other authoritative '.
-            'system, you can disable this to ensure information remains '.
-            'consistent across both systems.')),
+            'This option controls whether users can edit account email '.
+            'addresses and profile real names.'.
+            "\n\n".
+            'If you set up Phabricator to automatically synchronize account '.
+            'information from some other authoritative system, you can '.
+            'prevent users from making these edits to ensure information '.
+            'remains consistent across both systems.')),
       $this->newOption('account.minimum-password-length', 'int', 8)
         ->setSummary(pht('Minimum password length.'))
         ->setDescription(

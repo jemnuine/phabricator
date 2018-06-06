@@ -1,16 +1,35 @@
 <?php
 
-abstract class DiffusionGitSSHWorkflow extends DiffusionSSHWorkflow {
+abstract class DiffusionGitSSHWorkflow
+  extends DiffusionSSHWorkflow
+  implements DiffusionRepositoryClusterEngineLogInterface {
+
+  private $engineLogProperties = array();
 
   protected function writeError($message) {
     // Git assumes we'll add our own newlines.
     return parent::writeError($message."\n");
   }
 
+  public function writeClusterEngineLogMessage($message) {
+    parent::writeError($message);
+    $this->getErrorChannel()->update();
+  }
+
+  public function writeClusterEngineLogProperty($key, $value) {
+    $this->engineLogProperties[$key] = $value;
+  }
+
+  protected function getClusterEngineLogProperty($key, $default = null) {
+    return idx($this->engineLogProperties, $key, $default);
+  }
+
   protected function identifyRepository() {
     $args = $this->getArgs();
     $path = head($args->getArg('dir'));
-    return $this->loadRepositoryWithPath($path);
+    return $this->loadRepositoryWithPath(
+      $path,
+      PhabricatorRepositoryType::REPOSITORY_TYPE_GIT);
   }
 
   protected function waitForGitClient() {
@@ -24,6 +43,16 @@ abstract class DiffusionGitSSHWorkflow extends DiffusionSSHWorkflow {
       $this->getErrorChannel()->flush();
       PhutilChannel::waitForAny(array($io_channel));
     }
+  }
+
+  protected function raiseWrongVCSException(
+    PhabricatorRepository $repository) {
+    throw new Exception(
+      pht(
+        'This repository ("%s") is not a Git repository. Use "%s" to '.
+        'interact with this repository.',
+        $repository->getDisplayName(),
+        $repository->getVersionControlSystem()));
   }
 
 }

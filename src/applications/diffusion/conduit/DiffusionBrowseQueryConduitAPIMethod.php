@@ -8,9 +8,9 @@ final class DiffusionBrowseQueryConduitAPIMethod
   }
 
   public function getMethodDescription() {
-    return
+    return pht(
       'File(s) information for a repository at an (optional) path and '.
-      '(optional) commit.';
+      '(optional) commit.');
   }
 
   protected function defineReturnType() {
@@ -22,6 +22,8 @@ final class DiffusionBrowseQueryConduitAPIMethod
       'path' => 'optional string',
       'commit' => 'optional string',
       'needValidityOnly' => 'optional bool',
+      'limit' => 'optional int',
+      'offset' => 'optional int',
     );
   }
 
@@ -35,6 +37,8 @@ final class DiffusionBrowseQueryConduitAPIMethod
     $repository = $drequest->getRepository();
     $path = $request->getValue('path');
     $commit = $request->getValue('commit');
+    $offset = (int)$request->getValue('offset');
+    $limit = (int)$request->getValue('limit');
     $result = $this->getEmptyResultSet();
 
     if ($path == '') {
@@ -48,7 +52,37 @@ final class DiffusionBrowseQueryConduitAPIMethod
           $commit,
           $path);
       } catch (CommandException $e) {
-        $stderr = $e->getStdErr();
+        // The "cat-file" command may fail if the path legitimately does not
+        // exist, but it may also fail if the path is a submodule. This can
+        // produce either "Not a valid object name" or "could not get object
+        // info".
+
+        // To detect if we have a submodule, use `git ls-tree`. If the path
+        // is a submodule, we'll get a "160000" mode mask with type "commit".
+
+        list($sub_err, $sub_stdout) = $repository->execLocalCommand(
+          'ls-tree %s -- %s',
+          $commit,
+          $path);
+        if (!$sub_err) {
+          // If the path failed "cat-file" but "ls-tree" worked, we assume it
+          // must be a submodule. If it is, the output will look something
+          // like this:
+          //
+          //   160000 commit <hash> <path>
+          //
+          // We make sure it has the 160000 mode mask to confirm that it's
+          // definitely a submodule.
+          $mode = (int)$sub_stdout;
+          if ($mode & 160000) {
+            $submodule_reason = DiffusionBrowseResultSet::REASON_IS_SUBMODULE;
+            $result
+              ->setReasonForEmptyResultSet($submodule_reason);
+            return $result;
+          }
+        }
+
+        $stderr = $e->getStderr();
         if (preg_match('/^fatal: Not a valid object name/', $stderr)) {
           // Grab two logs, since the first one is when the object was deleted.
           list($stdout) = $repository->execxLocalCommand(
@@ -99,8 +133,13 @@ final class DiffusionBrowseQueryConduitAPIMethod
       $prefix = '';
     }
 
+    $count = 0;
     $results = array();
-    foreach (explode("\0", rtrim($stdout)) as $line) {
+    $lines = empty($stdout)
+           ? array()
+           : explode("\0", rtrim($stdout));
+
+    foreach ($lines as $line) {
       // NOTE: Limit to 5 components so we parse filenames with spaces in them
       // correctly.
       // NOTE: The output uses a mixture of tabs and one-or-more spaces to
@@ -140,7 +179,15 @@ final class DiffusionBrowseQueryConduitAPIMethod
       $path_result->setFileType($file_type);
       $path_result->setFileSize($size);
 
-      $results[] = $path_result;
+      if ($count >= $offset) {
+        $results[] = $path_result;
+      }
+
+      $count++;
+
+      if ($limit && $count >= ($offset + $limit)) {
+        break;
+      }
     }
 
     // If we identified submodules, lookup the module info at this commit to
@@ -196,6 +243,8 @@ final class DiffusionBrowseQueryConduitAPIMethod
     $repository = $drequest->getRepository();
     $path = $request->getValue('path');
     $commit = $request->getValue('commit');
+    $offset = (int)$request->getValue('offset');
+    $limit = (int)$request->getValue('limit');
     $result = $this->getEmptyResultSet();
 
 
@@ -215,6 +264,7 @@ final class DiffusionBrowseQueryConduitAPIMethod
     // but ours do.
     $trim_len = $match_len ? $match_len + 1 : 0;
 
+    $count = 0;
     foreach ($entire_manifest as $path) {
       if (strncmp($path, $match_against, $match_len)) {
         continue;
@@ -230,13 +280,31 @@ final class DiffusionBrowseQueryConduitAPIMethod
           DiffusionBrowseResultSet::REASON_IS_FILE);
         return $result;
       }
+
       $parts = explode('/', $remainder);
+      $name = reset($parts);
+
+      // If we've already seen this path component, we're looking at a file
+      // inside a directory we already processed. Just move on.
+      if (isset($results[$name])) {
+        continue;
+      }
+
       if (count($parts) == 1) {
         $type = DifferentialChangeType::FILE_NORMAL;
       } else {
         $type = DifferentialChangeType::FILE_DIRECTORY;
       }
-      $results[reset($parts)] = $type;
+
+      if ($count >= $offset) {
+        $results[$name] = $type;
+      }
+
+      $count++;
+
+      if ($limit && ($count >= ($offset + $limit))) {
+        break;
+      }
     }
 
     foreach ($results as $key => $type) {
@@ -266,6 +334,8 @@ final class DiffusionBrowseQueryConduitAPIMethod
     $repository = $drequest->getRepository();
     $path = $request->getValue('path');
     $commit = $request->getValue('commit');
+    $offset = (int)$request->getValue('offset');
+    $limit = (int)$request->getValue('limit');
     $result = $this->getEmptyResultSet();
 
     $subpath = $repository->getDetail('svn-subpath');
@@ -422,6 +492,7 @@ final class DiffusionBrowseQueryConduitAPIMethod
     $path_normal = DiffusionPathIDQuery::normalizePath($path);
 
     $results = array();
+    $count = 0;
     foreach ($browse as $file) {
 
       $full_path = $file['pathName'];
@@ -431,9 +502,7 @@ final class DiffusionBrowseQueryConduitAPIMethod
       $result_path = new DiffusionRepositoryPath();
       $result_path->setPath($file_path);
       $result_path->setFullPath($full_path);
-//      $result_path->setHash($hash);
       $result_path->setFileType($file['fileType']);
-//      $result_path->setFileSize($size);
 
       if (!empty($file['hasCommit'])) {
         $commit = idx($commits, $file['svnCommit']);
@@ -444,7 +513,15 @@ final class DiffusionBrowseQueryConduitAPIMethod
         }
       }
 
-      $results[] = $result_path;
+      if ($count >= $offset) {
+        $results[] = $result_path;
+      }
+
+      $count++;
+
+      if ($limit && ($count >= ($offset + $limit))) {
+        break;
+      }
     }
 
     if (empty($results)) {

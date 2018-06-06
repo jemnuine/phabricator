@@ -24,6 +24,7 @@ final class PhabricatorHandleList
 
   private $handlePool;
   private $phids;
+  private $count;
   private $handles;
   private $cursor;
   private $map;
@@ -35,6 +36,7 @@ final class PhabricatorHandleList
 
   public function setPHIDs(array $phids) {
     $this->phids = $phids;
+    $this->count = count($phids);
     return $this;
   }
 
@@ -69,6 +71,24 @@ final class PhabricatorHandleList
     }
 
     return idx($this->handles, $phid, $default);
+  }
+
+
+  /**
+   * Create a new list with a subset of the PHIDs in this list.
+   */
+  public function newSublist(array $phids) {
+    foreach ($phids as $phid) {
+      if (!isset($this[$phid])) {
+        throw new Exception(
+          pht(
+            'Trying to create a new sublist of an existing handle list, '.
+            'but PHID "%s" does not appear in the parent list.',
+            $phid));
+      }
+    }
+
+    return $this->handlePool->newHandleList($phids);
   }
 
 
@@ -119,7 +139,7 @@ final class PhabricatorHandleList
   }
 
   public function valid() {
-    return isset($this->phids[$this->cursor]);
+    return ($this->cursor < $this->count);
   }
 
 
@@ -156,8 +176,9 @@ final class PhabricatorHandleList
   private function raiseImmutableException() {
     throw new Exception(
       pht(
-        'Trying to mutate a PhabricatorHandleList, but this is not permitted; '.
-        'handle lists are immutable.'));
+        'Trying to mutate a %s, but this is not permitted; '.
+        'handle lists are immutable.',
+        __CLASS__));
   }
 
 
@@ -165,7 +186,7 @@ final class PhabricatorHandleList
 
 
   public function count() {
-    return count($this->phids);
+    return $this->count;
   }
 
 }

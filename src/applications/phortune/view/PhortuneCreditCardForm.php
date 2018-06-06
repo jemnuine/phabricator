@@ -1,6 +1,6 @@
 <?php
 
-final class PhortuneCreditCardForm {
+final class PhortuneCreditCardForm extends Phobject {
 
   private $formID;
   private $scripts = array();
@@ -81,20 +81,20 @@ final class PhortuneCreditCardForm {
       ->setID($form_id)
       ->appendChild(
         id(new AphrontFormTextControl())
-          ->setLabel('Card Number')
+          ->setLabel(pht('Card Number'))
           ->setDisableAutocomplete(true)
           ->setSigil('number-input')
           ->setError($e_number))
       ->appendChild(
         id(new AphrontFormTextControl())
-          ->setLabel('CVC')
+          ->setLabel(pht('CVC'))
           ->setDisableAutocomplete(true)
           ->addClass('aphront-form-cvc-input')
           ->setSigil('cvc-input')
           ->setError($e_cvc))
       ->appendChild(
         id(new PhortuneMonthYearExpiryControl())
-          ->setLabel('Expiration')
+          ->setLabel(pht('Expiration'))
           ->setUser($this->user)
           ->setError($e_expiry));
 
@@ -107,7 +107,7 @@ final class PhortuneCreditCardForm {
         ),
         array(
           id(new PHUIIconView())
-            ->setIconFont('fa-lock grey'),
+            ->setIcon('fa-lock grey'),
           ' ',
           $assurance,
         ));

@@ -3,16 +3,16 @@
 final class PhabricatorStatusUIExample extends PhabricatorUIExample {
 
   public function getName() {
-    return 'Status List';
+    return pht('Status List');
   }
 
   public function getDescription() {
-    return hsprintf(
-      'Use <tt>PHUIStatusListView</tt> to show relationships with objects.');
+    return pht(
+      'Use %s to show relationships with objects.',
+      phutil_tag('tt', array(), 'PHUIStatusListView'));
   }
 
   public function renderExample() {
-
     $out = array();
 
     $view = new PHUIStatusListView();
@@ -33,7 +33,7 @@ final class PhabricatorStatusUIExample extends PhabricatorUIExample {
     $view->addItem(
       id(new PHUIStatusItemView())
         ->setIcon(PHUIStatusItemView::ICON_WARNING, 'dark', pht('Caution'))
-        ->setTarget(pht('Pomegranite'))
+        ->setTarget(pht('Pomegranate'))
         ->setNote(pht('Lots of seeds. Watch out.')));
 
     $view->addItem(

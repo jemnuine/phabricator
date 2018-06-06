@@ -20,6 +20,7 @@ final class DiffusionBrowseTableView extends DiffusionView {
   public function render() {
     $request = $this->getDiffusionRequest();
     $repository = $request->getRepository();
+    require_celerity_resource('diffusion-css');
 
     $base_path = trim($request->getPath(), '/');
     if ($base_path) {
@@ -30,6 +31,7 @@ final class DiffusionBrowseTableView extends DiffusionView {
     $rows = array();
     $show_edit = false;
     foreach ($this->paths as $path) {
+      $full_path = $base_path.$path->getPath();
 
       $dir_slash = null;
       $file_type = $path->getFileType();
@@ -38,40 +40,47 @@ final class DiffusionBrowseTableView extends DiffusionView {
         $dir_slash = '/';
 
         $browse_link = phutil_tag('strong', array(), $this->linkBrowse(
-          $base_path.$path->getPath().$dir_slash,
+          $full_path.$dir_slash,
           array(
-            'text' => $this->renderPathIcon('dir', $browse_text),
+            'type' => $file_type,
+            'name' => $browse_text,
           )));
+
+        $history_path = $full_path.'/';
       } else if ($file_type == DifferentialChangeType::FILE_SUBMODULE) {
         $browse_text = $path->getPath().'/';
-        $browse_link = phutil_tag('strong', array(), $this->linkExternal(
-          $path->getHash(),
-          $path->getExternalURI(),
-          $this->renderPathIcon('ext', $browse_text)));
+        $browse_link = phutil_tag('strong', array(), $this->linkBrowse(
+          null,
+          array(
+            'type' => $file_type,
+            'name' => $browse_text,
+            'hash' => $path->getHash(),
+            'external' => $path->getExternalURI(),
+          )));
+
+        $history_path = $full_path.'/';
       } else {
-        if ($file_type == DifferentialChangeType::FILE_SYMLINK) {
-          $type = 'link';
-        } else {
-          $type = 'file';
-        }
         $browse_text = $path->getPath();
         $browse_link = $this->linkBrowse(
-          $base_path.$path->getPath(),
+          $full_path,
           array(
-            'text' => $this->renderPathIcon($type, $browse_text),
+            'type' => $file_type,
+            'name' => $browse_text,
           ));
+
+        $history_path = $full_path;
       }
+
+      $history_link = $this->linkHistory($history_path);
 
       $dict = array(
         'lint'      => celerity_generate_unique_node_id(),
-        'commit'    => celerity_generate_unique_node_id(),
         'date'      => celerity_generate_unique_node_id(),
-        'time'      => celerity_generate_unique_node_id(),
         'author'    => celerity_generate_unique_node_id(),
         'details'   => celerity_generate_unique_node_id(),
       );
 
-      $need_pull[$base_path.$path->getPath().$dir_slash] = $dict;
+      $need_pull[$full_path.$dir_slash] = $dict;
       foreach ($dict as $k => $uniq) {
         $dict[$k] = phutil_tag('span', array('id' => $uniq), '');
       }
@@ -79,12 +88,11 @@ final class DiffusionBrowseTableView extends DiffusionView {
       $rows[] = array(
         $browse_link,
         idx($dict, 'lint'),
-        $dict['commit'],
-        $dict['author'],
         $dict['details'],
         $dict['date'],
-        $dict['time'],
+        $history_link,
       );
+
     }
 
     if ($need_pull) {
@@ -105,32 +113,18 @@ final class DiffusionBrowseTableView extends DiffusionView {
     $lint = $request->getLint();
 
     $view = new AphrontTableView($rows);
-    $view->setHeaders(
-      array(
-        pht('Path'),
-        ($lint ? $lint : pht('Lint')),
-        pht('Modified'),
-        pht('Author/Committer'),
-        pht('Details'),
-        pht('Date'),
-        pht('Time'),
-      ));
     $view->setColumnClasses(
       array(
         '',
-        'n',
-        'n',
         '',
-        'wide',
-        '',
+        'wide commit-detail',
         'right',
+        'right narrow',
       ));
     $view->setColumnVisibility(
       array(
         true,
         $show_lint,
-        true,
-        true,
         true,
         true,
         true,
@@ -140,27 +134,13 @@ final class DiffusionBrowseTableView extends DiffusionView {
       array(
         true,
         false,
-        true,
         false,
-        true,
         false,
         false,
       ));
 
 
-    return $view->render();
-  }
-
-  private function renderPathIcon($type, $text) {
-
-    require_celerity_resource('diffusion-icons-css');
-
-    return phutil_tag(
-      'span',
-      array(
-        'class' => 'diffusion-path-icon diffusion-path-icon-'.$type,
-      ),
-      $text);
+    return phutil_tag_div('diffusion-browse-table', $view->render());
   }
 
 }

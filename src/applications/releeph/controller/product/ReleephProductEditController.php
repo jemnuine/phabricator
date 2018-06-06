@@ -2,20 +2,13 @@
 
 final class ReleephProductEditController extends ReleephProductController {
 
-  private $productID;
-
-  public function willProcessRequest(array $data) {
-    $this->productID = $data['projectID'];
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
-    $viewer = $request->getUser();
+  public function handleRequest(AphrontRequest $request) {
+    $viewer = $request->getViewer();
+    $id = $request->getURIData('projectID');
 
     $product = id(new ReleephProductQuery())
       ->setViewer($viewer)
-      ->withIDs(array($this->productID))
-      ->needArcanistProjects(true)
+      ->withIDs(array($id))
       ->requireCapabilities(
         array(
           PhabricatorPolicyCapability::CAN_VIEW,
@@ -48,7 +41,7 @@ final class ReleephProductEditController extends ReleephProductController {
       $test_paths = $product->getDetail('testPaths', array());
     }
 
-    $arc_project_id = $product->getArcanistProjectID();
+    $repository_phid = $product->getRepositoryPHID();
 
     if ($request->isFormPost()) {
       $pusher_phids = $request->getArr('pushers');
@@ -56,7 +49,7 @@ final class ReleephProductEditController extends ReleephProductController {
       if (!$product_name) {
         $e_name = pht('Required');
         $errors[] =
-          pht('Your releeph product should have a simple descriptive name.');
+          pht('Your Releeph product should have a simple descriptive name.');
       }
 
       if (!$trunk_branch) {
@@ -92,8 +85,9 @@ final class ReleephProductEditController extends ReleephProductController {
         ->setDetail('branchTemplate', $branch_template)
         ->setDetail('testPaths', $test_paths);
 
-      $fake_commit_handle =
-        ReleephBranchTemplate::getFakeCommitHandleFor($arc_project_id, $viewer);
+      $fake_commit_handle = ReleephBranchTemplate::getFakeCommitHandleFor(
+        $repository_phid,
+        $viewer);
 
       if ($branch_template) {
         list($branch_name, $template_errors) = id(new ReleephBranchTemplate())
@@ -104,7 +98,7 @@ final class ReleephProductEditController extends ReleephProductController {
         if ($template_errors) {
           $e_branch_template = pht('Whoopsies!');
           foreach ($template_errors as $template_error) {
-            $errors[] = "Template error: {$template_error}";
+            $errors[] = pht('Template error: %s', $template_error);
           }
         }
       }
@@ -136,9 +130,9 @@ final class ReleephProductEditController extends ReleephProductController {
             $product->getRepository()->getName()))
       ->appendChild(
         id(new AphrontFormStaticControl())
-          ->setLabel(pht('Arc Project'))
+          ->setLabel(pht('Repository'))
           ->setValue(
-            $product->getArcanistProject()->getName()))
+            $product->getRepository()->getName()))
       ->appendChild(
         id(new AphrontFormStaticControl())
           ->setLabel(pht('Releeph Project PHID'))
@@ -171,7 +165,7 @@ final class ReleephProductEditController extends ReleephProductController {
     $branch_template_input = id(new AphrontFormTextControl())
       ->setName('branchTemplate')
       ->setValue($branch_template)
-      ->setLabel('Branch Template')
+      ->setLabel(pht('Branch Template'))
       ->setError($e_branch_template)
       ->setCaption(
         pht("Leave this blank to use your installation's default."));
@@ -179,7 +173,7 @@ final class ReleephProductEditController extends ReleephProductController {
     $branch_template_preview = id(new ReleephBranchPreviewView())
       ->setLabel(pht('Preview'))
       ->addControl('template', $branch_template_input)
-      ->addStatic('arcProjectID', $arc_project_id)
+      ->addStatic('repositoryPHID', $repository_phid)
       ->addStatic('isSymbolic', false)
       ->addStatic('projectName', $product->getName());
 
@@ -201,22 +195,30 @@ final class ReleephProductEditController extends ReleephProductController {
           ->setValue(pht('Save')));
 
     $box = id(new PHUIObjectBoxView())
-      ->setHeaderText(pht('Edit Releeph Product'))
+      ->setHeaderText(pht('Product'))
       ->setFormErrors($errors)
+      ->setBackground(PHUIObjectBoxView::BLUE_PROPERTY)
       ->appendChild($form);
+
+    $title = pht('Edit Product');
 
     $crumbs = $this->buildApplicationCrumbs();
     $crumbs->addTextCrumb(pht('Edit Product'));
+    $crumbs->setBorder(true);
 
-    return $this->buildStandardPageResponse(
-      array(
-        $crumbs,
-        $box,
-      ),
-      array(
-        'title' => pht('Edit Releeph Product'),
-        'device' => true,
-      ));
+    $header = id(new PHUIHeaderView())
+      ->setHeader($title)
+      ->setHeaderIcon('fa-pencil');
+
+    $view = id(new PHUITwoColumnView())
+      ->setHeader($header)
+      ->setFooter($box);
+
+    return $this->newPage()
+      ->setTitle($title)
+      ->setCrumbs($crumbs)
+      ->appendChild($view);
+
   }
 
   private function getBranchHelpText() {

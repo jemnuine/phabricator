@@ -6,9 +6,8 @@ final class PhabricatorPolicyManagementShowWorkflow
   protected function didConstruct() {
     $this
       ->setName('show')
-      ->setSynopsis('Show policy information about an object.')
-      ->setExamples(
-        '**show** D123')
+      ->setSynopsis(pht('Show policy information about an object.'))
+      ->setExamples('**show** D123')
       ->setArguments(
         array(
           array(
@@ -25,8 +24,7 @@ final class PhabricatorPolicyManagementShowWorkflow
     $obj_names = $args->getArg('objects');
     if (!$obj_names) {
       throw new PhutilArgumentUsageException(
-        pht(
-          'Specify the name of an object to show policy information for.'));
+        pht('Specify the name of an object to show policy information for.'));
     } else if (count($obj_names) > 1) {
       throw new PhutilArgumentUsageException(
         pht(
@@ -67,16 +65,20 @@ final class PhabricatorPolicyManagementShowWorkflow
       $console->writeOut("    %s\n",
         PhabricatorPolicy::getPolicyExplanation($viewer, $policy->getPHID()));
       $console->writeOut("\n");
-
-      $more = (array)$object->describeAutomaticCapability($capability);
-      if ($more) {
-        foreach ($more as $line) {
-          $console->writeOut("    %s\n", $line);
-        }
-        $console->writeOut("\n");
-      }
     }
 
+    if ($object instanceof PhabricatorPolicyCodexInterface) {
+      $codex = PhabricatorPolicyCodex::newFromObject($object, $viewer);
+
+      $rules = $codex->getPolicySpecialRuleDescriptions();
+      foreach ($rules as $rule) {
+        echo tsprintf(
+          "  - %s\n",
+          $rule->getDescription());
+      }
+
+      echo "\n";
+    }
   }
 
 }

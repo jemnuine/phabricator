@@ -79,7 +79,7 @@ a config like this:
 To select a configuration file, write the name of the file (relative to
 `phabricator/conf/`) to `phabricator/conf/local/ENVIRONMENT`. For example, to
 select `phabricator/conf/custom/exampleconfig.conf.php`, you would write
-"custom/exampleconfig" to `phabrictor/conf/local/ENVIRONMENT`:
+"custom/exampleconfig" to `phabricator/conf/local/ENVIRONMENT`:
 
   phabricator/ $ echo custom/exampleconfig > conf/local/ENVIRONMENT
   phabricator/ $ cat conf/local/ENVIRONMENT
@@ -107,9 +107,10 @@ setenv.add-environment = (
 )
 ```
 
-After creating and selecting a configuration file, restart your webserver. Any
-configuration you set should take effect immediately, and your file should be
-visible in the Config application when examining configuration.
+After creating and selecting a configuration file, restart Phabricator (for
+help, see @{article:Restarting Phabricator}). Any configuration you set should
+take effect immediately, and your file should be visible in the Config
+application when examining configuration.
 
 = Next Steps =
 

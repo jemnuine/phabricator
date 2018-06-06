@@ -11,6 +11,16 @@ final class DifferentialUpdateRevisionConduitAPIMethod
     return pht('Update a Differential revision.');
   }
 
+  public function getMethodStatus() {
+    return self::METHOD_STATUS_FROZEN;
+  }
+
+  public function getMethodStatusDescription() {
+    return pht(
+      'This method is frozen and will eventually be deprecated. New code '.
+      'should use "differential.revision.edit" instead.');
+  }
+
   protected function defineParamTypes() {
     return array(
       'id'        => 'required revisionid',
@@ -26,10 +36,10 @@ final class DifferentialUpdateRevisionConduitAPIMethod
 
   protected function defineErrorTypes() {
     return array(
-      'ERR_BAD_DIFF' => 'Bad diff ID.',
-      'ERR_BAD_REVISION' => 'Bad revision ID.',
-      'ERR_WRONG_USER' => 'You are not the author of this revision.',
-      'ERR_CLOSED' => 'This revision has already been closed.',
+      'ERR_BAD_DIFF'     => pht('Bad diff ID.'),
+      'ERR_BAD_REVISION' => pht('Bad revision ID.'),
+      'ERR_WRONG_USER'   => pht('You are not the author of this revision.'),
+      'ERR_CLOSED'       => pht('This revision has already been closed.'),
     );
   }
 
@@ -47,7 +57,7 @@ final class DifferentialUpdateRevisionConduitAPIMethod
     $revision = id(new DifferentialRevisionQuery())
       ->setViewer($request->getUser())
       ->withIDs(array($request->getValue('id')))
-      ->needReviewerStatus(true)
+      ->needReviewers(true)
       ->needActiveDiffs(true)
       ->requireCapabilities(
         array(
@@ -59,7 +69,7 @@ final class DifferentialUpdateRevisionConduitAPIMethod
       throw new ConduitException('ERR_BAD_REVISION');
     }
 
-    if ($revision->getStatus() == ArcanistDifferentialRevisionStatus::CLOSED) {
+    if ($revision->isPublished()) {
       throw new ConduitException('ERR_CLOSED');
     }
 

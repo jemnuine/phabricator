@@ -8,7 +8,7 @@ final class DiffusionExistsQueryConduitAPIMethod
   }
 
   public function getMethodDescription() {
-    return 'Determine if code exists in a version control system.';
+    return pht('Determine if code exists in a version control system.');
   }
 
   protected function defineReturnType() {
@@ -33,16 +33,13 @@ final class DiffusionExistsQueryConduitAPIMethod
   protected function getSVNResult(ConduitAPIRequest $request) {
     $repository = $this->getDiffusionRequest()->getRepository();
     $commit = $request->getValue('commit');
-    list($info) = $repository->execxRemoteCommand(
-      'info %s',
-      $repository->getRemoteURI());
-    $exists = false;
-    $matches = null;
-    if (preg_match('/^Revision: (\d+)$/m', $info, $matches)) {
-      $base_revision = $matches[1];
-      $exists = $base_revision >= $commit;
-    }
-    return $exists;
+
+    $refs = id(new DiffusionCachedResolveRefsQuery())
+      ->setRepository($repository)
+      ->withRefs(array($commit))
+      ->execute();
+
+    return (bool)$refs;
   }
 
   protected function getMercurialResult(ConduitAPIRequest $request) {
@@ -50,8 +47,8 @@ final class DiffusionExistsQueryConduitAPIMethod
     $commit = $request->getValue('commit');
     list($err, $stdout) = $repository->execLocalCommand(
       'id --rev %s',
-      $commit);
-    return  !$err;
+      hgsprintf('%s', $commit));
+    return !$err;
   }
 
 }

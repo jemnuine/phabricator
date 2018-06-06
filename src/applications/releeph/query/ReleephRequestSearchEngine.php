@@ -14,6 +14,10 @@ final class ReleephRequestSearchEngine
     return 'PhabricatorReleephApplication';
   }
 
+  public function canUseInPanelContext() {
+    return false;
+  }
+
   public function setBranch(ReleephBranch $branch) {
     $this->branch = $branch;
     return $this;
@@ -157,11 +161,11 @@ final class ReleephRequestSearchEngine
     if (ReleephDefaultFieldSelector::isFacebook()) {
       return array(
         '' => pht('(All Severities)'),
-        11 => 'HOTFIX',
-        12 => 'PIGGYBACK',
-        13 => 'RELEASE',
-        14 => 'DAILY',
-        15 => 'PARKING',
+        11 => pht('HOTFIX'),
+        12 => pht('PIGGYBACK'),
+        13 => pht('RELEASE'),
+        14 => pht('DAILY'),
+        15 => pht('PARKING'),
       );
     } else {
       return array(
@@ -172,4 +176,50 @@ final class ReleephRequestSearchEngine
     }
   }
 
+  protected function renderResultList(
+    array $requests,
+    PhabricatorSavedQuery $query,
+    array $handles) {
+
+    assert_instances_of($requests, 'ReleephRequest');
+    $viewer = $this->requireViewer();
+
+    // TODO: This is generally a bit sketchy, but we don't do this kind of
+    // thing elsewhere at the moment. For the moment it shouldn't be hugely
+    // costly, and we can batch things later. Generally, this commits fewer
+    // sins than the old code did.
+
+    $engine = id(new PhabricatorMarkupEngine())
+      ->setViewer($viewer);
+
+    $list = array();
+    foreach ($requests as $pull) {
+      $field_list = PhabricatorCustomField::getObjectFields(
+        $pull,
+        PhabricatorCustomField::ROLE_VIEW);
+
+      $field_list
+        ->setViewer($viewer)
+        ->readFieldsFromStorage($pull);
+
+      foreach ($field_list->getFields() as $field) {
+        if ($field->shouldMarkup()) {
+          $field->setMarkupEngine($engine);
+        }
+      }
+
+      $list[] = id(new ReleephRequestView())
+        ->setUser($viewer)
+        ->setCustomFields($field_list)
+        ->setPullRequest($pull)
+        ->setIsListView(true);
+    }
+
+    // This is quite sketchy, but the list has not actually rendered yet, so
+    // this still allows us to batch the markup rendering.
+    $engine->process();
+
+    return id(new PhabricatorApplicationSearchResultView())
+      ->setContent($list);
+  }
 }

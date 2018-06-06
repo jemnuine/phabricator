@@ -62,9 +62,6 @@ final class DifferentialDiffEditor
         $dict = $this->diffDataDict;
         $this->updateDiffFromDict($object, $dict);
         return;
-      case PhabricatorTransactions::TYPE_VIEW_POLICY:
-        $object->setViewPolicy($xaction->getNewValue());
-        return;
     }
 
     return parent::applyCustomInternalTransaction($object, $xaction);
@@ -76,7 +73,6 @@ final class DifferentialDiffEditor
 
     switch ($xaction->getTransactionType()) {
       case DifferentialDiffTransaction::TYPE_DIFF_CREATE:
-      case PhabricatorTransactions::TYPE_VIEW_POLICY:
         return;
     }
 
@@ -110,7 +106,7 @@ final class DifferentialDiffEditor
    * We run Herald as part of transaction validation because Herald can
    * block diff creation for Differential diffs. Its important to do this
    * separately so no Herald logs are saved; these logs could expose
-   * information the Herald rules are inteneded to block.
+   * information the Herald rules are intended to block.
    */
   protected function validateTransaction(
     PhabricatorLiskDAO $object,
@@ -135,10 +131,11 @@ final class DifferentialDiffEditor
           $rules = mpull($rules, null, 'getID');
 
           $effects = $engine->applyRules($rules, $adapter);
+          $action_block = DifferentialBlockHeraldAction::ACTIONCONST;
 
           $blocking_effect = null;
           foreach ($effects as $effect) {
-            if ($effect->getAction() == HeraldAdapter::ACTION_BLOCK) {
+            if ($effect->getAction() == $action_block) {
               $blocking_effect = $effect;
               break;
             }
@@ -234,8 +231,7 @@ final class DifferentialDiffEditor
       ->setSourceControlPath(idx($dict, 'sourceControlPath'))
       ->setSourceControlBaseRevision(idx($dict, 'sourceControlBaseRevision'))
       ->setLintStatus(idx($dict, 'lintStatus'))
-      ->setUnitStatus(idx($dict, 'unitStatus'))
-      ->setArcanistProjectPHID(idx($dict, 'arcanistProjectPHID'));
+      ->setUnitStatus(idx($dict, 'unitStatus'));
 
     return $diff;
   }

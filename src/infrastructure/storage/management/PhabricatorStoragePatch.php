@@ -1,6 +1,6 @@
 <?php
 
-final class PhabricatorStoragePatch {
+final class PhabricatorStoragePatch extends Phobject {
 
   private $key;
   private $fullKey;
@@ -46,6 +46,10 @@ final class PhabricatorStoragePatch {
 
   public function isDead() {
     return $this->dead;
+  }
+
+  public function getIsGlobalPatch() {
+    return ($this->getType() == 'php');
   }
 
 }

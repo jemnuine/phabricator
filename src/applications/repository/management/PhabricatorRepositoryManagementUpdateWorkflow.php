@@ -20,18 +20,18 @@ final class PhabricatorRepositoryManagementUpdateWorkflow
       ->setExamples('**update** [options] __repository__')
       ->setSynopsis(
         pht(
-          'Update __repository__, named by callsign. '.
-          'This performs the __pull__, __discover__, __ref__ and __mirror__ '.
-          'operations and is primarily an internal workflow.'))
+          'Update __repository__. This performs the __pull__, __discover__, '.
+          '__refs__ and __mirror__ operations and is primarily an internal '.
+          'workflow.'))
       ->setArguments(
         array(
           array(
             'name'        => 'verbose',
-            'help'        => 'Show additional debugging information.',
+            'help'        => pht('Show additional debugging information.'),
           ),
           array(
             'name'        => 'no-discovery',
-            'help'        => 'Do not perform discovery.',
+            'help'        => pht('Do not perform discovery.'),
           ),
           array(
             'name'        => 'repos',
@@ -44,55 +44,51 @@ final class PhabricatorRepositoryManagementUpdateWorkflow
     $this->setVerbose($args->getArg('verbose'));
     $console = PhutilConsole::getConsole();
 
-    $repos = $this->loadRepositories($args, 'repos');
+    $repos = $this->loadLocalRepositories($args, 'repos');
     if (count($repos) !== 1) {
       throw new PhutilArgumentUsageException(
-        pht('Specify exactly one repository to update, by callsign.'));
+        pht('Specify exactly one repository to update.'));
     }
 
     $repository = head($repos);
 
     try {
-      $lock_name = 'repository.update:'.$repository->getID();
-      $lock = PhabricatorGlobalLock::newLock($lock_name);
+      id(new PhabricatorRepositoryPullEngine())
+        ->setRepository($repository)
+        ->setVerbose($this->getVerbose())
+        ->pullRepository();
 
-      $lock->lock();
-      try {
-        $no_discovery = $args->getArg('no-discovery');
-
-        id(new PhabricatorRepositoryPullEngine())
-          ->setRepository($repository)
-          ->setVerbose($this->getVerbose())
-          ->pullRepository();
-
-        if ($no_discovery) {
-          $lock->unlock();
-          return;
-        }
-
-        // TODO: It would be nice to discover only if we pulled something, but
-        // this isn't totally trivial. It's slightly more complicated with
-        // hosted repositories, too.
-
-        $repository->writeStatusMessage(
-          PhabricatorRepositoryStatusMessage::TYPE_NEEDS_UPDATE,
-          null);
-
-        $this->discoverRepository($repository);
-
-        $this->checkIfRepositoryIsFullyImported($repository);
-
-        $this->updateRepositoryRefs($repository);
-
-        $this->mirrorRepository($repository);
-
-        $repository->writeStatusMessage(
-          PhabricatorRepositoryStatusMessage::TYPE_FETCH,
-          PhabricatorRepositoryStatusMessage::CODE_OKAY);
-      } catch (Exception $ex) {
-        $lock->unlock();
-        throw $ex;
+      $no_discovery = $args->getArg('no-discovery');
+      if ($no_discovery) {
+        return 0;
       }
+
+      // TODO: It would be nice to discover only if we pulled something, but
+      // this isn't totally trivial. It's slightly more complicated with
+      // hosted repositories, too.
+
+      $repository->writeStatusMessage(
+        PhabricatorRepositoryStatusMessage::TYPE_NEEDS_UPDATE,
+        null);
+
+      $this->discoverRepository($repository);
+
+      $this->checkIfRepositoryIsFullyImported($repository);
+
+      $this->updateRepositoryRefs($repository);
+
+      $this->mirrorRepository($repository);
+
+      $repository->writeStatusMessage(
+        PhabricatorRepositoryStatusMessage::TYPE_FETCH,
+        PhabricatorRepositoryStatusMessage::CODE_OKAY);
+    } catch (DiffusionDaemonLockException $ex) {
+      // If we miss a pull or discover because some other process is already
+      // doing the work, just bail out.
+      echo tsprintf(
+        "%s\n",
+        $ex->getMessage());
+      return 0;
     } catch (Exception $ex) {
       $repository->writeStatusMessage(
         PhabricatorRepositoryStatusMessage::TYPE_FETCH,
@@ -104,12 +100,11 @@ final class PhabricatorRepositoryManagementUpdateWorkflow
       throw $ex;
     }
 
-    $lock->unlock();
-
-    $console->writeOut(
+    echo tsprintf(
+      "%s\n",
       pht(
-        'Updated repository **%s**.',
-        $repository->getMonogram())."\n");
+        'Updated repository "%s".',
+        $repository->getDisplayName()));
 
     return 0;
   }
@@ -157,15 +152,19 @@ final class PhabricatorRepositoryManagementUpdateWorkflow
       return;
     }
 
-    // Look for any commit which hasn't imported.
+    // Look for any commit which is reachable and hasn't imported.
     $unparsed_commit = queryfx_one(
       $repository->establishConnection('r'),
-      'SELECT * FROM %T WHERE repositoryID = %d AND (importStatus & %d) != %d
+      'SELECT * FROM %T WHERE repositoryID = %d
+        AND (importStatus & %d) != %d
+        AND (importStatus & %d) != %d
         LIMIT 1',
       id(new PhabricatorRepositoryCommit())->getTableName(),
       $repository->getID(),
       PhabricatorRepositoryCommit::IMPORTED_ALL,
-      PhabricatorRepositoryCommit::IMPORTED_ALL);
+      PhabricatorRepositoryCommit::IMPORTED_ALL,
+      PhabricatorRepositoryCommit::IMPORTED_UNREACHABLE,
+      PhabricatorRepositoryCommit::IMPORTED_UNREACHABLE);
     if ($unparsed_commit) {
       // We found a commit which still needs to import, so we can't clear the
       // flag.

@@ -10,12 +10,8 @@ final class PhabricatorTokensSettingsPanel extends PhabricatorSettingsPanel {
     return pht('Temporary Tokens');
   }
 
-  public function getPanelGroup() {
-    return pht('Sessions and Logs');
-  }
-
-  public function isEnabled() {
-    return true;
+  public function getPanelGroupKey() {
+    return PhabricatorSettingsLogsPanelGroup::PANELGROUPKEY;
   }
 
   public function processRequest(AphrontRequest $request) {
@@ -23,7 +19,7 @@ final class PhabricatorTokensSettingsPanel extends PhabricatorSettingsPanel {
 
     $tokens = id(new PhabricatorAuthTemporaryTokenQuery())
       ->setViewer($viewer)
-      ->withObjectPHIDs(array($viewer->getPHID()))
+      ->withTokenResources(array($viewer->getPHID()))
       ->execute();
 
     $rows = array();
@@ -34,7 +30,7 @@ final class PhabricatorTokensSettingsPanel extends PhabricatorSettingsPanel {
           'a',
           array(
             'href' => '/auth/token/revoke/'.$token->getID().'/',
-            'class' => 'small grey button',
+            'class' => 'small button button-grey',
             'sigil' => 'workflow',
           ),
           pht('Revoke'));
@@ -42,7 +38,7 @@ final class PhabricatorTokensSettingsPanel extends PhabricatorSettingsPanel {
         $button = javelin_tag(
           'a',
           array(
-            'class' => 'small grey button disabled',
+            'class' => 'small button button-grey disabled',
           ),
           pht('Revoke'));
       }
@@ -75,25 +71,15 @@ final class PhabricatorTokensSettingsPanel extends PhabricatorSettingsPanel {
         'action',
       ));
 
-
-    $terminate_icon = id(new PHUIIconView())
-      ->setIconFont('fa-exclamation-triangle');
-    $terminate_button = id(new PHUIButtonView())
+    $button = id(new PHUIButtonView())
+      ->setTag('a')
+      ->setIcon('fa-warning')
       ->setText(pht('Revoke All'))
       ->setHref('/auth/token/revoke/all/')
-      ->setTag('a')
       ->setWorkflow(true)
-      ->setIcon($terminate_icon);
+      ->setColor(PHUIButtonView::RED);
 
-    $header = id(new PHUIHeaderView())
-      ->setHeader(pht('Temporary Tokens'))
-      ->addActionLink($terminate_button);
-
-    $panel = id(new PHUIObjectBoxView())
-      ->setHeader($header)
-      ->appendChild($table);
-
-    return $panel;
+    return $this->newBox(pht('Temporary Tokens'), $table, array($button));
   }
 
 }

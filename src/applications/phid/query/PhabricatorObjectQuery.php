@@ -29,11 +29,6 @@ final class PhabricatorObjectQuery
       $this->namedResults = array();
     }
 
-    $types = PhabricatorPHIDType::getAllTypes();
-    if ($this->types) {
-      $types = array_select_keys($types, $this->types);
-    }
-
     $names = array_unique($this->names);
     $phids = $this->phids;
 
@@ -51,15 +46,30 @@ final class PhabricatorObjectQuery
       }
     }
 
-    $phids = array_unique($phids);
-
     if ($names) {
+      $types = PhabricatorPHIDType::getAllTypes();
+      if ($this->types) {
+        $types = array_select_keys($types, $this->types);
+      }
       $name_results = $this->loadObjectsByName($types, $names);
     } else {
       $name_results = array();
     }
 
     if ($phids) {
+      $phids = array_unique($phids);
+
+      $phid_types = array();
+      foreach ($phids as $phid) {
+        $phid_type = phid_get_type($phid);
+        $phid_types[$phid_type] = $phid_type;
+      }
+
+      $types = PhabricatorPHIDType::getTypes($phid_types);
+      if ($this->types) {
+        $types = array_select_keys($types, $this->types);
+      }
+
       $phid_results = $this->loadObjectsByPHID($types, $phids);
     } else {
       $phid_results = array();
@@ -78,7 +88,7 @@ final class PhabricatorObjectQuery
 
   public function getNamedResults() {
     if ($this->namedResults === null) {
-      throw new Exception('Call execute() before getNamedResults()!');
+      throw new PhutilInvalidStateException('execute');
     }
     return $this->namedResults;
   }
@@ -106,29 +116,45 @@ final class PhabricatorObjectQuery
   private function loadObjectsByPHID(array $types, array $phids) {
     $results = array();
 
-    $workspace = $this->getObjectsFromWorkspace($phids);
-
-    foreach ($phids as $key => $phid) {
-      if (isset($workspace[$phid])) {
-        $results[$phid] = $workspace[$phid];
-        unset($phids[$key]);
-      }
-    }
-
-    if (!$phids) {
-      return $results;
-    }
-
     $groups = array();
     foreach ($phids as $phid) {
       $type = phid_get_type($phid);
       $groups[$type][] = $phid;
     }
 
+    $in_flight = $this->getPHIDsInFlight();
     foreach ($groups as $type => $group) {
-      if (isset($types[$type])) {
+      // We check the workspace for each group, because some groups may trigger
+      // other groups to load (for example, transactions load their objects).
+      $workspace = $this->getObjectsFromWorkspace($group);
+
+      foreach ($group as $key => $phid) {
+        if (isset($workspace[$phid])) {
+          $results[$phid] = $workspace[$phid];
+          unset($group[$key]);
+        }
+      }
+
+      if (!$group) {
+        continue;
+      }
+
+      // Don't try to load PHIDs which are already "in flight"; this prevents
+      // us from recursing indefinitely if policy checks or edges form a loop.
+      // We will decline to load the corresponding objects.
+      foreach ($group as $key => $phid) {
+        if (isset($in_flight[$phid])) {
+          unset($group[$key]);
+        }
+      }
+
+      if ($group && isset($types[$type])) {
+        $this->putPHIDsInFlight($group);
         $objects = $types[$type]->loadObjects($this, $group);
-        $results += mpull($objects, null, 'getPHID');
+
+        $map = mpull($objects, null, 'getPHID');
+        $this->putObjectsInWorkspace($map);
+        $results += $map;
       }
     }
 
@@ -160,6 +186,42 @@ final class PhabricatorObjectQuery
 
   public function getQueryApplicationClass() {
     return null;
+  }
+
+
+  /**
+   * Select invalid or restricted PHIDs from a list.
+   *
+   * PHIDs are invalid if their objects do not exist or can not be seen by the
+   * viewer. This method is generally used to validate that PHIDs affected by
+   * a transaction are valid.
+   *
+   * @param PhabricatorUser Viewer.
+   * @param list<phid> List of ostensibly valid PHIDs.
+   * @return list<phid> List of invalid or restricted PHIDs.
+   */
+  public static function loadInvalidPHIDsForViewer(
+    PhabricatorUser $viewer,
+    array $phids) {
+
+    if (!$phids) {
+      return array();
+    }
+
+    $objects = id(new PhabricatorObjectQuery())
+      ->setViewer($viewer)
+      ->withPHIDs($phids)
+      ->execute();
+    $objects = mpull($objects, null, 'getPHID');
+
+    $invalid = array();
+    foreach ($phids as $phid) {
+      if (empty($objects[$phid])) {
+        $invalid[] = $phid;
+      }
+    }
+
+    return $invalid;
   }
 
 }

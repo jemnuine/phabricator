@@ -8,7 +8,7 @@ final class DiffusionSearchQueryConduitAPIMethod
   }
 
   public function getMethodDescription() {
-    return 'Search (grep) a repository at a specific path and commit.';
+    return pht('Search (grep) a repository at a specific path and commit.');
   }
 
   protected function defineReturnType() {
@@ -25,18 +25,19 @@ final class DiffusionSearchQueryConduitAPIMethod
     );
   }
 
-  protected function defineCustomErrorTypes() {
-    return array(
-      'ERR-GREP-COMMAND' => 'Grep command failed.',
-    );
-  }
-
   protected function getResult(ConduitAPIRequest $request) {
     try {
       $results = parent::getResult($request);
     } catch (CommandException $ex) {
-      throw id(new ConduitException('ERR-GREP-COMMAND'))
-        ->setErrorDescription($ex->getStderr());
+      $err = $ex->getError();
+
+      if ($err === 1) {
+        // `git grep` and `hg grep` exit with 1 if there are no matches;
+        // assume we just didn't get any hits.
+        return array();
+      }
+
+      throw $ex;
     }
 
     $offset = $request->getValue('offset');
@@ -53,16 +54,26 @@ final class DiffusionSearchQueryConduitAPIMethod
     $limit = $request->getValue('limit');
     $offset = $request->getValue('offset');
 
+    // Starting with Git 2.16.0, Git assumes passing an empty argument is
+    // an error and recommends you pass "." instead.
+    if (!strlen($path)) {
+      $path = '.';
+    }
+
     $results = array();
     $future = $repository->getLocalCommandFuture(
       // NOTE: --perl-regexp is available only with libpcre compiled in.
-      'grep --extended-regexp --null -n --no-color -e %s %s -- %s',
-      $grep,
+      'grep --extended-regexp --null -n --no-color -f - %s -- %s',
       $drequest->getStableCommit(),
       $path);
 
+    // NOTE: We're writing the pattern on stdin to avoid issues with UTF8
+    // being mangled by the shell. See T12807.
+    $future->write($grep);
+
     $binary_pattern = '/Binary file [^:]*:(.+) matches/';
     $lines = new LinesOfALargeExecFuture($future);
+
     foreach ($lines as $line) {
       $result = null;
       if (preg_match('/[^:]*:(.+)\0(.+)\0(.*)/', $line, $result)) {
@@ -92,7 +103,7 @@ final class DiffusionSearchQueryConduitAPIMethod
 
     $results = array();
     $future = $repository->getLocalCommandFuture(
-      'grep --rev %s --print0 --line-number %s %s',
+      'grep --rev %s --print0 --line-number -- %s %s',
       hgsprintf('ancestors(%s)', $drequest->getStableCommit()),
       $grep,
       $path);

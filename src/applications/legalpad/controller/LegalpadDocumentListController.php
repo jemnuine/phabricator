@@ -2,19 +2,15 @@
 
 final class LegalpadDocumentListController extends LegalpadController {
 
-  private $queryKey;
-
   public function shouldAllowPublic() {
     return true;
   }
 
-  public function willProcessRequest(array $data) {
-    $this->queryKey = idx($data, 'queryKey');
-  }
+  public function handleRequest(AphrontRequest $request) {
+    $querykey = $request->getURIData('queryKey');
 
-  public function processRequest() {
     $controller = id(new PhabricatorApplicationSearchController())
-      ->setQueryKey($this->queryKey)
+      ->setQueryKey($querykey)
       ->setSearchEngine(new LegalpadDocumentSearchEngine())
       ->setNavigation($this->buildSideNav());
 
@@ -30,7 +26,7 @@ final class LegalpadDocumentListController extends LegalpadController {
     $crumbs->addAction(
       id(new PHUIListItemView())
         ->setName(pht('Create Document'))
-        ->setHref($this->getApplicationURI('create/'))
+        ->setHref($this->getApplicationURI('edit/'))
         ->setIcon('fa-plus-square')
         ->setDisabled(!$can_create)
         ->setWorkflow(!$can_create));
